@@ -862,11 +862,16 @@
 
   <!-- SESSION LOG TAB -->
   <div class="main hidden" id="tab-log">
-    <!-- Buy % slider -->
+    <!-- Cash / Credit % sliders -->
     <div class="buy-pct-row">
-      <span class="buy-pct-label">Buy at</span>
-      <input type="range" class="buy-pct-slider" id="buyPctSlider" min="20" max="90" value="60" oninput="updateBuyPct(this.value)" />
-      <span class="buy-pct-value" id="buyPctDisplay">60%</span>
+      <span class="buy-pct-label" style="color:#f59e0b;">Cash</span>
+      <input type="range" class="buy-pct-slider" id="cashPctSlider" min="10" max="90" value="50" oninput="updateCashPct(this.value)" />
+      <span class="buy-pct-value" id="cashPctDisplay" style="color:#f59e0b;">50%</span>
+    </div>
+    <div class="buy-pct-row">
+      <span class="buy-pct-label" style="color:#22c55e;">Credit</span>
+      <input type="range" class="buy-pct-slider" id="creditPctSlider" min="20" max="100" value="70" oninput="updateCreditPct(this.value)" />
+      <span class="buy-pct-value" id="creditPctDisplay" style="color:#22c55e;">70%</span>
     </div>
 
     <div class="session-total" id="sessionTotal" style="margin-bottom: 12px;">
@@ -1073,7 +1078,9 @@ let state = {
   stream: null,
   sessions: sessionsData.sessions,
   currentSessionId: sessionsData.currentSessionId,
-  buyPercentage: parseInt(localStorage.getItem('cardpricer_buypct') || '60'),
+  buyPercentage: parseInt(localStorage.getItem('cardpricer_buypct') || '70'),
+  cashPercentage: parseInt(localStorage.getItem('cardpricer_cashpct') || '50'),
+  creditPercentage: parseInt(localStorage.getItem('cardpricer_creditpct') || '70'),
   currentResults: null,
   isProcessing: false,
   // Live alias for backward compatibility
@@ -1457,13 +1464,29 @@ function renderResults(pricedCards) {
             <div class="price-value">${eb?.median_price != null ? eb.median_price.toFixed(2) + ' ' + (eb.currency || 'EUR') : '—'}</div>
             ${eb?.sample_size ? `<div class="price-sub">${eb.sample_size} recent sales · Low: ${eb.low?.toFixed(2) || '?'}</div>` : ''}
           </div>
-          ${bp ? `
-          <div class="price-cell buy-price">
-            <div class="price-label">Your Buy Price (${state.buyPercentage}%)</div>
-            <div class="price-value green">${bp.suggested.toFixed(2)} €</div>
-            <div class="price-sub">${bp.formula}${bp.price_source ? '<br>Source: ' + bp.price_source : ''}</div>
+          ${bp ? (() => {
+            const mv = bp.market_value || 0;
+            const mult = result.condition_multiplier != null ? result.condition_multiplier : 1;
+            const condAdj = mv * mult;
+            const cashPrice = condAdj * (state.cashPercentage / 100);
+            const creditPrice = condAdj * (state.creditPercentage / 100);
+            return `
+          <div class="price-cell buy-price" style="grid-column: 1 / -1;">
+            <div class="price-label">Buy Offer — Cash vs Credit</div>
+            <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:4px;">
+              <div style="padding:8px; border-radius:6px; background:rgba(245,158,11,0.12); border:1px solid rgba(245,158,11,0.3);">
+                <div style="font-size:11px; color:#f59e0b; font-weight:700; text-transform:uppercase;">Cash ${state.cashPercentage}%</div>
+                <div style="font-size:22px; font-weight:800; color:#f59e0b;">${cashPrice.toFixed(2)} €</div>
+              </div>
+              <div style="padding:8px; border-radius:6px; background:rgba(34,197,94,0.12); border:1px solid rgba(34,197,94,0.3);">
+                <div style="font-size:11px; color:#22c55e; font-weight:700; text-transform:uppercase;">Credit ${state.creditPercentage}%</div>
+                <div style="font-size:22px; font-weight:800; color:#22c55e;">${creditPrice.toFixed(2)} €</div>
+              </div>
+            </div>
+            <div class="price-sub" style="margin-top:6px;">Market: ${mv.toFixed(2)}€ · Cond ×${mult.toFixed(2)} (${card.condition_estimate || 'NM'})${bp.price_source ? '<br>Source: ' + bp.price_source : ''}</div>
           </div>
-          ` : ''}
+            `;
+          })() : ''}
         </div>
 
         <div class="source-links">
@@ -1618,10 +1641,17 @@ function renderSessionLog() {
   let totalBuy = 0;
   let totalSell = 0;
 
+  const CONDITION_MULTS = { 'NM': 1.0, 'LP': 0.85, 'MP': 0.70, 'HP': 0.50, 'DMG': 0.30 };
   container.innerHTML = state.sessionLog.map((entry, i) => {
-    // Use custom (user-editable) prices, falling back to calculated ones
-    const buyPrice = entry.custom_buy ?? entry.buy_price?.suggested ?? 0;
     const marketValue = entry.market_value || entry.buy_price?.market_value || entry.cardmarket?.price || entry.cardmarket?.trend || 0;
+    const condMult = (entry.buy_price?.condition_adjusted && entry.buy_price?.market_value)
+      ? entry.buy_price.condition_adjusted / entry.buy_price.market_value
+      : (CONDITION_MULTS[entry.card?.condition_estimate] || 1);
+    // Live-compute the buy price from current Credit % (tracks slider).
+    // User-edited custom_buy still overrides.
+    const liveCreditPrice = Math.round(marketValue * condMult * (state.creditPercentage / 100) * 100) / 100;
+    const liveCashPrice = Math.round(marketValue * condMult * (state.cashPercentage / 100) * 100) / 100;
+    const buyPrice = entry.custom_buy ?? liveCreditPrice;
     const sellPrice = entry.custom_sell ?? Math.round(marketValue * 1.1 * 100) / 100;
 
     totalBuy += buyPrice;
@@ -1647,6 +1677,7 @@ function renderSessionLog() {
             &middot; <span class="status-pill status-${status}">${status}</span>
           </div>
           <div class="log-detail" style="color:var(--text-dim);">MV: ${formatCurrency(marketValue)} · Margin: ${formatCurrency(margin.margin)} (${margin.pct.toFixed(0)}%)</div>
+          ${customer ? '' : `<div class="log-detail" style="font-size:11px;"><span style="color:#f59e0b;">Cash: ${formatCurrency(liveCashPrice)}</span> · <span style="color:#22c55e;">Credit: ${formatCurrency(liveCreditPrice)}</span></div>`}
         </div>
         <div class="log-prices">
           ${customer ? '' : `<div style="display:flex; align-items:center; gap:4px;">
@@ -1988,10 +2019,30 @@ function deleteSelected() {
 // BUY PERCENTAGE
 // ============================================================
 function updateBuyPct(value) {
+  // Legacy — kept so any stray references don't break.
   state.buyPercentage = parseInt(value);
-  document.getElementById('buyPctDisplay').textContent = value + '%';
+  const el = document.getElementById('buyPctDisplay');
+  if (el) el.textContent = value + '%';
   localStorage.setItem('cardpricer_buypct', value);
   renderSessionLog();
+}
+
+function updateCashPct(value) {
+  state.cashPercentage = parseInt(value);
+  document.getElementById('cashPctDisplay').textContent = value + '%';
+  localStorage.setItem('cardpricer_cashpct', value);
+  renderSessionLog();
+  if (state.currentResults) renderResults(state.currentResults);
+}
+
+function updateCreditPct(value) {
+  state.creditPercentage = parseInt(value);
+  state.buyPercentage = parseInt(value); // Keep legacy alias in sync
+  document.getElementById('creditPctDisplay').textContent = value + '%';
+  localStorage.setItem('cardpricer_creditpct', value);
+  localStorage.setItem('cardpricer_buypct', value);
+  renderSessionLog();
+  if (state.currentResults) renderResults(state.currentResults);
 }
 
 // ============================================================
@@ -2503,8 +2554,12 @@ document.addEventListener('DOMContentLoaded', () => {
   else document.getElementById('pairStatus') && (document.getElementById('pairStatus').textContent = 'Not paired');
   startCamera();
   document.getElementById('logCount').textContent = state.sessionLog.length;
-  document.getElementById('buyPctSlider').value = state.buyPercentage;
-  document.getElementById('buyPctDisplay').textContent = state.buyPercentage + '%';
+  const cashSlider = document.getElementById('cashPctSlider');
+  const cashDisplay = document.getElementById('cashPctDisplay');
+  const creditSlider = document.getElementById('creditPctSlider');
+  const creditDisplay = document.getElementById('creditPctDisplay');
+  if (cashSlider) { cashSlider.value = state.cashPercentage; cashDisplay.textContent = state.cashPercentage + '%'; }
+  if (creditSlider) { creditSlider.value = state.creditPercentage; creditDisplay.textContent = state.creditPercentage + '%'; }
   renderSessionPills();
   renderWantList();
   // Restore setting inputs
