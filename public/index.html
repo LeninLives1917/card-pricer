@@ -1041,6 +1041,26 @@
 <!-- QRCode generator (with unpkg fallback if jsdelivr blocked) -->
 <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.3/build/qrcode.min.js"
   onerror="this.onerror=null;var s=document.createElement('script');s.src='https://unpkg.com/qrcode@1.5.3/build/qrcode.min.js';document.head.appendChild(s);"></script>
+<!-- Tesseract.js for client-side OCR — lazy load after page idle so it doesn't
+     delay initial paint. Saves a full Claude roundtrip when the number is clean. -->
+<script>
+  window.addEventListener('load', () => {
+    const load = () => {
+      const s = document.createElement('script');
+      s.src = 'https://cdn.jsdelivr.net/npm/tesseract.js@5.0.5/dist/tesseract.min.js';
+      s.async = true;
+      s.onerror = () => {
+        const f = document.createElement('script');
+        f.src = 'https://unpkg.com/tesseract.js@5.0.5/dist/tesseract.min.js';
+        f.async = true;
+        document.head.appendChild(f);
+      };
+      document.head.appendChild(s);
+    };
+    if ('requestIdleCallback' in window) requestIdleCallback(load, { timeout: 3000 });
+    else setTimeout(load, 1500);
+  });
+</script>
 
 <script>
 // ============================================================
@@ -1285,6 +1305,118 @@ function resizeDataUrl(dataUrl, maxSize = 900, quality = 0.82) {
   });
 }
 
+// ============================================================
+// OCR-FIRST IDENTIFICATION
+// ============================================================
+// Read the card number locally with Tesseract.js. If we can parse a clean
+// number and the server finds a unique database match, we skip Claude —
+// ~300ms instead of ~2.5s. Falls back silently on any failure.
+let _tesseractWorker = null;
+async function getTesseractWorker() {
+  if (_tesseractWorker) return _tesseractWorker;
+  if (typeof Tesseract === 'undefined') return null;
+  try {
+    _tesseractWorker = await Tesseract.createWorker('eng', 1, {
+      // Minimal logger so console stays quiet
+      logger: () => {}
+    });
+    // Whitelist the chars that appear in card numbers.
+    await _tesseractWorker.setParameters({
+      tessedit_char_whitelist: '0123456789/ABCDEFGHIJKLMNOPQRSTUVWXYZ- '
+    });
+    return _tesseractWorker;
+  } catch (e) {
+    console.warn('Tesseract init failed:', e);
+    return null;
+  }
+}
+
+// Crop the bottom ~18% of the card — that's where the number lives for
+// Pokemon, Magic, One Piece, Lorcana, etc. Saves a ton of OCR noise.
+function cropBottomStrip(dataUrl) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+      try {
+        const w = img.naturalWidth, h = img.naturalHeight;
+        const stripH = Math.round(h * 0.18);
+        const canvas = document.createElement('canvas');
+        canvas.width = w;
+        canvas.height = stripH;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, h - stripH, w, stripH, 0, 0, w, stripH);
+        resolve(canvas.toDataURL('image/png'));
+      } catch (e) { reject(e); }
+    };
+    img.onerror = reject;
+    img.src = dataUrl;
+  });
+}
+
+// Parse common card-number patterns out of raw OCR text.
+// Returns { number, setCodeHint?, game? } or null.
+function extractCardNumber(text) {
+  if (!text) return null;
+  const cleaned = text.replace(/[|I]/g, '1').toUpperCase();
+
+  // Priority 1: "xx/yy" — Pokemon/Magic standard
+  const slash = cleaned.match(/\b(\d{1,4})\s*\/\s*(\d{1,4})\b/);
+  if (slash) {
+    return { number: `${slash[1]}/${slash[2]}`, game: 'pokemon' };
+  }
+
+  // Priority 2: Pokemon promos — SWSH066, SM211, SVP 076, XY99, BW100
+  const promo = cleaned.match(/\b(SWSH|SVP|SV|SM|XY|BW|HGSS|DP)[\s-]?(\d{1,4})\b/);
+  if (promo) {
+    return { number: `${promo[1]}${promo[2]}`, game: 'pokemon' };
+  }
+
+  // Priority 3: One Piece — OP06-001, ST01-002
+  const op = cleaned.match(/\b(OP|ST|EB)\d{1,2}-\d{1,3}\b/);
+  if (op) {
+    return { number: op[0], game: 'onepiece' };
+  }
+
+  // Priority 4: Yu-Gi-Oh — ABCD-EN001
+  const ygo = cleaned.match(/\b[A-Z]{3,5}-[A-Z]{2}\d{3}\b/);
+  if (ygo) {
+    return { number: ygo[0], game: 'yugioh' };
+  }
+
+  return null;
+}
+
+// Full OCR pipeline: worker ready → crop strip → read → parse → lookup.
+// Returns { cards: [...] } on success, null on any miss.
+async function tryOcrIdentify(imageData) {
+  try {
+    const worker = await getTesseractWorker();
+    if (!worker) return null;
+    const strip = await cropBottomStrip(imageData);
+    const t0 = performance.now();
+    const { data } = await worker.recognize(strip);
+    const parsed = extractCardNumber(data.text || '');
+    console.log(`[OCR] ${Math.round(performance.now() - t0)}ms text="${(data.text||'').trim().replace(/\n/g,' ')}" parsed=`, parsed);
+    if (!parsed) return null;
+
+    const lookupResp = await fetch('/api/lookup-by-number', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(parsed)
+    });
+    if (!lookupResp.ok) return null;
+    const json = await lookupResp.json();
+    if (json.cards && json.cards.length) {
+      console.log('[OCR] direct hit — skipping Claude');
+      return json;
+    }
+    return null;
+  } catch (e) {
+    console.warn('OCR pipeline failed:', e);
+    return null;
+  }
+}
+
 async function processImage(imageData) {
   state.isProcessing = true;
   const overlay = document.getElementById('loadingOverlay');
@@ -1307,22 +1439,34 @@ async function processImage(imageData) {
 
     // Step 1: Identify
     const hint = document.getElementById('hintInput').value;
-    const idResp = await fetch('/api/identify', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        image: uploadImage,
-        batch: state.mode === 'batch',
-        hint: hint
-      })
-    });
 
-    if (!idResp.ok) {
-      const err = await idResp.json();
-      throw new Error(err.details || err.error || 'Identification failed');
+    // 1a: OCR-first — if single-card mode and no user hint, try reading the
+    // card number locally. On a clean scan this skips Claude entirely.
+    let idResult = null;
+    if (state.mode !== 'batch' && !hint) {
+      loadingText.textContent = 'Reading card number...';
+      idResult = await tryOcrIdentify(imageData);
     }
 
-    const idResult = await idResp.json();
+    if (!idResult) {
+      loadingText.textContent = 'Identifying card...';
+      const idResp = await fetch('/api/identify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          image: uploadImage,
+          batch: state.mode === 'batch',
+          hint: hint
+        })
+      });
+
+      if (!idResp.ok) {
+        const err = await idResp.json();
+        throw new Error(err.details || err.error || 'Identification failed');
+      }
+      idResult = await idResp.json();
+    }
+
     const cards = idResult.cards || [];
 
     if (cards.length === 0) {

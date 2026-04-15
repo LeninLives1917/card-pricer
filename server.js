@@ -318,6 +318,114 @@ app.get('/api/health', (req, res) => {
   res.json({ ok: true, ts: Date.now(), uptime: process.uptime() });
 });
 
+// ============================================================
+// OCR-FIRST LOOKUP: /api/lookup-by-number
+// ============================================================
+// The client runs Tesseract.js locally, parses the card number, and hits
+// this endpoint. If we can pinpoint exactly one card from the number alone,
+// we skip Claude entirely (~300ms vs ~2.5s). If not, the client falls back
+// to /api/identify.
+//
+// Body: { number: "123/456", setCode?: "swsh9", game?: "pokemon"|"magic" }
+// Returns: { cards: [verifiedCard] } on match, or 404 on no-match/ambiguous.
+app.post('/api/lookup-by-number', express.json(), async (req, res) => {
+  try {
+    const { number, setCode, game } = req.body || {};
+    if (!number || typeof number !== 'string') {
+      return res.status(400).json({ error: 'number required' });
+    }
+
+    const raw = number.trim();
+
+    // Try Scryfall first if we have an explicit setCode (Magic).
+    if (setCode && (game === 'magic' || !game)) {
+      const numOnly = raw.split('/')[0].replace(/^0+/, '') || raw;
+      try {
+        const resp = await axios.get(
+          `https://api.scryfall.com/cards/${encodeURIComponent(setCode.toLowerCase())}/${encodeURIComponent(numOnly)}`,
+          { timeout: 6000 }
+        );
+        const d = resp.data;
+        if (d && d.name) {
+          const card = {
+            game: 'magic',
+            name: d.name,
+            set_name: d.set_name,
+            set_code: (d.set || '').toUpperCase(),
+            card_number: d.collector_number,
+            rarity: d.rarity,
+            image_url: d.image_uris?.normal || d.image_uris?.large,
+            source: 'scryfall.com (ocr-direct)'
+          };
+          console.log(`[OCR-LOOKUP] Scryfall HIT: ${card.name} ${card.set_code} #${card.card_number}`);
+          return res.json({ cards: [card] });
+        }
+      } catch (e) {
+        console.log(`[OCR-LOOKUP] Scryfall miss: ${e.message}`);
+      }
+    }
+
+    // Pokemon TCG lookup — handles both "123/456" and promo formats like SM211.
+    // We search by number, optionally narrowing by printedTotal from "xx/yy" form.
+    const hasSlash = raw.includes('/');
+    let numPart, totalPart;
+    if (hasSlash) {
+      const [a, b] = raw.split('/');
+      numPart = (a || '').replace(/^0+/, '') || a;
+      totalPart = (b || '').replace(/^0+/, '') || b;
+    } else {
+      numPart = raw;
+    }
+
+    if (game !== 'magic') {
+      const queries = [];
+      if (hasSlash && numPart && totalPart) {
+        queries.push(`number:"${numPart}" set.printedTotal:${totalPart}`);
+        queries.push(`number:"${numPart}" set.total:${totalPart}`);
+      } else if (numPart) {
+        // Promo-style (e.g. SM211, SWSH066, SVP076) — exact match
+        queries.push(`number:"${numPart}"`);
+      }
+
+      for (const q of queries) {
+        try {
+          const resp = await axios.get('https://api.pokemontcg.io/v2/cards', {
+            params: { q, pageSize: 5 },
+            timeout: 6000
+          });
+          const results = resp.data?.data || [];
+          if (results.length === 1) {
+            const d = results[0];
+            const card = {
+              game: 'pokemon',
+              name: d.name,
+              set_name: d.set?.name,
+              set_code: (d.set?.id || '').toUpperCase(),
+              card_number: d.number,
+              rarity: d.rarity,
+              hp: d.hp,
+              image_url: d.images?.large || d.images?.small,
+              tcgplayer_url: d.tcgplayer?.url,
+              source: 'pokemontcg.io (ocr-direct)'
+            };
+            console.log(`[OCR-LOOKUP] PokemonTCG HIT: ${card.name} ${card.set_code} #${card.card_number}`);
+            return res.json({ cards: [card] });
+          } else if (results.length > 1) {
+            console.log(`[OCR-LOOKUP] Ambiguous: ${results.length} matches for ${q}`);
+          }
+        } catch (e) {
+          console.log(`[OCR-LOOKUP] PokemonTCG error: ${e.message}`);
+        }
+      }
+    }
+
+    return res.status(404).json({ error: 'no unique match' });
+  } catch (err) {
+    console.error('[OCR-LOOKUP] error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 
 // ============================================================
 // PRE-VERIFY: Fix common AI suffix mistakes using HP ranges
