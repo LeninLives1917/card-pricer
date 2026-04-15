@@ -1330,6 +1330,10 @@
           <span class="setting-label">High-contrast mode</span>
           <input id="contrastToggle" type="checkbox" onchange="setSetting('highContrast', this.checked)" />
         </div>
+        <div class="setting-row">
+          <span class="setting-label">Fast OCR-first ID (faster but risks digit misreads)</span>
+          <input id="ocrFirstToggle" type="checkbox" checked onchange="setSetting('ocrFirst', this.checked)" />
+        </div>
       </div>
 
       <div class="setting-group">
@@ -1801,16 +1805,51 @@ function extractCardNumber(text) {
 
 // Full OCR pipeline: worker ready → crop strip → read → parse → lookup.
 // Returns { cards: [...] } on success, null on any miss.
+// OCR_MIN_CONFIDENCE: Tesseract reports a per-word confidence 0-100.
+// A single misread digit (3 vs 5, 0 vs 8) on a €200 card mis-IDs it to a
+// same-set neighbour. We require VERY high confidence on the number token,
+// otherwise we fall through to Claude Vision which handles ambiguous chars
+// much better. Ambiguous digits drop confidence dramatically — the check
+// is naturally self-limiting to clean, unambiguous scans.
+const OCR_MIN_CONFIDENCE = 88;
+
 async function tryOcrIdentify(imageData) {
   try {
+    // User kill-switch: localStorage.cardpricer_ocr === 'off' disables the
+    // fast path entirely. Default is ON.
+    if (getSetting('ocrFirst', 'true') === false || getSetting('ocrFirst', 'true') === 'false') {
+      return null;
+    }
     const worker = await getTesseractWorker();
     if (!worker) return null;
     const strip = await cropBottomStrip(imageData);
     const t0 = performance.now();
     const { data } = await worker.recognize(strip);
+    const rawText = (data.text || '').trim().replace(/\n/g, ' ');
     const parsed = extractCardNumber(data.text || '');
-    console.log(`[OCR] ${Math.round(performance.now() - t0)}ms text="${(data.text||'').trim().replace(/\n/g,' ')}" parsed=`, parsed);
+
+    // Find the word-level confidence for the token matching our parsed number.
+    // If the OCR layer isn't sure, we don't trust it — fall through to Claude.
+    let tokenConfidence = 0;
+    if (parsed && Array.isArray(data.words)) {
+      const target = parsed.number.toUpperCase().replace(/\s/g, '');
+      for (const w of data.words) {
+        const wt = (w.text || '').toUpperCase().replace(/\s/g, '');
+        if (wt.includes(target) || target.includes(wt)) {
+          tokenConfidence = Math.max(tokenConfidence, w.confidence || 0);
+        }
+      }
+      // Fallback: use overall avg confidence if no word match
+      if (tokenConfidence === 0 && data.confidence) tokenConfidence = data.confidence;
+    }
+
+    console.log(`[OCR] ${Math.round(performance.now() - t0)}ms conf=${tokenConfidence.toFixed(0)} text="${rawText}" parsed=`, parsed);
+
     if (!parsed) return null;
+    if (tokenConfidence < OCR_MIN_CONFIDENCE) {
+      console.log(`[OCR] LOW CONFIDENCE ${tokenConfidence.toFixed(0)} < ${OCR_MIN_CONFIDENCE} — falling through to Claude`);
+      return null;
+    }
 
     const lookupResp = await fetch('/api/lookup-by-number', {
       method: 'POST',
@@ -3356,6 +3395,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const hap = getSetting('haptic', 'true'); const hapIn = document.getElementById('hapticToggle'); if (hapIn) hapIn.checked = (hap === true || hap === 'true');
   const hc = getSetting('highContrast', 'false'); const hcIn = document.getElementById('contrastToggle'); if (hcIn) hcIn.checked = (hc === true || hc === 'true');
   const rf = getSetting('rapidFire', 'false'); const rfIn = document.getElementById('rapidFireToggle'); if (rfIn) rfIn.checked = (rf === true || rf === 'true');
+  const ocr = getSetting('ocrFirst', 'true'); const ocrIn = document.getElementById('ocrFirstToggle'); if (ocrIn) ocrIn.checked = !(ocr === false || ocr === 'false');
   const sm = getSetting('sellMarkup', '110'); const smIn = document.getElementById('sellMarkup'); if (smIn) smIn.value = sm;
   // Modern UX: apply AMOLED class, hydrate strip/ribbon, wire install prompt
   if (getSetting('amoled', 'true') !== false && getSetting('amoled', 'true') !== 'false') document.body.classList.add('amoled');
