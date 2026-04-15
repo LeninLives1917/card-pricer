@@ -3663,14 +3663,16 @@ function renderResultSheet() {
     </div>
 
     ${cmUrl ? `
-    <a href="${cmUrl}" target="_blank" rel="noopener"
+    <button type="button"
+       onclick="openCardmarket('${cmUrl.replace(/'/g, "\\'")}')"
        style="display:flex;align-items:center;justify-content:center;gap:8px;
-              margin:12px 0 4px;padding:14px;border-radius:12px;
+              width:100%;border:none;cursor:pointer;
+              margin:12px 0 4px;padding:16px;border-radius:12px;
               background:linear-gradient(135deg,#ff6b00,#ff8c00);
-              color:#fff;font-weight:700;font-size:15px;text-decoration:none;
-              box-shadow:0 4px 14px rgba(255,107,0,.35);">
-      🛒 View on Cardmarket
-    </a>` : ''}
+              color:#fff;font-weight:800;font-size:16px;
+              box-shadow:0 4px 14px rgba(255,107,0,.45);">
+      🛒 View on Cardmarket →
+    </button>` : ''}
 
     <div class="sheet-actions">
       <button class="sheet-action bought" onclick="sheetActionBought()">✓ Bought</button>
@@ -3680,6 +3682,31 @@ function renderResultSheet() {
     </div>
   `;
 }
+// Open external URL reliably — PWA standalone mode can swallow target=_blank
+// links, so we try window.open first, then fall back to location assign on a
+// synthetic anchor click. exposed as onclick=openCardmarket(url).
+window.openCardmarket = function(url) {
+  if (!url) return;
+  try {
+    const w = window.open(url, '_blank', 'noopener,noreferrer');
+    if (w) return;
+  } catch (e) {}
+  // Fallback: synthetic anchor click (some PWA runtimes only honor user-gesture
+  // anchors, not scripted window.open).
+  try {
+    const a = document.createElement('a');
+    a.href = url;
+    a.target = '_blank';
+    a.rel = 'noopener noreferrer';
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => a.remove(), 100);
+    return;
+  } catch (e) {}
+  // Last resort: navigate in-place.
+  location.href = url;
+};
+
 function onAskChange(val) {
   _sheetAsk = parseFloat(val) || 0;
   // Re-render only the verdict + readout portion for speed
