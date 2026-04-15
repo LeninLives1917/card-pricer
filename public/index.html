@@ -177,6 +177,96 @@
       border-radius: 4px;
     }
 
+    /* ---- BULK MODE ---- */
+    .bulk-panel {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      padding: 12px 0;
+    }
+    .bulk-panel.hidden { display: none; }
+    .bulk-drop {
+      background: var(--surface);
+      border: 2px dashed rgba(108,92,231,.55);
+      border-radius: 14px;
+      padding: 26px 16px;
+      text-align: center;
+      color: var(--text-dim);
+      cursor: pointer;
+      transition: background .15s, border-color .15s;
+    }
+    .bulk-drop:active, .bulk-drop:hover {
+      background: rgba(108,92,231,.08);
+      border-color: var(--accent);
+      color: var(--text);
+    }
+    .bulk-drop strong { display:block; margin-top:6px; color:var(--text); font-size:15px; }
+    .bulk-hint { font-size:12px; margin-top:4px; opacity:.7; }
+    .bulk-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 6px;
+    }
+    .bulk-tile {
+      position: relative;
+      aspect-ratio: 63/88;
+      background: #1a1a22 center/cover no-repeat;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      overflow: hidden;
+    }
+    .bulk-tile .bulk-status {
+      position:absolute; inset:auto 0 0 0;
+      font-size:10px; font-weight:700;
+      padding:3px 5px;
+      background:rgba(0,0,0,.65);
+      color:#fff;
+      text-align:center;
+      letter-spacing:.02em;
+    }
+    .bulk-tile.queued .bulk-status { background:rgba(0,0,0,.5); }
+    .bulk-tile.processing .bulk-status { background:linear-gradient(90deg,#6c5ce7,#8e7bff); }
+    .bulk-tile.done .bulk-status { background:rgba(16,185,129,.85); }
+    .bulk-tile.error .bulk-status { background:rgba(239,68,68,.85); }
+    .bulk-tile .bulk-remove {
+      position:absolute; top:4px; right:4px;
+      width:20px; height:20px; border-radius:50%;
+      background:rgba(0,0,0,.7); color:#fff;
+      font-size:14px; line-height:20px; text-align:center;
+      cursor:pointer; border:none;
+    }
+    .bulk-controls { display:flex; flex-direction:column; gap:10px; }
+    .bulk-progress {
+      position: relative;
+      height: 22px;
+      background: var(--surface);
+      border-radius: 11px;
+      overflow: hidden;
+      border: 1px solid var(--border);
+    }
+    .bulk-progress-bar {
+      position:absolute; inset:0 auto 0 0; width:0%;
+      background: linear-gradient(90deg, #6c5ce7, #00d4ff);
+      transition: width .2s ease;
+    }
+    .bulk-progress-label {
+      position:absolute; inset:0; display:flex; align-items:center;
+      justify-content:center; font-size:12px; font-weight:700; color:#fff;
+      text-shadow:0 1px 2px rgba(0,0,0,.5);
+    }
+    .bulk-btn {
+      flex: 1;
+      padding: 12px; border-radius: 10px;
+      background: var(--surface); color: var(--text);
+      border: 1px solid var(--border);
+      font-weight: 700; font-size: 14px; cursor: pointer;
+    }
+    .bulk-btn.primary {
+      background: linear-gradient(135deg,#6c5ce7,#00d4ff);
+      color:#fff; border:none;
+    }
+    .bulk-btn:disabled { opacity:.5; cursor:not-allowed; }
+
     /* ---- MODE TOGGLE ---- */
     .mode-toggle {
       display: flex;
@@ -1119,8 +1209,32 @@
     <div class="scan-area">
       <!-- Mode Toggle -->
       <div class="mode-toggle">
-        <button class="mode-btn active" onclick="setMode('single')">Single Card</button>
-        <button class="mode-btn" onclick="setMode('batch')">Binder Page</button>
+        <button class="mode-btn active" onclick="setMode('single')">Single</button>
+        <button class="mode-btn" onclick="setMode('batch')">Binder</button>
+        <button class="mode-btn" onclick="setMode('bulk')">Bulk</button>
+      </div>
+
+      <!-- BULK MODE PANEL -->
+      <div id="bulkPanel" class="bulk-panel hidden">
+        <div class="bulk-drop" id="bulkDrop" onclick="document.getElementById('bulkInput').click()">
+          <svg viewBox="0 0 24 24" width="42" height="42" fill="currentColor">
+            <path d="M9 16h6v-6h4l-7-7-7 7h4v6zm-4 2h14v2H5z"/>
+          </svg>
+          <div><strong>Tap to add photos</strong></div>
+          <div class="bulk-hint">Pick many cards at once from your camera roll</div>
+          <input type="file" id="bulkInput" accept="image/*" multiple style="display:none" onchange="handleBulkFiles(event)" />
+        </div>
+        <div class="bulk-grid" id="bulkGrid"></div>
+        <div class="bulk-controls" id="bulkControls" style="display:none;">
+          <div class="bulk-progress" id="bulkProgress">
+            <div class="bulk-progress-bar" id="bulkProgressBar"></div>
+            <div class="bulk-progress-label" id="bulkProgressLabel">0 / 0</div>
+          </div>
+          <div style="display:flex; gap:8px;">
+            <button class="bulk-btn primary" id="bulkStartBtn" onclick="startBulkProcess()">Process all</button>
+            <button class="bulk-btn" onclick="clearBulkQueue()">Clear</button>
+          </div>
+        </div>
       </div>
 
       <!-- Camera -->
@@ -1592,11 +1706,38 @@ function retakePhoto() {
 
 function setMode(mode) {
   state.mode = mode;
+  const idx = mode === 'single' ? 0 : mode === 'batch' ? 1 : 2;
   document.querySelectorAll('.mode-btn').forEach((btn, i) => {
-    btn.classList.toggle('active', (i === 0 && mode === 'single') || (i === 1 && mode === 'batch'));
+    btn.classList.toggle('active', i === idx);
   });
   const frame = document.getElementById('scanFrame');
   const svgFrame = document.getElementById('frameSvg');
+  const bulkPanel = document.getElementById('bulkPanel');
+  const camera = document.getElementById('cameraContainer');
+  const captureRow = document.querySelector('.capture-row');
+  const zoomRow = document.querySelector('.zoom-row');
+  const scanControls = document.getElementById('scanControls');
+  const recentRibbon = document.getElementById('recentRibbon');
+
+  if (mode === 'bulk') {
+    // Hide camera chrome; show bulk panel.
+    if (bulkPanel) bulkPanel.classList.remove('hidden');
+    if (camera) camera.style.display = 'none';
+    if (captureRow) captureRow.style.display = 'none';
+    if (zoomRow) zoomRow.style.display = 'none';
+    if (scanControls) scanControls.style.display = 'none';
+    if (recentRibbon) recentRibbon.style.display = 'none';
+    return;
+  }
+
+  // Leaving bulk: restore camera chrome.
+  if (bulkPanel) bulkPanel.classList.add('hidden');
+  if (camera) camera.style.display = '';
+  if (captureRow) captureRow.style.display = '';
+  if (zoomRow) zoomRow.style.display = '';
+  if (scanControls) scanControls.style.display = '';
+  if (recentRibbon) recentRibbon.style.display = '';
+
   if (mode === 'batch') {
     frame.className = 'batch-frame';
     frame.innerHTML = '<div></div>'.repeat(9);
@@ -1955,6 +2096,170 @@ async function tryOcrIdentify(imageData) {
     console.warn('OCR pipeline failed:', e);
     return null;
   }
+}
+
+// ============================================================
+// BULK MODE — queue many photos, process in parallel
+// ============================================================
+// state.bulkQueue is an array of { id, name, dataUrl, status, resultIdx? }
+// Statuses: 'queued' -> 'processing' -> 'done' | 'error'
+// Concurrency BULK_CONCURRENCY: how many identify+price calls run at once.
+//   Prompt caching + keep-alive means ~4 is the sweet spot — Anthropic
+//   handles it fine, and each call finishes in ~1.2s after the first warms
+//   the cache. Too high and you just queue behind rate limits.
+const BULK_CONCURRENCY = 4;
+state.bulkQueue = [];
+state._bulkSeq = 0;
+let _bulkRunning = false;
+
+async function handleBulkFiles(event) {
+  const files = Array.from(event.target.files || []);
+  event.target.value = ''; // allow re-picking same files
+  if (!files.length) return;
+  for (const f of files) {
+    const dataUrl = await readFileAsDataURL(f);
+    state.bulkQueue.push({
+      id: ++state._bulkSeq,
+      name: f.name || `card-${state._bulkSeq}`,
+      dataUrl,
+      status: 'queued'
+    });
+  }
+  renderBulkQueue();
+  haptic && haptic('light');
+}
+
+function readFileAsDataURL(file) {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(r.result);
+    r.onerror = reject;
+    r.readAsDataURL(file);
+  });
+}
+
+function renderBulkQueue() {
+  const grid = document.getElementById('bulkGrid');
+  const controls = document.getElementById('bulkControls');
+  if (!grid) return;
+  if (!state.bulkQueue.length) {
+    grid.innerHTML = '';
+    controls.style.display = 'none';
+    return;
+  }
+  grid.innerHTML = state.bulkQueue.map(item => {
+    const label = item.status === 'queued' ? 'Queued'
+                : item.status === 'processing' ? '…'
+                : item.status === 'done' ? (item.name_short || '✓')
+                : 'Error';
+    return `
+      <div class="bulk-tile ${item.status}" style="background-image:url('${item.dataUrl}')">
+        ${item.status === 'queued' ? `<button class="bulk-remove" onclick="removeBulkItem(${item.id})">×</button>` : ''}
+        <div class="bulk-status">${label}</div>
+      </div>`;
+  }).join('');
+  controls.style.display = '';
+  updateBulkProgress();
+}
+
+function updateBulkProgress() {
+  const total = state.bulkQueue.length;
+  const done = state.bulkQueue.filter(i => i.status === 'done' || i.status === 'error').length;
+  const pct = total ? Math.round((done / total) * 100) : 0;
+  const bar = document.getElementById('bulkProgressBar');
+  const lbl = document.getElementById('bulkProgressLabel');
+  if (bar) bar.style.width = pct + '%';
+  if (lbl) lbl.textContent = `${done} / ${total}`;
+  const btn = document.getElementById('bulkStartBtn');
+  if (btn) {
+    btn.disabled = _bulkRunning || total === 0 || done === total;
+    btn.textContent = _bulkRunning ? `Processing… (${done}/${total})`
+                    : done === total && total > 0 ? 'Done — add more'
+                    : `Process ${total} card${total !== 1 ? 's' : ''}`;
+  }
+}
+
+function removeBulkItem(id) {
+  state.bulkQueue = state.bulkQueue.filter(i => i.id !== id);
+  renderBulkQueue();
+}
+
+function clearBulkQueue() {
+  if (_bulkRunning) return;
+  state.bulkQueue = [];
+  renderBulkQueue();
+}
+
+async function startBulkProcess() {
+  if (_bulkRunning) return;
+  const pending = state.bulkQueue.filter(i => i.status === 'queued');
+  if (!pending.length) return;
+  _bulkRunning = true;
+  updateBulkProgress();
+
+  // Simple worker-pool: N workers drain the queue.
+  const queue = [...pending];
+  const workers = Array.from({ length: Math.min(BULK_CONCURRENCY, queue.length) },
+    () => bulkWorker(queue));
+  await Promise.all(workers);
+
+  _bulkRunning = false;
+  renderBulkQueue();
+  haptic && haptic('success');
+}
+
+async function bulkWorker(queue) {
+  while (queue.length) {
+    const item = queue.shift();
+    if (!item) break;
+    item.status = 'processing';
+    renderBulkQueue();
+    try {
+      await processBulkItem(item);
+      item.status = 'done';
+    } catch (e) {
+      console.error('[BULK] failed:', item.name, e);
+      item.status = 'error';
+      item.name_short = 'Err';
+    }
+    renderBulkQueue();
+  }
+}
+
+async function processBulkItem(item) {
+  // Resize client-side once per item (saves server CPU, huge upload-time win).
+  let uploadImage = item.dataUrl;
+  try { uploadImage = await resizeDataUrl(item.dataUrl, 1100, 0.88); } catch {}
+
+  // Identify (streams ident + verified events; we only need the final cards).
+  const idResult = await fetchIdentifyStream({
+    image: uploadImage,
+    batch: false,
+    hint: ''
+  });
+  const cards = idResult.cards || [];
+  if (!cards.length) throw new Error('No card detected');
+
+  // One card per photo in bulk mode — just use the first.
+  const card = cards[0];
+  item.name_short = card.name ? card.name.slice(0, 12) : '✓';
+
+  // Price it.
+  let priced = null;
+  try {
+    const r = await fetch('/api/price', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ card, buyPercentage: state.buyPercentage })
+    });
+    if (r.ok) priced = await r.json();
+  } catch (e) {
+    console.warn('[BULK] price fail', e);
+  }
+  const result = priced || { card, cardmarket: null, ebay: null, buy_price: null };
+
+  // Land directly in session log (skip the result sheet entirely).
+  addToSessionLog(result, item.dataUrl);
 }
 
 async function processImage(imageData) {
