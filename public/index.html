@@ -2348,31 +2348,11 @@ function startHosting() {
   const url = `${location.origin}${location.pathname}?pair=${roomId}`;
 
   const wrap = document.getElementById('pairQRWrap');
-  const canvas = document.getElementById('pairQR');
-  const img = document.getElementById('pairQRImg');
   wrap.style.display = 'block';
+  // Hide the canvas, always render QR via reliable image service.
+  document.getElementById('pairQR').style.display = 'none';
+  useQRImageFallback(url);
 
-  // Try the canvas library first; fall back to an image service if it isn't loaded or errors.
-  let usedCanvas = false;
-  if (window.QRCode && typeof window.QRCode.toCanvas === 'function') {
-    try {
-      window.QRCode.toCanvas(canvas, url, { width: 240, margin: 2 }, err => {
-        if (err) {
-          console.warn('QRCode.toCanvas failed, falling back to img:', err);
-          useQRImageFallback(url);
-        } else {
-          canvas.style.display = 'block';
-          img.style.display = 'none';
-          usedCanvas = true;
-        }
-      });
-    } catch (e) {
-      console.warn('QRCode threw, falling back to img:', e);
-      useQRImageFallback(url);
-    }
-  } else {
-    useQRImageFallback(url);
-  }
   document.getElementById('pairUrl').innerHTML =
     `<a href="${url}" target="_blank" style="color:var(--accent);">${url}</a>`;
   document.getElementById('pairStatus').innerHTML = `Room <b>${roomId}</b> — waiting for phone to join...`;
