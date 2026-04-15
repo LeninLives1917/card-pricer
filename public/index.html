@@ -1976,7 +1976,7 @@ async function processImage(imageData) {
     let uploadImage = imageData;
     if (state.mode !== 'batch') {
       try {
-        uploadImage = await resizeDataUrl(imageData, 800, 0.82);
+        uploadImage = await resizeDataUrl(imageData, 1100, 0.88);
       } catch (e) {
         console.warn('Client resize failed, sending original:', e);
       }

@@ -226,8 +226,8 @@ app.post('/api/identify', upload.single('image'), async (req, res) => {
     // Single-card mode gets aggressive resize + Haiku — speed critical.
     // 700px is enough for Haiku to read card numbers cleanly while cutting
     // payload by ~40% vs 900px (quadratic in dimension).
-    const targetSize = isBatchMode ? 1500 : 900;
-    const jpegQuality = isBatchMode ? 90 : 85;
+    const targetSize = isBatchMode ? 1500 : 1100;
+    const jpegQuality = isBatchMode ? 90 : 88;
 
     let imageData;
     let mediaType;
@@ -279,7 +279,7 @@ app.post('/api/identify', upload.single('image'), async (req, res) => {
     // many small cards accurately).
     const model = isBatchMode
       ? 'claude-sonnet-4-20250514'
-      : 'claude-haiku-4-5-20251001';
+      : 'claude-sonnet-4-20250514'; // Sonnet for single-card too — Haiku was misreading card numbers (e.g. 223 → 225) even at higher res. Accuracy > speed.
 
     const response = await anthropic.messages.create({
       model,
@@ -358,8 +358,8 @@ app.post('/api/identify-stream', upload.single('image'), async (req, res) => {
 
   try {
     const isBatchMode = req.body.batch === 'true' || req.body.batch === true;
-    const targetSize = isBatchMode ? 1500 : 900;
-    const jpegQuality = isBatchMode ? 90 : 85;
+    const targetSize = isBatchMode ? 1500 : 1100;
+    const jpegQuality = isBatchMode ? 90 : 88;
 
     let rawBuffer;
     if (req.file) {
@@ -400,7 +400,7 @@ app.post('/api/identify-stream', upload.single('image'), async (req, res) => {
 
     const model = isBatchMode
       ? 'claude-sonnet-4-20250514'
-      : 'claude-haiku-4-5-20251001';
+      : 'claude-sonnet-4-20250514'; // Sonnet for single-card too — Haiku was misreading card numbers (e.g. 223 → 225) even at higher res. Accuracy > speed.
 
     const response = await anthropic.messages.create({
       model,
