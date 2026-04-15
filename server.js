@@ -2441,6 +2441,116 @@ app.get('/api/room/:id/history', (req, res) => {
   res.json({ history: room.history.slice(-50).map(s => JSON.parse(s)) });
 });
 
+// ============================================================
+// PUBLIC CUSTOMER QUOTE TOOL — /quote
+// ============================================================
+// Standalone customer-facing page for bulk indicative pricing.
+// Shares the /api/identify-stream + /api/price backend.
+app.get('/quote', (req, res) => {
+  res.sendFile(join(__dirname, 'public', 'quote.html'));
+});
+
+// Lead capture — customer submits their email + card list, we email them a
+// quote and ping the shop. Uses Brevo transactional API (no new deps).
+app.post('/api/quote-lead', async (req, res) => {
+  try {
+    const { email, name, cards, totals, cashPct, creditPct } = req.body || {};
+    if (!email || !cards || !Array.isArray(cards) || !cards.length) {
+      return res.status(400).json({ error: 'email and cards required' });
+    }
+    // Cap at 20 as a server-side guard (client also caps).
+    const trimmed = cards.slice(0, 20);
+
+    const SHOP_EMAIL = process.env.SHOP_EMAIL || 'dave@boardandbrewed.ie';
+    const SHOP_NAME = process.env.SHOP_NAME || 'Board & Brewed';
+    const SENDER_EMAIL = process.env.BREVO_SENDER_EMAIL || SHOP_EMAIL;
+
+    const rows = trimmed.map(c => {
+      const cash = (c.cash_offer ?? 0).toFixed(2);
+      const credit = (c.credit_offer ?? 0).toFixed(2);
+      const mv = (c.market_value ?? 0).toFixed(2);
+      return `<tr>
+        <td style="padding:8px; border-bottom:1px solid #eee;">${escapeHtml(c.name || 'Unknown')}${c.set_code ? ' <span style="color:#888;">(' + escapeHtml(c.set_code) + ')</span>' : ''}</td>
+        <td style="padding:8px; border-bottom:1px solid #eee; text-align:right;">€${mv}</td>
+        <td style="padding:8px; border-bottom:1px solid #eee; text-align:right; color:#f59e0b;">€${cash}</td>
+        <td style="padding:8px; border-bottom:1px solid #eee; text-align:right; color:#22c55e;">€${credit}</td>
+      </tr>`;
+    }).join('');
+
+    const customerHtml = `
+      <div style="font-family:-apple-system,system-ui,sans-serif; max-width:640px; margin:0 auto; padding:24px; color:#222;">
+        <h2 style="color:#1a1a1a; margin-bottom:4px;">Your ${SHOP_NAME} Quote</h2>
+        <p style="color:#666; margin-top:0;">Hi${name ? ' ' + escapeHtml(name) : ''}, here's an indicative price for the cards you sent over. Final offer depends on condition verified in-store.</p>
+        <table style="width:100%; border-collapse:collapse; margin:16px 0;">
+          <thead><tr style="background:#f5f5f5;">
+            <th style="padding:8px; text-align:left;">Card</th>
+            <th style="padding:8px; text-align:right;">Market</th>
+            <th style="padding:8px; text-align:right;">Cash offer</th>
+            <th style="padding:8px; text-align:right;">Credit offer</th>
+          </tr></thead>
+          <tbody>${rows}</tbody>
+          <tfoot><tr style="font-weight:700; background:#fafafa;">
+            <td style="padding:8px;">Totals (${trimmed.length} card${trimmed.length !== 1 ? 's' : ''})</td>
+            <td style="padding:8px; text-align:right;">€${(totals?.market || 0).toFixed(2)}</td>
+            <td style="padding:8px; text-align:right; color:#f59e0b;">€${(totals?.cash || 0).toFixed(2)}</td>
+            <td style="padding:8px; text-align:right; color:#22c55e;">€${(totals?.credit || 0).toFixed(2)}</td>
+          </tr></tfoot>
+        </table>
+        <p style="font-size:13px; color:#666;">Cash offer: ${cashPct || 55}% of market value. Store credit: ${creditPct || 70}% of market value. Condition-adjusted.</p>
+        <p style="margin-top:24px;">Bring your cards to the shop or reply to this email to arrange drop-off. We'll give you a firm offer once we grade condition.</p>
+        <p style="color:#888; font-size:12px; margin-top:32px;">${SHOP_NAME}</p>
+      </div>`;
+
+    const shopHtml = `
+      <div style="font-family:sans-serif;">
+        <h3>New quote request</h3>
+        <p><b>Email:</b> ${escapeHtml(email)}${name ? ' &middot; <b>Name:</b> ' + escapeHtml(name) : ''}</p>
+        <p><b>Totals:</b> Market €${(totals?.market || 0).toFixed(2)} &middot; Cash €${(totals?.cash || 0).toFixed(2)} &middot; Credit €${(totals?.credit || 0).toFixed(2)}</p>
+        <table style="width:100%; border-collapse:collapse;">
+          <thead><tr><th align="left">Card</th><th align="right">MV</th><th align="right">Cash</th><th align="right">Credit</th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>`;
+
+    // Best-effort send via Brevo. If no API key, just log + return ok so the
+    // tool still works during setup — you'll still see the lead server-side.
+    if (!process.env.BREVO_API_KEY) {
+      console.log('[QUOTE-LEAD] (no BREVO_API_KEY set) would email to', email, 'and', SHOP_EMAIL);
+      console.log('[QUOTE-LEAD] payload:', { email, name, cardCount: trimmed.length, totals });
+      return res.json({ ok: true, emailed: false, note: 'Logged server-side. Set BREVO_API_KEY to enable email.' });
+    }
+
+    const sendOne = (toEmail, subject, htmlContent) => fetch('https://api.brevo.com/v3/smtp/email', {
+      method: 'POST',
+      headers: {
+        'api-key': process.env.BREVO_API_KEY,
+        'Content-Type': 'application/json',
+        'Accept': 'application/json'
+      },
+      body: JSON.stringify({
+        sender: { name: SHOP_NAME, email: SENDER_EMAIL },
+        to: [{ email: toEmail }],
+        subject,
+        htmlContent
+      })
+    }).then(r => r.ok ? r.json() : r.text().then(t => { throw new Error('Brevo ' + r.status + ': ' + t); }));
+
+    await Promise.all([
+      sendOne(email, `Your ${SHOP_NAME} card quote`, customerHtml),
+      sendOne(SHOP_EMAIL, `New quote request — ${email}`, shopHtml)
+    ]);
+
+    res.json({ ok: true, emailed: true });
+  } catch (e) {
+    console.error('[QUOTE-LEAD] failed:', e);
+    res.status(500).json({ error: e.message || 'Failed to send quote' });
+  }
+});
+
+function escapeHtml(s) {
+  return String(s || '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
 // SPA fallback
 app.get('*', (req, res) => {
   res.sendFile(join(__dirname, 'public', 'index.html'));
