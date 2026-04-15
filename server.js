@@ -2454,9 +2454,13 @@ app.get('/quote', (req, res) => {
 // quote and ping the shop. Uses Brevo transactional API (no new deps).
 app.post('/api/quote-lead', async (req, res) => {
   try {
-    const { email, name, cards, totals, cashPct, creditPct } = req.body || {};
+    const { email, name, newsletter, cards, totals, cashPct, creditPct } = req.body || {};
     if (!email || !cards || !Array.isArray(cards) || !cards.length) {
       return res.status(400).json({ error: 'email and cards required' });
+    }
+    // Basic email shape check (server-side defence; client also validates).
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      return res.status(400).json({ error: 'invalid email' });
     }
     // Cap at 20 as a server-side guard (client also caps).
     const trimmed = cards.slice(0, 20);
@@ -2516,7 +2520,7 @@ app.post('/api/quote-lead', async (req, res) => {
     // tool still works during setup — you'll still see the lead server-side.
     if (!process.env.BREVO_API_KEY) {
       console.log('[QUOTE-LEAD] (no BREVO_API_KEY set) would email to', email, 'and', SHOP_EMAIL);
-      console.log('[QUOTE-LEAD] payload:', { email, name, cardCount: trimmed.length, totals });
+      console.log('[QUOTE-LEAD] payload:', { email, name, newsletter, cardCount: trimmed.length, totals });
       return res.json({ ok: true, emailed: false, note: 'Logged server-side. Set BREVO_API_KEY to enable email.' });
     }
 
@@ -2535,12 +2539,50 @@ app.post('/api/quote-lead', async (req, res) => {
       })
     }).then(r => r.ok ? r.json() : r.text().then(t => { throw new Error('Brevo ' + r.status + ': ' + t); }));
 
-    await Promise.all([
+    // If the customer opted in, add them to your Brevo newsletter list.
+    // Set BREVO_NEWSLETTER_LIST_ID in Render env vars (it's the numeric list ID from Brevo).
+    const subscribeIfOptedIn = async () => {
+      if (!newsletter) return { subscribed: false };
+      const listId = parseInt(process.env.BREVO_NEWSLETTER_LIST_ID || '0', 10);
+      if (!listId) {
+        console.log('[QUOTE-LEAD] newsletter opt-in but no BREVO_NEWSLETTER_LIST_ID set');
+        return { subscribed: false, reason: 'no list configured' };
+      }
+      try {
+        // createContact will add OR update. updateEnabled: true lets us upsert without a 400 if they already exist.
+        const res = await fetch('https://api.brevo.com/v3/contacts', {
+          method: 'POST',
+          headers: {
+            'api-key': process.env.BREVO_API_KEY,
+            'Content-Type': 'application/json',
+            'Accept': 'application/json'
+          },
+          body: JSON.stringify({
+            email,
+            attributes: name ? { FIRSTNAME: name } : {},
+            listIds: [listId],
+            updateEnabled: true
+          })
+        });
+        if (!res.ok) {
+          const text = await res.text();
+          console.warn('[QUOTE-LEAD] newsletter subscribe failed:', res.status, text);
+          return { subscribed: false, reason: text };
+        }
+        return { subscribed: true };
+      } catch (e) {
+        console.warn('[QUOTE-LEAD] newsletter subscribe error:', e.message);
+        return { subscribed: false, reason: e.message };
+      }
+    };
+
+    const [,, subRes] = await Promise.all([
       sendOne(email, `Your ${SHOP_NAME} card quote`, customerHtml),
-      sendOne(SHOP_EMAIL, `New quote request — ${email}`, shopHtml)
+      sendOne(SHOP_EMAIL, `New quote request — ${email}${newsletter ? ' (newsletter opt-in)' : ''}`, shopHtml),
+      subscribeIfOptedIn()
     ]);
 
-    res.json({ ok: true, emailed: true });
+    res.json({ ok: true, emailed: true, subscribed: subRes.subscribed });
   } catch (e) {
     console.error('[QUOTE-LEAD] failed:', e);
     res.status(500).json({ error: e.message || 'Failed to send quote' });
