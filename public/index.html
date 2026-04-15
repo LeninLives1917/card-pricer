@@ -1232,6 +1232,7 @@
           </div>
           <div style="display:flex; gap:8px;">
             <button class="bulk-btn primary" id="bulkStartBtn" onclick="startBulkProcess()">Process all</button>
+            <button class="bulk-btn" id="bulkRetryBtn" onclick="retryBulkFailed()" style="display:none;">Retry failed</button>
             <button class="bulk-btn" onclick="clearBulkQueue()">Clear</button>
           </div>
         </div>
@@ -1389,6 +1390,20 @@
         <button class="header-btn" onclick="showRenameDialog()" style="flex:1; font-size:12px;">Rename</button>
         <button class="header-btn" onclick="deleteCurrentSession()" style="flex:1; font-size:12px; color:var(--red);">Delete</button>
       </div>
+    </div>
+
+    <!-- Session log filter -->
+    <div style="position:relative; margin-bottom:8px;">
+      <input id="sessionSearch" class="search-input"
+             placeholder="Search cards by name, set or number..."
+             oninput="onSessionSearchInput(this.value)"
+             style="margin:0; padding-right:34px;" />
+      <button id="sessionSearchClear" type="button"
+              onclick="clearSessionSearch()"
+              style="display:none; position:absolute; right:6px; top:50%;
+                     transform:translateY(-50%); background:transparent;
+                     border:none; color:var(--text-dim); font-size:18px;
+                     cursor:pointer; padding:4px 8px;">×</button>
     </div>
 
     <div class="session-log" id="sessionLog">
@@ -2108,9 +2123,46 @@ async function tryOcrIdentify(imageData) {
 //   handles it fine, and each call finishes in ~1.2s after the first warms
 //   the cache. Too high and you just queue behind rate limits.
 const BULK_CONCURRENCY = 4;
+const BULK_STORAGE_KEY = 'cardpricer_bulk_queue_v1';
 state.bulkQueue = [];
 state._bulkSeq = 0;
 let _bulkRunning = false;
+
+// Persist bulk queue across reloads. We throttle writes and cap size so a
+// fat batch of dataUrls can't blow the 5MB localStorage quota.
+function saveBulkQueue() {
+  try {
+    // Only persist if total queue size is reasonable (<4MB of dataUrls).
+    const payload = JSON.stringify(state.bulkQueue);
+    if (payload.length > 4 * 1024 * 1024) {
+      // Too big — drop persistence rather than risk quota errors.
+      localStorage.removeItem(BULK_STORAGE_KEY);
+      return;
+    }
+    localStorage.setItem(BULK_STORAGE_KEY, payload);
+  } catch (e) {
+    // QuotaExceededError or serialization fail — nothing we can do, just skip.
+    console.warn('[BULK] persist failed:', e.message);
+    try { localStorage.removeItem(BULK_STORAGE_KEY); } catch {}
+  }
+}
+function loadBulkQueue() {
+  try {
+    const raw = localStorage.getItem(BULK_STORAGE_KEY);
+    if (!raw) return;
+    const restored = JSON.parse(raw);
+    if (!Array.isArray(restored) || !restored.length) return;
+    // Reset any 'processing' items back to 'queued' — they didn't finish.
+    state.bulkQueue = restored.map(item => ({
+      ...item,
+      status: item.status === 'processing' ? 'queued' : item.status
+    }));
+    state._bulkSeq = state.bulkQueue.reduce((m, i) => Math.max(m, i.id || 0), 0);
+    renderBulkQueue();
+  } catch (e) {
+    console.warn('[BULK] restore failed:', e.message);
+  }
+}
 
 async function handleBulkFiles(event) {
   const files = Array.from(event.target.files || []);
@@ -2126,6 +2178,7 @@ async function handleBulkFiles(event) {
     });
   }
   renderBulkQueue();
+  saveBulkQueue();
   haptic && haptic('light');
 }
 
@@ -2177,17 +2230,42 @@ function updateBulkProgress() {
                     : done === total && total > 0 ? 'Done — add more'
                     : `Process ${total} card${total !== 1 ? 's' : ''}`;
   }
+  // Show retry only when there are failed items and not actively running.
+  const retryBtn = document.getElementById('bulkRetryBtn');
+  if (retryBtn) {
+    const errCount = state.bulkQueue.filter(i => i.status === 'error').length;
+    retryBtn.style.display = (!_bulkRunning && errCount > 0) ? '' : 'none';
+    retryBtn.textContent = `Retry ${errCount} failed`;
+  }
 }
 
 function removeBulkItem(id) {
   state.bulkQueue = state.bulkQueue.filter(i => i.id !== id);
   renderBulkQueue();
+  saveBulkQueue();
 }
 
 function clearBulkQueue() {
   if (_bulkRunning) return;
   state.bulkQueue = [];
   renderBulkQueue();
+  saveBulkQueue();
+}
+
+function retryBulkFailed() {
+  if (_bulkRunning) return;
+  let retried = 0;
+  for (const item of state.bulkQueue) {
+    if (item.status === 'error') {
+      item.status = 'queued';
+      item.name_short = undefined;
+      retried++;
+    }
+  }
+  if (!retried) return;
+  renderBulkQueue();
+  saveBulkQueue();
+  startBulkProcess();
 }
 
 async function startBulkProcess() {
@@ -2221,8 +2299,10 @@ async function bulkWorker(queue) {
       console.error('[BULK] failed:', item.name, e);
       item.status = 'error';
       item.name_short = 'Err';
+      item.error_message = e.message || String(e);
     }
     renderBulkQueue();
+    saveBulkQueue();
   }
 }
 
@@ -2243,6 +2323,23 @@ async function processBulkItem(item) {
   // One card per photo in bulk mode — just use the first.
   const card = cards[0];
   item.name_short = card.name ? card.name.slice(0, 12) : '✓';
+
+  // Duplicate guard — if we've already logged a card with the same
+  // name+set+number this session, flag it and skip re-pricing/re-logging.
+  // The existing addToSessionLog still bumps duplicate_count for scans that
+  // DO reach it, so this is just the bulk-mode fast-path.
+  const dup = state.sessionLog.find(e =>
+    e.card?.name === card.name &&
+    (e.card?.set_code || '') === (card.set_code || '') &&
+    (e.card?.card_number || '') === (card.card_number || '')
+  );
+  if (dup) {
+    dup.duplicate_count = (dup.duplicate_count || 0) + 1;
+    saveSession();
+    renderSessionLog();
+    item.name_short = 'Dupe';
+    return;
+  }
 
   // Price it.
   let priced = null;
@@ -2643,6 +2740,30 @@ function saveSession() {
   }));
 }
 
+// Session log search — filters the rendered list (does NOT mutate the log).
+// Totals still reflect the full log, not just what's visible.
+state._sessionFilter = state._sessionFilter || '';
+function onSessionSearchInput(val) {
+  state._sessionFilter = (val || '').trim().toLowerCase();
+  document.getElementById('sessionSearchClear').style.display =
+    state._sessionFilter ? '' : 'none';
+  renderSessionLog();
+}
+function clearSessionSearch() {
+  const el = document.getElementById('sessionSearch');
+  if (el) el.value = '';
+  onSessionSearchInput('');
+}
+function _sessionMatchesFilter(entry, q) {
+  if (!q) return true;
+  const c = entry.card || {};
+  const hay = [
+    c.name, c.set_name, c.set_code, c.card_number,
+    c.rarity, c.variant, entry.status
+  ].filter(Boolean).join(' ').toLowerCase();
+  return hay.includes(q);
+}
+
 function renderSessionLog() {
   const container = document.getElementById('sessionLog');
   const total = document.getElementById('sessionTotalValue');
@@ -2660,7 +2781,10 @@ function renderSessionLog() {
   let totalSell = 0;
 
   const CONDITION_MULTS = { 'NM': 1.0, 'LP': 0.85, 'MP': 0.70, 'HP': 0.50, 'DMG': 0.30 };
-  container.innerHTML = state.sessionLog.map((entry, i) => {
+  const _q = state._sessionFilter || '';
+  let _visibleCount = 0;
+  const renderedRows = state.sessionLog.map((entry, i) => {
+    // Totals always sum the full log; filter only hides the rendered row.
     const marketValue = entry.market_value || entry.buy_price?.market_value || entry.cardmarket?.price || entry.cardmarket?.trend || 0;
     const condMult = (entry.buy_price?.condition_adjusted && entry.buy_price?.market_value)
       ? entry.buy_price.condition_adjusted / entry.buy_price.market_value
@@ -2674,6 +2798,10 @@ function renderSessionLog() {
 
     totalBuy += buyPrice;
     totalSell += sellPrice;
+
+    // Apply filter AFTER totals — keeps totals accurate while hiding rows.
+    if (_q && !_sessionMatchesFilter(entry, _q)) return '';
+    _visibleCount++;
 
     const dotColor = dealColor(entry);
     const status = entry.status || 'scanned';
@@ -2744,6 +2872,12 @@ function renderSessionLog() {
       </div>
     `;
   }).join('');
+
+  if (_q && _visibleCount === 0 && state.sessionLog.length > 0) {
+    container.innerHTML = `<div class="empty-state"><p>No cards match "${_q}".</p></div>`;
+  } else {
+    container.innerHTML = renderedRows;
+  }
 
   const profit = totalSell - totalBuy;
   total.textContent = formatCurrency(totalBuy);
@@ -3782,6 +3916,7 @@ document.addEventListener('DOMContentLoaded', () => {
   if (creditSlider) { creditSlider.value = state.creditPercentage; creditDisplay.textContent = state.creditPercentage + '%'; }
   renderSessionPills();
   renderWantList();
+  loadBulkQueue();
   // Restore setting inputs
   const cur = getSetting('currency', 'EUR');
   const curSel = document.getElementById('currencySelect'); if (curSel) curSel.value = cur;
