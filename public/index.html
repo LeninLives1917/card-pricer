@@ -1322,48 +1322,50 @@ async function processImage(imageData) {
       throw new Error('No cards detected in image');
     }
 
-    // Step 2: Price each card
-    loadingText.textContent = `Pricing ${cards.length} card${cards.length > 1 ? 's' : ''}...`;
-
-    const pricedCards = await Promise.all(cards.map(async (card) => {
-      try {
-        const priceResp = await fetch('/api/price', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            card,
-            buyPercentage: state.buyPercentage
-          })
-        });
-        if (priceResp.ok) {
-          return await priceResp.json();
-        }
-      } catch (e) {
-        console.error('Pricing error for', card.name, e);
-      }
-      return { card, cardmarket: null, ebay: null, buy_price: null };
+    // Step 2: Progressive pricing — render card identity IMMEDIATELY, then
+    // fill in prices as each one resolves. Perceived speed goes up sharply.
+    // Seed currentResults with pending placeholders so per-card handlers work.
+    state.currentResults = cards.map(card => ({
+      card,
+      cardmarket: null,
+      ebay: null,
+      buy_price: null,
+      _pending: true
     }));
+    renderResults(state.currentResults);
+    switchTab('results');
+    overlay.classList.add('hidden');
+    captureBtn.classList.remove('loading');
 
-    state.currentResults = pricedCards;
-    renderResults(pricedCards);
-
-    // Add to session log
-    for (const result of pricedCards) {
-      addToSessionLog(result, imageData);
-    }
+    // Fire all pricing calls in parallel; splice in results as they arrive.
+    const pricingJobs = cards.map((card, idx) =>
+      fetch('/api/price', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ card, buyPercentage: state.buyPercentage })
+      })
+        .then(r => r.ok ? r.json() : null)
+        .catch(e => { console.error('Pricing error for', card.name, e); return null; })
+        .then(priced => {
+          const result = priced || { card, cardmarket: null, ebay: null, buy_price: null };
+          state.currentResults[idx] = result;
+          renderResults(state.currentResults);
+          addToSessionLog(result, imageData);
+          return result;
+        })
+    );
+    // Wait for all so we can fire rapid-fire logic correctly, but UI is
+    // already populated progressively.
+    await Promise.all(pricingJobs);
 
     const rapidFire = getSetting('rapidFire', 'false');
     if (rapidFire === true || rapidFire === 'true') {
-      // Brief flash of results, then back to camera
-      switchTab('results');
       setTimeout(() => {
         document.getElementById('cameraVideo').classList.remove('hidden');
         document.getElementById('capturedImage').classList.add('hidden');
         document.getElementById('retakeBtn').style.display = 'none';
         switchTab('scan');
       }, 1500);
-    } else {
-      switchTab('results');
     }
 
   } catch (err) {
@@ -1404,7 +1406,8 @@ function renderResults(pricedCards) {
     const dup = findDuplicates(card);
 
     return `
-      <div class="result-card">
+      <div class="result-card${result._pending ? ' pending-prices' : ''}">
+        ${result._pending ? `<div style="padding:8px 12px; background:rgba(124,77,255,0.12); color:var(--accent-light); font-size:12px; font-weight:700;">⏳ Fetching prices…</div>` : ''}
         ${wantHit ? `<div class="want-banner">⭐ ON WANT LIST — max ${formatCurrency(wantHit.max)}</div>` : ''}
         ${dup > 0 ? `<div style="padding:8px 12px; background:rgba(255,145,0,0.1); color:var(--orange); font-size:12px; font-weight:700;">⚠ Already scanned ${dup}x in this session</div>` : ''}
         <div class="result-header">
