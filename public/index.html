@@ -1331,8 +1331,8 @@
           <input id="contrastToggle" type="checkbox" onchange="setSetting('highContrast', this.checked)" />
         </div>
         <div class="setting-row">
-          <span class="setting-label">Fast OCR-first ID (faster but risks digit misreads)</span>
-          <input id="ocrFirstToggle" type="checkbox" checked onchange="setSetting('ocrFirst', this.checked)" />
+          <span class="setting-label">Fast OCR-first ID (faster but can misread digits on holos)</span>
+          <input id="ocrFirstToggle" type="checkbox" onchange="setSetting('ocrFirst', this.checked)" />
         </div>
       </div>
 
@@ -1811,13 +1811,15 @@ function extractCardNumber(text) {
 // otherwise we fall through to Claude Vision which handles ambiguous chars
 // much better. Ambiguous digits drop confidence dramatically — the check
 // is naturally self-limiting to clean, unambiguous scans.
-const OCR_MIN_CONFIDENCE = 88;
+const OCR_MIN_CONFIDENCE = 95;
 
 async function tryOcrIdentify(imageData) {
   try {
-    // User kill-switch: localStorage.cardpricer_ocr === 'off' disables the
-    // fast path entirely. Default is ON.
-    if (getSetting('ocrFirst', 'true') === false || getSetting('ocrFirst', 'true') === 'false') {
+    // User kill-switch. Default is OFF because OCR can misread digits with
+    // high confidence on holo/textured cards and mis-ID to same-set
+    // neighbours (e.g. Obsidian Flames 223 → 225). Users opt IN via Settings.
+    const ocrPref = getSetting('ocrFirst', 'false');
+    if (ocrPref === false || ocrPref === 'false') {
       return null;
     }
     const worker = await getTesseractWorker();
@@ -3395,7 +3397,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const hap = getSetting('haptic', 'true'); const hapIn = document.getElementById('hapticToggle'); if (hapIn) hapIn.checked = (hap === true || hap === 'true');
   const hc = getSetting('highContrast', 'false'); const hcIn = document.getElementById('contrastToggle'); if (hcIn) hcIn.checked = (hc === true || hc === 'true');
   const rf = getSetting('rapidFire', 'false'); const rfIn = document.getElementById('rapidFireToggle'); if (rfIn) rfIn.checked = (rf === true || rf === 'true');
-  const ocr = getSetting('ocrFirst', 'true'); const ocrIn = document.getElementById('ocrFirstToggle'); if (ocrIn) ocrIn.checked = !(ocr === false || ocr === 'false');
+  const ocr = getSetting('ocrFirst', 'false'); const ocrIn = document.getElementById('ocrFirstToggle'); if (ocrIn) ocrIn.checked = (ocr === true || ocr === 'true');
   const sm = getSetting('sellMarkup', '110'); const smIn = document.getElementById('sellMarkup'); if (smIn) smIn.value = sm;
   // Modern UX: apply AMOLED class, hydrate strip/ribbon, wire install prompt
   if (getSetting('amoled', 'true') !== false && getSetting('amoled', 'true') !== 'false') document.body.classList.add('amoled');
