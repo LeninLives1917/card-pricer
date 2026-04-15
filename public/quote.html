@@ -10,6 +10,7 @@
 
   <link rel="preconnect" href="https://api.pokemontcg.io" crossorigin />
   <link rel="preconnect" href="https://api.scryfall.com" crossorigin />
+  <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin />
   <link rel="preconnect" href="https://fonts.googleapis.com" crossorigin />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link rel="dns-prefetch" href="https://api.pokemontcg.io" />
@@ -391,15 +392,166 @@
       }
     }
 
+    // ============================================================
+    // FAST-IDENTIFY — OCR first path (Pokémon only)
+    // ============================================================
+    // Runs Tesseract.js in the browser to extract card number + name,
+    // then queries the Pokémon TCG API to confirm. On a match, we skip
+    // Claude entirely → ~$0.008 saved per card. Any uncertainty → null,
+    // and processItem falls back to the Claude pipeline silently.
+    const fastIdentifyStats = { attempts: 0, hits: 0 };
+
+    let _tesseractLoader = null;
+    function loadTesseract() {
+      if (window.Tesseract) return Promise.resolve(window.Tesseract);
+      if (_tesseractLoader) return _tesseractLoader;
+      _tesseractLoader = new Promise((resolve, reject) => {
+        const s = document.createElement('script');
+        s.src = 'https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js';
+        s.onload = () => resolve(window.Tesseract);
+        s.onerror = reject;
+        document.head.appendChild(s);
+      });
+      return _tesseractLoader;
+    }
+
+    // Crop the bottom 22% of the image (where Pokémon print number/set code)
+    // to a separate canvas — Tesseract is ~4x faster + more accurate on
+    // the cropped strip than the full card.
+    function cropBottom(dataUrl, pct = 0.22) {
+      return new Promise((resolve, reject) => {
+        const img = new Image();
+        img.onload = () => {
+          const h = Math.round(img.height * pct);
+          const canvas = document.createElement('canvas');
+          canvas.width = img.width;
+          canvas.height = h;
+          const ctx = canvas.getContext('2d');
+          ctx.drawImage(img, 0, img.height - h, img.width, h, 0, 0, img.width, h);
+          resolve(canvas.toDataURL('image/jpeg', 0.9));
+        };
+        img.onerror = reject;
+        img.src = dataUrl;
+      });
+    }
+    function cropTop(dataUrl, pct = 0.15) {
+      return new Promise((resolve, reject) => {
+        const img = new Image();
+        img.onload = () => {
+          const h = Math.round(img.height * pct);
+          const canvas = document.createElement('canvas');
+          canvas.width = img.width;
+          canvas.height = h;
+          const ctx = canvas.getContext('2d');
+          ctx.drawImage(img, 0, 0, img.width, h, 0, 0, img.width, h);
+          resolve(canvas.toDataURL('image/jpeg', 0.9));
+        };
+        img.onerror = reject;
+        img.src = dataUrl;
+      });
+    }
+
+    async function tryFastIdentify(dataUrl) {
+      fastIdentifyStats.attempts++;
+      const t0 = performance.now();
+      try {
+        const T = await loadTesseract();
+        const [numCrop, nameCrop] = await Promise.all([
+          cropBottom(dataUrl, 0.22),
+          cropTop(dataUrl, 0.15)
+        ]);
+
+        // Two small OCR runs in parallel. Allowlist filters most misreads.
+        const [numRes, nameRes] = await Promise.all([
+          T.recognize(numCrop, 'eng', {
+            tessedit_char_whitelist: '0123456789/ABCDEFGHIJKLMNOPQRSTUVWXYZ',
+            tessedit_pageseg_mode: T.PSM?.SINGLE_BLOCK || 6
+          }),
+          T.recognize(nameCrop, 'eng', {
+            tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz \'-',
+            tessedit_pageseg_mode: T.PSM?.SINGLE_BLOCK || 6
+          })
+        ]);
+        const numText = (numRes?.data?.text || '').toUpperCase();
+        const nameText = (nameRes?.data?.text || '').replace(/[^A-Za-z '\-]+/g, ' ').trim();
+
+        // Extract number in form NNN/NNN (modern Pokémon)
+        const numMatch = numText.match(/\b(\d{1,3})\s*\/\s*(\d{1,3})\b/);
+        if (!numMatch) {
+          console.log('[FAST-ID] no number found in:', numText.slice(0, 60));
+          return null;
+        }
+        const cardNum = numMatch[1].padStart(1, '0');
+        const printedTotal = parseInt(numMatch[2], 10);
+
+        // Candidate name(s) — take the longest 4+ char word from the top strip.
+        const nameWords = nameText.split(/\s+/).filter(w => w.length >= 4 && w.length <= 20);
+        if (!nameWords.length) {
+          console.log('[FAST-ID] no name candidate in:', nameText.slice(0, 60));
+          return null;
+        }
+        const nameCandidate = nameWords.sort((a, b) => b.length - a.length)[0];
+
+        // Query Pokémon TCG API — require BOTH name AND number match.
+        const q = `name:"${nameCandidate}" number:${cardNum}`;
+        const url = `https://api.pokemontcg.io/v2/cards?q=${encodeURIComponent(q)}&pageSize=8`;
+        const resp = await fetch(url);
+        if (!resp.ok) return null;
+        const data = await resp.json();
+        const results = data?.data || [];
+        if (!results.length) {
+          console.log('[FAST-ID] no api match for', nameCandidate, cardNum);
+          return null;
+        }
+        // Prefer the set with matching printedTotal when multiple hits.
+        const narrowed = results.filter(c => c.set?.printedTotal === printedTotal);
+        const pool = narrowed.length ? narrowed : results;
+
+        // Safety: only trust if exactly one card remains after narrowing.
+        if (pool.length !== 1) {
+          console.log('[FAST-ID] ambiguous (' + pool.length + ' matches) for', nameCandidate, cardNum);
+          return null;
+        }
+        const c = pool[0];
+
+        // Shape response to match Claude's identify output so /api/price works.
+        const card = {
+          game: 'pokemon',
+          name: c.name,
+          set_name: c.set?.name || '',
+          set_code: (c.set?.id || '').toUpperCase(),
+          card_number: `${c.number}/${c.set?.printedTotal || ''}`,
+          rarity: c.rarity || '',
+          variant: 'normal',         // can't determine from OCR — fallback assumption
+          language: 'english',
+          condition_estimate: 'NM',  // can't grade without vision; assume NM
+          hp: c.hp || ''
+        };
+
+        fastIdentifyStats.hits++;
+        const ms = Math.round(performance.now() - t0);
+        console.log(`[FAST-ID] ✓ ${c.name} ${card.card_number} in ${ms}ms (hit rate ${fastIdentifyStats.hits}/${fastIdentifyStats.attempts})`);
+        return card;
+      } catch (e) {
+        console.warn('[FAST-ID] error:', e.message);
+        return null;
+      }
+    }
+
     async function processItem(item) {
       // Resize client-side to cut upload time.
       const upload = await resizeDataUrl(item.dataUrl, 1100, 0.88);
 
-      // Identify via streaming endpoint.
-      const ident = await fetchIdentifyStream({ image: upload });
-      const cards = ident?.cards || [];
-      if (!cards.length) throw new Error('No card detected');
-      const card = cards[0];
+      // Try OCR-first fast path (Pokémon only). Falls back silently.
+      let card = await tryFastIdentify(upload);
+
+      if (!card) {
+        // Fall through to Claude identify.
+        const ident = await fetchIdentifyStream({ image: upload });
+        const cards = ident?.cards || [];
+        if (!cards.length) throw new Error('No card detected');
+        card = cards[0];
+      }
 
       // Price it.
       const pr = await fetch('/api/price', {
