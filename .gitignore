@@ -1,0 +1,14 @@
+node_modules/
+.env
+*.log
+npm-debug.log*
+.DS_Store
+Thumbs.db
+extract*.py
+find_*.py
+readhtml*.js
+test-*.js
+test-tcggo.js
+/tmp/
+.vscode/
+.idea/

@@ -1,0 +1,17 @@
+{
+  "name": "Card Pricer",
+  "short_name": "CardPricer",
+  "description": "Real-time trading card pricing — AI-powered identification with Cardmarket & eBay pricing",
+  "start_url": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0a0a0f",
+  "theme_color": "#0a0a0f",
+  "icons": [
+    {
+      "src": "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='20' fill='%236c5ce7'/><text x='50' y='68' text-anchor='middle' font-size='50' font-family='system-ui' font-weight='bold' fill='white'>CP</text></svg>",
+      "sizes": "any",
+      "type": "image/svg+xml"
+    }
+  ]
+}

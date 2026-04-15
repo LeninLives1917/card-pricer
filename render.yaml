@@ -1,0 +1,22 @@
+services:
+  - type: web
+    name: card-pricer
+    runtime: node
+    plan: free
+    buildCommand: npm install
+    startCommand: node server.js
+    envVars:
+      - key: NODE_VERSION
+        value: 20
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: EBAY_APP_ID
+        sync: false
+      - key: EBAY_CERT_ID
+        sync: false
+      - key: JUSTTCG_API_KEY
+        sync: false
+      - key: RAPIDAPI_KEY
+        sync: false
+      - key: DEFAULT_BUY_PERCENTAGE
+        value: "60"
