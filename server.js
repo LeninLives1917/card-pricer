@@ -532,6 +532,8 @@ app.post('/api/lookup-by-number', express.json(), async (req, res) => {
             card_number: d.collector_number,
             rarity: d.rarity,
             image_url: d.image_uris?.normal || d.image_uris?.large,
+            cardmarket_url: d.purchase_uris?.cardmarket || null,
+            tcgplayer_url: d.purchase_uris?.tcgplayer || null,
             source: 'scryfall.com (ocr-direct)'
           };
           console.log(`[OCR-LOOKUP] Scryfall HIT: ${card.name} ${card.set_code} #${card.card_number}`);
@@ -582,6 +584,7 @@ app.post('/api/lookup-by-number', express.json(), async (req, res) => {
               rarity: d.rarity,
               hp: d.hp,
               image_url: d.images?.large || d.images?.small,
+              cardmarket_url: d.cardmarket?.url || null,
               tcgplayer_url: d.tcgplayer?.url,
               source: 'pokemontcg.io (ocr-direct)'
             };
@@ -775,6 +778,9 @@ async function verifyCard(card) {
         card_number: verified.card_number || card.card_number,
         rarity: verified.rarity || card.rarity,
         reference_image: verified.image || null,
+        // Direct product URLs — the whole reason for this verify pass.
+        cardmarket_url: verified.cardmarket_url || null,
+        tcgplayer_url: verified.tcgplayer_url || null,
         verified: true,
         db_source: verified.source
       };
@@ -903,6 +909,8 @@ async function verifyMagic(card) {
       card_number: d.collector_number,
       rarity: d.rarity,
       image: d.image_uris?.normal || d.card_faces?.[0]?.image_uris?.normal,
+      cardmarket_url: d.purchase_uris?.cardmarket || null,
+      tcgplayer_url: d.purchase_uris?.tcgplayer || null,
       source: 'scryfall.com'
     };
   } catch {
@@ -914,6 +922,8 @@ async function verifyMagic(card) {
         name: d.name, set_name: d.set_name, set_code: d.set.toUpperCase(),
         card_number: d.collector_number, rarity: d.rarity,
         image: d.image_uris?.normal || d.card_faces?.[0]?.image_uris?.normal,
+        cardmarket_url: d.purchase_uris?.cardmarket || null,
+        tcgplayer_url: d.purchase_uris?.tcgplayer || null,
         source: 'scryfall.com'
       };
     } catch { return null; }
@@ -1095,6 +1105,9 @@ async function verifyPokemon(card) {
         rarity: globalBest.rarity,
         hp: globalBest.hp,
         image: globalBest.images?.large || globalBest.images?.small,
+        // Direct Cardmarket product URL for this exact print — not a search.
+        cardmarket_url: globalBest.cardmarket?.url || null,
+        tcgplayer_url: globalBest.tcgplayer?.url || null,
         source: 'pokemontcg.io'
       };
     }
@@ -1133,6 +1146,8 @@ async function verifyPokemon(card) {
               rarity: best.rarity,
               hp: best.hp,
               image: best.images?.large || best.images?.small,
+              cardmarket_url: best.cardmarket?.url || null,
+              tcgplayer_url: best.tcgplayer?.url || null,
               source: 'pokemontcg.io'
             };
           }
@@ -1359,12 +1374,13 @@ function buildCardmarketUrl(card) {
   // / Scryfall) still override this in the caller when available.
 
   // Build a narrow, reliable search URL.
-  // Include card number AND set name so the search lands on the right print.
-  const parts = [card.name];
+  // IMPORTANT: Cardmarket's search treats the query as close to exact-match
+  // against the product *name* only — it does NOT search set name or card
+  // number. Including either returns "no matches for your query". So we send
+  // just the card name (Cardmarket lists every print of that name) and rely
+  // on the user to pick the right one from the results list.
   const num = card.card_number ? card.card_number.replace(/\/.*/, '') : '';
-  if (num) parts.push(num);
-  if (card.set_name) parts.push(card.set_name);
-  const searchTerm = parts.filter(Boolean).join(' ');
+  const searchTerm = card.name || '';
 
   const searchUrl = gameSlug
     ? `https://www.cardmarket.com/en/${gameSlug}/Products/Search?searchString=${encodeURIComponent(searchTerm)}`

@@ -3600,9 +3600,13 @@ function renderResultSheet() {
   const isPending = entry._pending;
 
   // Build a working Cardmarket URL every time — even before pricing returns.
-  // Priority: live product URL from pricing > filtered search > raw search >
-  // last-ditch game-scoped search string built from the card itself.
-  let cmUrl = cm.url || cm.filtered_url || cm.product_url || '';
+  // Priority order:
+  //  1. card.cardmarket_url  — DIRECT product URL from pokemontcg.io/scryfall,
+  //                            attached at verify-time. Exact card, no search.
+  //  2. cm.url / cm.product_url — from pricing step (may also be direct).
+  //  3. cm.filtered_url       — pricing-step search URL with filters.
+  //  4. Synthesised game-scoped search by card name (search-only fallback).
+  let cmUrl = card.cardmarket_url || cm.url || cm.product_url || cm.filtered_url || '';
   if (cmUrl && !cmUrl.startsWith('http')) cmUrl = 'https://www.cardmarket.com' + cmUrl;
   if (!cmUrl && card.name) {
     const gameSlug = card.game === 'magic' ? 'Magic'
@@ -3611,7 +3615,9 @@ function renderResultSheet() {
                    : card.game === 'lorcana' ? 'Lorcana'
                    : card.game === 'onepiece' ? 'OnePiece'
                    : card.game === 'starwars' ? 'StarWarsUnlimited' : '';
-    const q = [card.name, card.card_number].filter(Boolean).join(' ');
+    // Cardmarket search only matches against the product name — never
+    // include set name or card number here or we get "no matches".
+    const q = card.name || '';
     cmUrl = gameSlug
       ? `https://www.cardmarket.com/en/${gameSlug}/Products/Search?searchString=${encodeURIComponent(q)}`
       : `https://www.cardmarket.com/en/Search?searchString=${encodeURIComponent(q)}`;
