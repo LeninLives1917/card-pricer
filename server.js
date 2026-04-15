@@ -2469,7 +2469,9 @@ app.post('/api/quote-lead', async (req, res) => {
     const SHOP_NAME = process.env.SHOP_NAME || 'Board & Brewed';
     const SENDER_EMAIL = process.env.BREVO_SENDER_EMAIL || SHOP_EMAIL;
 
-    const rows = trimmed.map(c => {
+    // Build card rows. Customer email gets rows without photos; shop email
+    // gets a separate rows variant that references attached photo filenames.
+    const rowsPlain = trimmed.map(c => {
       const cash = (c.cash_offer ?? 0).toFixed(2);
       const credit = (c.credit_offer ?? 0).toFixed(2);
       const mv = (c.market_value ?? 0).toFixed(2);
@@ -2480,6 +2482,27 @@ app.post('/api/quote-lead', async (req, res) => {
         <td style="padding:8px; border-bottom:1px solid #eee; text-align:right; color:#22c55e;">€${credit}</td>
       </tr>`;
     }).join('');
+    const rows = rowsPlain;
+
+    // Extract photo dataUrls → Brevo attachments (base64, strip header).
+    // Skip any that are missing or malformed. Cap at ~9MB total just in case.
+    const attachments = [];
+    let totalBytes = 0;
+    trimmed.forEach((c, i) => {
+      if (!c.photo || typeof c.photo !== 'string' || !c.photo.startsWith('data:image/')) return;
+      const commaIdx = c.photo.indexOf(',');
+      if (commaIdx < 0) return;
+      const b64 = c.photo.slice(commaIdx + 1);
+      const estBytes = Math.floor(b64.length * 0.75);
+      if (totalBytes + estBytes > 9 * 1024 * 1024) return; // respect Brevo limit
+      totalBytes += estBytes;
+      // Try to keep the card name in the filename for quick triage
+      const safeName = (c.name || 'card').replace(/[^a-z0-9_\-]+/gi, '_').slice(0, 30);
+      attachments.push({
+        name: `${String(i + 1).padStart(2, '0')}-${safeName}.jpg`,
+        content: b64
+      });
+    });
 
     const customerHtml = `
       <div style="font-family:-apple-system,system-ui,sans-serif; max-width:640px; margin:0 auto; padding:24px; color:#222;">
@@ -2508,11 +2531,23 @@ app.post('/api/quote-lead', async (req, res) => {
     const shopHtml = `
       <div style="font-family:sans-serif;">
         <h3>New quote request</h3>
-        <p><b>Email:</b> ${escapeHtml(email)}${name ? ' &middot; <b>Name:</b> ' + escapeHtml(name) : ''}</p>
+        <p><b>Email:</b> ${escapeHtml(email)}${name ? ' &middot; <b>Name:</b> ' + escapeHtml(name) : ''}${newsletter ? ' &middot; <b>Newsletter:</b> YES' : ''}</p>
         <p><b>Totals:</b> Market €${(totals?.market || 0).toFixed(2)} &middot; Cash €${(totals?.cash || 0).toFixed(2)} &middot; Credit €${(totals?.credit || 0).toFixed(2)}</p>
+        <p style="color:#666; font-size:13px;">${attachments.length} card photo${attachments.length !== 1 ? 's' : ''} attached.</p>
         <table style="width:100%; border-collapse:collapse;">
-          <thead><tr><th align="left">Card</th><th align="right">MV</th><th align="right">Cash</th><th align="right">Credit</th></tr></thead>
-          <tbody>${rows}</tbody>
+          <thead><tr><th align="left">#</th><th align="left">Card</th><th align="right">MV</th><th align="right">Cash</th><th align="right">Credit</th></tr></thead>
+          <tbody>${trimmed.map((c, i) => {
+            const cash = (c.cash_offer ?? 0).toFixed(2);
+            const credit = (c.credit_offer ?? 0).toFixed(2);
+            const mv = (c.market_value ?? 0).toFixed(2);
+            return `<tr>
+              <td style="padding:8px; border-bottom:1px solid #eee; color:#666;">${String(i+1).padStart(2,'0')}</td>
+              <td style="padding:8px; border-bottom:1px solid #eee;">${escapeHtml(c.name || 'Unknown')}${c.set_code ? ' <span style="color:#888;">(' + escapeHtml(c.set_code) + ')</span>' : ''}${c.card_number ? ' <span style="color:#888;">#' + escapeHtml(c.card_number) + '</span>' : ''}${c.condition_estimate ? ' <span style="color:#888;">· ' + escapeHtml(c.condition_estimate) + '</span>' : ''}</td>
+              <td style="padding:8px; border-bottom:1px solid #eee; text-align:right;">€${mv}</td>
+              <td style="padding:8px; border-bottom:1px solid #eee; text-align:right; color:#b45309;">€${cash}</td>
+              <td style="padding:8px; border-bottom:1px solid #eee; text-align:right; color:#ca8a04;">€${credit}</td>
+            </tr>`;
+          }).join('')}</tbody>
         </table>
       </div>`;
 
@@ -2524,20 +2559,24 @@ app.post('/api/quote-lead', async (req, res) => {
       return res.json({ ok: true, emailed: false, note: 'Logged server-side. Set BREVO_API_KEY to enable email.' });
     }
 
-    const sendOne = (toEmail, subject, htmlContent) => fetch('https://api.brevo.com/v3/smtp/email', {
-      method: 'POST',
-      headers: {
-        'api-key': process.env.BREVO_API_KEY,
-        'Content-Type': 'application/json',
-        'Accept': 'application/json'
-      },
-      body: JSON.stringify({
+    const sendOne = (toEmail, subject, htmlContent, attachmentsList) => {
+      const payload = {
         sender: { name: SHOP_NAME, email: SENDER_EMAIL },
         to: [{ email: toEmail }],
         subject,
         htmlContent
-      })
-    }).then(r => r.ok ? r.json() : r.text().then(t => { throw new Error('Brevo ' + r.status + ': ' + t); }));
+      };
+      if (attachmentsList && attachmentsList.length) payload.attachment = attachmentsList;
+      return fetch('https://api.brevo.com/v3/smtp/email', {
+        method: 'POST',
+        headers: {
+          'api-key': process.env.BREVO_API_KEY,
+          'Content-Type': 'application/json',
+          'Accept': 'application/json'
+        },
+        body: JSON.stringify(payload)
+      }).then(r => r.ok ? r.json() : r.text().then(t => { throw new Error('Brevo ' + r.status + ': ' + t); }));
+    };
 
     // If the customer opted in, add them to your Brevo newsletter list.
     // Set BREVO_NEWSLETTER_LIST_ID in Render env vars (it's the numeric list ID from Brevo).
@@ -2578,7 +2617,7 @@ app.post('/api/quote-lead', async (req, res) => {
 
     const [,, subRes] = await Promise.all([
       sendOne(email, `Your ${SHOP_NAME} card quote`, customerHtml),
-      sendOne(SHOP_EMAIL, `New quote request — ${email}${newsletter ? ' (newsletter opt-in)' : ''}`, shopHtml),
+      sendOne(SHOP_EMAIL, `New quote request — ${email}${newsletter ? ' (newsletter opt-in)' : ''}`, shopHtml, attachments),
       subscribeIfOptedIn()
     ]);
 

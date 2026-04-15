@@ -496,7 +496,16 @@
       btn.textContent = 'Unlocking…';
 
       let mTotal = 0, cTotal = 0, crTotal = 0;
-      const cards = priced.map(it => {
+      // Shrink photos for the shop email — 500px jpeg @ 0.75 quality keeps
+      // attachments small (~30-60KB each) so 20 cards fit comfortably
+      // within Brevo's 10MB email limit.
+      const photos = await Promise.all(priced.map(async (it, i) => {
+        try {
+          const thumb = await resizeDataUrl(it.dataUrl, 500, 0.75);
+          return { idx: i, dataUrl: thumb };
+        } catch { return { idx: i, dataUrl: null }; }
+      }));
+      const cards = priced.map((it, i) => {
         mTotal += it.market || 0; cTotal += it.cash || 0; crTotal += it.credit || 0;
         return {
           name: it.card.name,
@@ -506,7 +515,8 @@
           condition_estimate: it.card.condition_estimate,
           market_value: it.market,
           cash_offer: it.cash,
-          credit_offer: it.credit
+          credit_offer: it.credit,
+          photo: photos[i]?.dataUrl || null
         };
       });
 
