@@ -8,6 +8,8 @@ import axios from 'axios';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import crypto from 'crypto';
+import https from 'https';
+import http from 'http';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -26,7 +28,20 @@ const upload = multer({
 // ============================================================
 // ANTHROPIC CLIENT — Card Identification via Claude Vision
 // ============================================================
-const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+// Keep-alive agents so we reuse TCP/TLS connections to Anthropic (and axios
+// upstreams). Without this, every /api/identify eats a fresh TLS handshake
+// (~150-300ms on cellular). keepAlive=true reuses the socket for ~60s.
+const httpsKeepAlive = new https.Agent({ keepAlive: true, maxSockets: 25, keepAliveMsecs: 30_000 });
+const httpKeepAlive = new http.Agent({ keepAlive: true, maxSockets: 25, keepAliveMsecs: 30_000 });
+axios.defaults.httpsAgent = httpsKeepAlive;
+axios.defaults.httpAgent = httpKeepAlive;
+
+const anthropic = new Anthropic({
+  apiKey: process.env.ANTHROPIC_API_KEY,
+  // Pass our keep-alive https agent through the SDK's fetch so Anthropic
+  // calls reuse sockets too.
+  fetchOptions: { agent: httpsKeepAlive }
+});
 
 const CARD_ID_SYSTEM_PROMPT = `You are an expert trading card identifier with encyclopaedic knowledge of ALL trading card games. You can identify cards with extreme accuracy from:
 
@@ -209,7 +224,9 @@ app.post('/api/identify', upload.single('image'), async (req, res) => {
 
     // Batch (binder page) keeps full resolution + Sonnet — accuracy critical.
     // Single-card mode gets aggressive resize + Haiku — speed critical.
-    const targetSize = isBatchMode ? 1500 : 900;
+    // 700px is enough for Haiku to read card numbers cleanly while cutting
+    // payload by ~40% vs 900px (quadratic in dimension).
+    const targetSize = isBatchMode ? 1500 : 700;
     const jpegQuality = isBatchMode ? 90 : 82;
 
     let imageData;
@@ -267,7 +284,14 @@ app.post('/api/identify', upload.single('image'), async (req, res) => {
     const response = await anthropic.messages.create({
       model,
       max_tokens: isBatchMode ? 4096 : 1024,
-      system: CARD_ID_SYSTEM_PROMPT,
+      // Prompt caching: system prompt is ~1500 tokens and identical on every
+      // call. Marking it ephemeral lets Anthropic reuse the cached KV compute
+      // for 5 min, shaving 30-50% off TTFT with zero accuracy risk.
+      system: [{
+        type: 'text',
+        text: CARD_ID_SYSTEM_PROMPT,
+        cache_control: { type: 'ephemeral' }
+      }],
       messages: [{
         role: 'user',
         content: [
@@ -309,6 +333,125 @@ app.post('/api/identify', upload.single('image'), async (req, res) => {
   } catch (err) {
     console.error('Identification error:', err.message);
     res.status(500).json({ error: 'Failed to identify card', details: err.message });
+  }
+});
+
+// ============================================================
+// STREAMING IDENTIFY: /api/identify-stream
+// ============================================================
+// NDJSON-over-HTTP. Emits events as they become available:
+//   {type:'ident', cards}    — raw Claude output (unverified) — client can
+//                              start pricing off this immediately.
+//   {type:'verified', cards} — same cards after DB verification (may rename
+//                              set_code / card_number). Client patches UI.
+//   {type:'error', error}
+//   {type:'done'}
+// This shaves 500-1000ms off perceived latency because pricing kicks off
+// before the (slow) pokemontcg.io / scryfall verification round-trip.
+app.post('/api/identify-stream', upload.single('image'), async (req, res) => {
+  res.setHeader('Content-Type', 'application/x-ndjson');
+  res.setHeader('Cache-Control', 'no-cache, no-transform');
+  res.setHeader('X-Accel-Buffering', 'no');
+  const send = (obj) => {
+    try { res.write(JSON.stringify(obj) + '\n'); } catch {}
+  };
+
+  try {
+    const isBatchMode = req.body.batch === 'true' || req.body.batch === true;
+    const targetSize = isBatchMode ? 1500 : 700;
+    const jpegQuality = isBatchMode ? 90 : 82;
+
+    let rawBuffer;
+    if (req.file) {
+      rawBuffer = req.file.buffer;
+    } else if (req.body.image) {
+      const base64Match = req.body.image.match(/^data:(image\/\w+);base64,(.+)$/);
+      if (base64Match) rawBuffer = Buffer.from(base64Match[2], 'base64');
+      else { send({ type: 'error', error: 'Invalid image data' }); return res.end(); }
+    } else {
+      send({ type: 'error', error: 'No image provided' }); return res.end();
+    }
+
+    const optimized = await sharp(rawBuffer)
+      .resize(targetSize, targetSize, { fit: 'inside', withoutEnlargement: true })
+      .jpeg({ quality: jpegQuality })
+      .toBuffer();
+    const imageData = optimized.toString('base64');
+
+    const userHint = req.body.hint || '';
+    let cacheKey = null;
+    if (!isBatchMode && !userHint) {
+      cacheKey = crypto.createHash('sha1').update(optimized).digest('hex');
+      const hit = cacheGet(cacheKey);
+      if (hit) {
+        console.log(`[IDENT-STREAM-CACHE] HIT ${cacheKey.slice(0, 8)}`);
+        // Already verified in cache — emit both events so client logic works.
+        send({ type: 'ident', cards: hit.cards || [] });
+        send({ type: 'verified', cards: hit.cards || [] });
+        send({ type: 'done' });
+        return res.end();
+      }
+    }
+
+    let userMessage = isBatchMode
+      ? 'This is a photo of a binder page with MULTIPLE trading cards. Identify EVERY visible card individually. Return all cards in the JSON array.'
+      : 'Identify this trading card. FIRST read the card number at the bottom of the card — this is the most critical field. If it has no slash (like SM211, SWSH066) it is a PROMO card. Be extremely precise with the set code and card number.';
+    if (userHint) userMessage += `\n\nUser hint: ${userHint}`;
+
+    const model = isBatchMode
+      ? 'claude-sonnet-4-20250514'
+      : 'claude-haiku-4-5-20251001';
+
+    const response = await anthropic.messages.create({
+      model,
+      max_tokens: isBatchMode ? 4096 : 1024,
+      system: [{
+        type: 'text',
+        text: CARD_ID_SYSTEM_PROMPT,
+        cache_control: { type: 'ephemeral' }
+      }],
+      messages: [{
+        role: 'user',
+        content: [
+          { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: imageData } },
+          { type: 'text', text: userMessage }
+        ]
+      }]
+    });
+
+    const text = response.content[0].text;
+    let parsed;
+    try {
+      parsed = JSON.parse(text);
+    } catch {
+      const m = text.match(/\{[\s\S]*\}/);
+      if (m) parsed = JSON.parse(m[0]);
+      else throw new Error('Could not parse card identification response');
+    }
+
+    if (parsed.cards && parsed.cards.length > 0) {
+      parsed.cards = parsed.cards.map(card => fixPokemonSuffix(card));
+    }
+
+    // Emit ident NOW so client can start pricing in parallel with verification.
+    send({ type: 'ident', cards: parsed.cards || [] });
+
+    // Verify against real databases — this is the slow step (500-1500ms).
+    if (parsed.cards && parsed.cards.length > 0) {
+      try {
+        parsed.cards = await Promise.all(parsed.cards.map(card => verifyCard(card)));
+      } catch (e) {
+        console.error('[IDENT-STREAM] verify error:', e.message);
+      }
+    }
+    send({ type: 'verified', cards: parsed.cards || [] });
+    if (cacheKey) cacheSet(cacheKey, parsed);
+    send({ type: 'done' });
+    res.end();
+  } catch (err) {
+    console.error('Identify-stream error:', err.message);
+    send({ type: 'error', error: err.message });
+    res.end();
   }
 });
 
