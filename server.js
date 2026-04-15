@@ -226,8 +226,8 @@ app.post('/api/identify', upload.single('image'), async (req, res) => {
     // Single-card mode gets aggressive resize + Haiku — speed critical.
     // 700px is enough for Haiku to read card numbers cleanly while cutting
     // payload by ~40% vs 900px (quadratic in dimension).
-    const targetSize = isBatchMode ? 1500 : 700;
-    const jpegQuality = isBatchMode ? 90 : 82;
+    const targetSize = isBatchMode ? 1500 : 900;
+    const jpegQuality = isBatchMode ? 90 : 85;
 
     let imageData;
     let mediaType;
@@ -358,8 +358,8 @@ app.post('/api/identify-stream', upload.single('image'), async (req, res) => {
 
   try {
     const isBatchMode = req.body.batch === 'true' || req.body.batch === true;
-    const targetSize = isBatchMode ? 1500 : 700;
-    const jpegQuality = isBatchMode ? 90 : 82;
+    const targetSize = isBatchMode ? 1500 : 900;
+    const jpegQuality = isBatchMode ? 90 : 85;
 
     let rawBuffer;
     if (req.file) {

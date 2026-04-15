@@ -1967,15 +1967,18 @@ async function processImage(imageData) {
   loadingText.textContent = 'Identifying card...';
 
   try {
-    // Pre-crop to card frame + resize: slashes cellular upload time AND
-    // gives Claude a tighter, higher-SNR image (less background to describe).
+    // Pre-resize single-card uploads to slash cellular upload time.
+    // NOTE: Card-frame cropping was disabled — the assumed frame coords
+    // didn't line up well on real camera captures (object-fit/letterbox),
+    // so cropping was sometimes chopping the card number and causing
+    // misidentification. We'd rather upload a bigger frame that Claude
+    // can read correctly. Put the crop behind a toggle later if we want.
     let uploadImage = imageData;
     if (state.mode !== 'batch') {
       try {
-        const cropped = await cropToCardFrame(imageData);
-        uploadImage = await resizeDataUrl(cropped, 700, 0.78);
+        uploadImage = await resizeDataUrl(imageData, 800, 0.82);
       } catch (e) {
-        console.warn('Client crop/resize failed, sending original:', e);
+        console.warn('Client resize failed, sending original:', e);
       }
     }
 
