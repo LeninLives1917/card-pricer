@@ -1007,40 +1007,35 @@ function buildCardmarketUrl(card) {
   const gameSlug = getGameSlug(card.game);
   const condCode = CONDITION_TO_CM[card.condition_estimate] || 2;
 
-  // Try to build a direct product URL
-  let productUrl = null;
-  let productUrlFiltered = null;
+  // We no longer guess direct product URLs — Cardmarket's slug rules have too
+  // many edge cases (alt-arts, punctuation, variant suffixes) and a guessed
+  // URL 404s more often than it works. API-provided URLs (from pokemontcg.io
+  // / Scryfall) still override this in the caller when available.
 
-  if (card.game === 'pokemon' && card.set_code && card.card_number) {
-    const setId = card.set_code.toLowerCase();
-    const cmCode = POKEMON_CM_SET_CODES[setId] || card.set_code.toUpperCase();
-    const num = card.card_number.replace(/\/.*/, '');
+  // Build a narrow, reliable search URL.
+  // Include card number AND set name so the search lands on the right print.
+  const parts = [card.name];
+  const num = card.card_number ? card.card_number.replace(/\/.*/, '') : '';
+  if (num) parts.push(num);
+  if (card.set_name) parts.push(card.set_name);
+  const searchTerm = parts.filter(Boolean).join(' ');
 
-    // Build set slug: use mapping or hyphenate the set name
-    const setSlug = POKEMON_CM_SET_SLUGS[setId]
-      || (card.set_name || '').replace(/[^a-zA-Z0-9\s-]/g, '').replace(/\s+/g, '-');
-
-    // Build card slug: replace spaces with hyphens, keep special chars like "ex"
-    const cardSlug = (card.name || '').replace(/[^a-zA-Z0-9\s-]/g, '').replace(/\s+/g, '-');
-
-    if (setSlug && cardSlug) {
-      productUrl = `https://www.cardmarket.com/en/Pokemon/Products/Singles/${setSlug}/${cardSlug}-${cmCode}${num}`;
-      productUrlFiltered = `${productUrl}?language=1&minCondition=${condCode}`;
-      console.log(`[CM-URL] Built direct URL: ${productUrl}`);
-    }
-  }
-
-  // Always build search URL as fallback
-  const searchTerm = card.name + (card.card_number ? ` ${card.card_number.replace(/\/.*/, '')}` : '');
   const searchUrl = gameSlug
     ? `https://www.cardmarket.com/en/${gameSlug}/Products/Search?searchString=${encodeURIComponent(searchTerm)}`
     : `https://www.cardmarket.com/en/Search?searchString=${encodeURIComponent(searchTerm)}`;
 
+  // Narrower fallback if the above returns nothing — just name + number
+  const narrowTerm = card.name + (num ? ` ${num}` : '');
+  const narrowUrl = gameSlug
+    ? `https://www.cardmarket.com/en/${gameSlug}/Products/Search?searchString=${encodeURIComponent(narrowTerm)}`
+    : `https://www.cardmarket.com/en/Search?searchString=${encodeURIComponent(narrowTerm)}`;
+
   return {
-    product_url: productUrl,
-    product_url_filtered: productUrlFiltered,
+    product_url: null,
+    product_url_filtered: null,
     search_url: searchUrl,
     filtered_search_url: `${searchUrl}&language=1&minCondition=${condCode}`,
+    narrow_search_url: narrowUrl,
     source: 'cardmarket_link'
   };
 }
@@ -1754,8 +1749,8 @@ app.post('/api/price', async (req, res) => {
     let pricing = {
       card: card,
       cardmarket: {
-        url: cmLinks.product_url || cmLinks.search_url,
-        filtered_url: cmLinks.product_url_filtered || cmLinks.filtered_search_url,
+        url: cmLinks.search_url,
+        filtered_url: cmLinks.filtered_search_url,
         search_url: cmLinks.search_url,
         source: 'cardmarket_link',
         note: 'Tap to check live Cardmarket prices'
