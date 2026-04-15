@@ -64,9 +64,19 @@ For a SINGLE card:
     "language": "english|japanese|german|french|italian|spanish|other",
     "condition_estimate": "NM|LP|MP|HP|DMG",
     "condition_notes": "Brief notes on visible wear, whitening, scratches, etc.",
+    "graded": null,
     "confidence": 0.95
   }]
 }
+
+If the card is in a professional GRADING SLAB (a hard plastic case with a colored label showing a grade), populate the "graded" field INSTEAD of leaving it null:
+  "graded": { "company": "PSA|BGS|CGC|SGC", "grade": 10 }
+Visual cues for slabs:
+- PSA: red label at top, large white number, black holographic logo. Grades 1-10.
+- BGS (Beckett): black label (standard) or silver/gold (premium), sub-grades visible, "BGS" logo.
+- CGC: blue/teal label, "CGC Trading Cards" text.
+- SGC: tuxedo (black+white) label.
+When graded is set, still estimate condition_estimate as if ungraded (will be overridden) and keep everything else accurate.
 
 For a BINDER PAGE with multiple cards:
 {
@@ -1931,18 +1941,34 @@ app.post('/api/price', async (req, res) => {
       }
     }
 
-    // Calculate buy price — Priority (best EUR source first):
-    // 1. Cardmarket live scrape (direct EUR, but usually blocked)
-    // 2. RapidAPI CardMarket (direct EUR)
-    // 3. Cardmarket via game API (Pokemon TCG API / Scryfall — cached EUR)
-    // 4. JustTCG (TCGPlayer USD × 0.92 → EUR, condition-specific)
-    // 5. TCGPlayer via game API (USD × 0.92 → EUR)
-    // 6. eBay sold median
+    // GRADED card pricing — overrides everything else.
+    // If the card is slabbed (PSA/BGS/CGC/SGC), use graded comp from TCGGO.
     let bestPrice = null;
     let priceSource = '';
     let priceCurrency = 'EUR';
+    let isGraded = false;
 
-    if (pricing.cardmarket?.price) {
+    if (card.graded && card.graded.company && card.graded.grade) {
+      isGraded = true;
+      const company = String(card.graded.company).toUpperCase();
+      const grade = Number(card.graded.grade);
+      const r = pricing.rapidapi_cm || {};
+      // Pick matching graded comp; fall back to nearest available.
+      let gp = null, gLabel = '';
+      if (company === 'PSA' && grade === 10 && r.graded_psa10) { gp = r.graded_psa10; gLabel = 'PSA 10'; }
+      else if (company === 'PSA' && grade === 9 && r.graded_psa9) { gp = r.graded_psa9; gLabel = 'PSA 9'; }
+      else if ((company === 'CGC' || company === 'BGS') && grade >= 9.5 && r.graded_cgc10) { gp = r.graded_cgc10; gLabel = `${company} ${grade}`; }
+      // Closest-match fallbacks
+      else if (grade >= 9.5 && r.graded_psa10) { gp = r.graded_psa10; gLabel = `${company} ${grade} (using PSA 10 comp)`; }
+      else if (grade >= 8.5 && r.graded_psa9) { gp = r.graded_psa9; gLabel = `${company} ${grade} (using PSA 9 comp)`; }
+
+      if (gp) {
+        bestPrice = gp;
+        priceSource = `Graded ${gLabel} · TCGGO`;
+      }
+    }
+
+    if (!bestPrice && pricing.cardmarket?.price) {
       bestPrice = pricing.cardmarket.price;
       const sourceLabels = {
         'rapidapi_cm': 'RapidAPI CM (live)',
@@ -1950,28 +1976,37 @@ app.post('/api/price', async (req, res) => {
         'api': 'Cardmarket (API)'
       };
       priceSource = sourceLabels[pricing.cardmarket.source] || 'Cardmarket';
-    } else if (pricing.justtcg?.price_eur) {
+    }
+    if (!bestPrice && pricing.justtcg?.price_eur) {
       bestPrice = pricing.justtcg.price_eur;
       priceSource = `JustTCG $${pricing.justtcg.price_usd.toFixed(2)} → €${bestPrice.toFixed(2)} (${pricing.justtcg.condition_full})`;
-    } else if (pricing.tcgplayer?.price) {
+    }
+    if (!bestPrice && pricing.tcgplayer?.price) {
       bestPrice = Math.round(pricing.tcgplayer.price * USD_TO_EUR * 100) / 100;
       const src = pricing.tcgplayer.source === 'justtcg' ? 'JustTCG' : 'TCGPlayer';
       priceSource = `${src} $${pricing.tcgplayer.price.toFixed(2)} → €${bestPrice.toFixed(2)}`;
-    } else if (pricing.ebay?.median_price) {
+    }
+    if (!bestPrice && pricing.ebay?.median_price) {
       bestPrice = pricing.ebay.median_price;
       priceCurrency = pricing.ebay.currency || 'EUR';
       priceSource = `eBay sold median`;
     }
 
     if (bestPrice) {
-      const adjustedPrice = bestPrice * conditionMult;
+      // Graded cards: skip the condition multiplier — the grade IS the condition.
+      const effectiveMult = isGraded ? 1.0 : conditionMult;
+      const adjustedPrice = bestPrice * effectiveMult;
+      const condLabel = isGraded
+        ? `${card.graded.company} ${card.graded.grade}`
+        : (card.condition_estimate || 'NM');
       pricing.buy_price = {
         suggested: Math.round(adjustedPrice * buyPercentage * 100) / 100,
         market_value: bestPrice,
         condition_adjusted: Math.round(adjustedPrice * 100) / 100,
         currency: priceCurrency,
-        formula: `${bestPrice.toFixed(2)}€ × ${conditionMult} (${card.condition_estimate}) × ${(buyPercentage * 100).toFixed(0)}% = ${(Math.round(adjustedPrice * buyPercentage * 100) / 100).toFixed(2)}€`,
-        price_source: priceSource
+        formula: `${bestPrice.toFixed(2)}€ × ${effectiveMult} (${condLabel}) × ${(buyPercentage * 100).toFixed(0)}% = ${(Math.round(adjustedPrice * buyPercentage * 100) / 100).toFixed(2)}€`,
+        price_source: priceSource,
+        graded: isGraded ? card.graded : null
       };
     }
 

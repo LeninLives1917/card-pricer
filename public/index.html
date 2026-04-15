@@ -1415,6 +1415,7 @@ function renderResults(pricedCards) {
     return `
       <div class="result-card${result._pending ? ' pending-prices' : ''}">
         ${result._pending ? `<div style="padding:8px 12px; background:rgba(124,77,255,0.12); color:var(--accent-light); font-size:12px; font-weight:700;">⏳ Fetching prices…</div>` : ''}
+        ${card.graded ? `<div style="padding:8px 12px; background:linear-gradient(90deg, #dc2626, #f59e0b); color:white; font-size:13px; font-weight:800; letter-spacing:0.5px;">🏆 GRADED — ${card.graded.company} ${card.graded.grade}</div>` : ''}
         ${wantHit ? `<div class="want-banner">⭐ ON WANT LIST — max ${formatCurrency(wantHit.max)}</div>` : ''}
         ${dup > 0 ? `<div style="padding:8px 12px; background:rgba(255,145,0,0.1); color:var(--orange); font-size:12px; font-weight:700;">⚠ Already scanned ${dup}x in this session</div>` : ''}
         <div class="result-header">
@@ -1663,6 +1664,7 @@ function renderSessionLog() {
     const customer = state.customerView;
     const dupBadge = entry.duplicate_count > 0 ? `<span class="dup-badge">dup ${entry.duplicate_count + 1}x</span>` : '';
     const wantBadge = entry.want_hit ? `<span class="want-badge">⭐ WANT</span>` : '';
+    const gradedBadge = entry.card?.graded ? `<span style="background:linear-gradient(90deg,#dc2626,#f59e0b); color:white; padding:2px 6px; border-radius:4px; font-size:10px; font-weight:800;">🏆 ${entry.card.graded.company} ${entry.card.graded.grade}</span>` : '';
 
     return `
       <div class="log-item">
@@ -1670,7 +1672,7 @@ function renderSessionLog() {
         <span class="deal-dot" style="background:${dotColor}" title="${(buyPrice/(marketValue||1)*100).toFixed(0)}% of MV"></span>
         ${entry.reference_image ? `<img class="log-thumb" src="${entry.reference_image}" onclick="toggleLogDetails(${i})" />` : '<div class="log-thumb" onclick="toggleLogDetails(' + i + ')"></div>'}
         <div class="log-info" onclick="toggleLogDetails(${i})">
-          <div class="log-name">${entry.card?.name || 'Unknown'} ${wantBadge} ${dupBadge}</div>
+          <div class="log-name">${entry.card?.name || 'Unknown'} ${gradedBadge} ${wantBadge} ${dupBadge}</div>
           <div class="log-detail">
             ${entry.card?.set_name || entry.card?.set_code || ''} #${entry.card?.card_number || '?'}
             &middot; ${entry.card?.condition_estimate || '?'}
