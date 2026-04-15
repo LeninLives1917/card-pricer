@@ -542,16 +542,11 @@
       // Resize client-side to cut upload time.
       const upload = await resizeDataUrl(item.dataUrl, 1100, 0.88);
 
-      // Try OCR-first fast path (Pokémon only). Falls back silently.
-      let card = await tryFastIdentify(upload);
-
-      if (!card) {
-        // Fall through to Claude identify.
-        const ident = await fetchIdentifyStream({ image: upload });
-        const cards = ident?.cards || [];
-        if (!cards.length) throw new Error('No card detected');
-        card = cards[0];
-      }
+      // Always use Claude identify — OCR fast-path disabled due to false positives.
+      const ident = await fetchIdentifyStream({ image: upload });
+      const cards = ident?.cards || [];
+      if (!cards.length) throw new Error('No card detected');
+      let card = cards[0];
 
       // Price it.
       const pr = await fetch('/api/price', {
