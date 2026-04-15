@@ -1255,6 +1255,29 @@ async function handleFileUpload(event) {
   event.target.value = '';
 }
 
+// Client-side resize before upload — cuts cellular upload time dramatically.
+// Single-card mode: 900px max, JPEG q0.82. Batch: keep original resolution.
+function resizeDataUrl(dataUrl, maxSize = 900, quality = 0.82) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+      try {
+        const w = img.naturalWidth, h = img.naturalHeight;
+        if (Math.max(w, h) <= maxSize) { resolve(dataUrl); return; }
+        const scale = maxSize / Math.max(w, h);
+        const canvas = document.createElement('canvas');
+        canvas.width = Math.round(w * scale);
+        canvas.height = Math.round(h * scale);
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        resolve(canvas.toDataURL('image/jpeg', quality));
+      } catch (e) { reject(e); }
+    };
+    img.onerror = reject;
+    img.src = dataUrl;
+  });
+}
+
 async function processImage(imageData) {
   state.isProcessing = true;
   const overlay = document.getElementById('loadingOverlay');
@@ -1265,13 +1288,23 @@ async function processImage(imageData) {
   loadingText.textContent = 'Identifying card...';
 
   try {
+    // Pre-resize single-card uploads to slash cellular upload time.
+    let uploadImage = imageData;
+    if (state.mode !== 'batch') {
+      try {
+        uploadImage = await resizeDataUrl(imageData, 900, 0.82);
+      } catch (e) {
+        console.warn('Client resize failed, sending original:', e);
+      }
+    }
+
     // Step 1: Identify
     const hint = document.getElementById('hintInput').value;
     const idResp = await fetch('/api/identify', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        image: imageData,
+        image: uploadImage,
         batch: state.mode === 'batch',
         hint: hint
       })

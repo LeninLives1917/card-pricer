@@ -7,6 +7,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import axios from 'axios';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
+import crypto from 'crypto';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -170,28 +171,47 @@ DISNEY LORCANA (game="lorcana"):
 // ============================================================
 // CARD IDENTIFICATION ENDPOINT
 // ============================================================
+// Simple LRU cache for recent identifications (keyed by image hash).
+// Re-scanning the same card (camera double-fires, operator re-scans)
+// returns instantly instead of re-hitting Claude.
+const IDENT_CACHE_MAX = 100;
+const identCache = new Map();
+function cacheGet(key) {
+  if (!identCache.has(key)) return null;
+  const val = identCache.get(key);
+  // Re-insert to mark as recently used
+  identCache.delete(key);
+  identCache.set(key, val);
+  return val;
+}
+function cacheSet(key, val) {
+  if (identCache.has(key)) identCache.delete(key);
+  identCache.set(key, val);
+  if (identCache.size > IDENT_CACHE_MAX) {
+    const first = identCache.keys().next().value;
+    identCache.delete(first);
+  }
+}
+
 app.post('/api/identify', upload.single('image'), async (req, res) => {
   try {
+    const isBatchMode = req.body.batch === 'true' || req.body.batch === true;
+
+    // Batch (binder page) keeps full resolution + Sonnet — accuracy critical.
+    // Single-card mode gets aggressive resize + Haiku — speed critical.
+    const targetSize = isBatchMode ? 1500 : 900;
+    const jpegQuality = isBatchMode ? 90 : 82;
+
     let imageData;
     let mediaType;
+    let rawBuffer;
 
     if (req.file) {
-      const optimized = await sharp(req.file.buffer)
-        .resize(1500, 1500, { fit: 'inside', withoutEnlargement: true })
-        .jpeg({ quality: 90 })
-        .toBuffer();
-      imageData = optimized.toString('base64');
-      mediaType = 'image/jpeg';
+      rawBuffer = req.file.buffer;
     } else if (req.body.image) {
       const base64Match = req.body.image.match(/^data:(image\/\w+);base64,(.+)$/);
       if (base64Match) {
-        const rawBuffer = Buffer.from(base64Match[2], 'base64');
-        const optimized = await sharp(rawBuffer)
-          .resize(1500, 1500, { fit: 'inside', withoutEnlargement: true })
-          .jpeg({ quality: 90 })
-          .toBuffer();
-        imageData = optimized.toString('base64');
-        mediaType = 'image/jpeg';
+        rawBuffer = Buffer.from(base64Match[2], 'base64');
       } else {
         return res.status(400).json({ error: 'Invalid image data' });
       }
@@ -199,8 +219,25 @@ app.post('/api/identify', upload.single('image'), async (req, res) => {
       return res.status(400).json({ error: 'No image provided' });
     }
 
-    const isBatchMode = req.body.batch === 'true' || req.body.batch === true;
+    const optimized = await sharp(rawBuffer)
+      .resize(targetSize, targetSize, { fit: 'inside', withoutEnlargement: true })
+      .jpeg({ quality: jpegQuality })
+      .toBuffer();
+    imageData = optimized.toString('base64');
+    mediaType = 'image/jpeg';
+
+    // Cache lookup — only for single-card mode, and only when no user hint
+    // (a hint changes the expected output).
     const userHint = req.body.hint || '';
+    let cacheKey = null;
+    if (!isBatchMode && !userHint) {
+      cacheKey = crypto.createHash('sha1').update(optimized).digest('hex');
+      const hit = cacheGet(cacheKey);
+      if (hit) {
+        console.log(`[IDENT-CACHE] HIT ${cacheKey.slice(0, 8)}`);
+        return res.json(hit);
+      }
+    }
 
     let userMessage = isBatchMode
       ? 'This is a photo of a binder page with MULTIPLE trading cards. Identify EVERY visible card individually. Return all cards in the JSON array.'
@@ -210,9 +247,16 @@ app.post('/api/identify', upload.single('image'), async (req, res) => {
       userMessage += `\n\nUser hint: ${userHint}`;
     }
 
+    // Haiku 4.5 for single-card ID (fast + cheap, plenty accurate for reading
+    // a card number + name). Sonnet 4 for batch binder pages (needs to see
+    // many small cards accurately).
+    const model = isBatchMode
+      ? 'claude-sonnet-4-20250514'
+      : 'claude-haiku-4-5-20251001';
+
     const response = await anthropic.messages.create({
-      model: 'claude-sonnet-4-20250514',
-      max_tokens: 4096,
+      model,
+      max_tokens: isBatchMode ? 4096 : 1024,
       system: CARD_ID_SYSTEM_PROMPT,
       messages: [{
         role: 'user',
@@ -250,11 +294,18 @@ app.post('/api/identify', upload.single('image'), async (req, res) => {
       parsed.cards = await Promise.all(parsed.cards.map(card => verifyCard(card)));
     }
 
+    if (cacheKey) cacheSet(cacheKey, parsed);
     res.json(parsed);
   } catch (err) {
     console.error('Identification error:', err.message);
     res.status(500).json({ error: 'Failed to identify card', details: err.message });
   }
+});
+
+// Lightweight health endpoint — used by UptimeRobot / any uptime pinger
+// to keep the Render free-tier dyno warm (no cold-start wait at card shows).
+app.get('/api/health', (req, res) => {
+  res.json({ ok: true, ts: Date.now(), uptime: process.uptime() });
 });
 
 
