@@ -8,6 +8,16 @@
   <meta name="theme-color" content="#0a0a0f">
   <link rel="manifest" href="/manifest.json">
   <title>Card Pricer</title>
+  <script>
+    // Register service worker for PWA install + offline shell.
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('/service-worker.js').catch(err => {
+          console.warn('SW registration failed:', err);
+        });
+      });
+    }
+  </script>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
 
@@ -902,13 +912,17 @@
     <!-- Action buttons row -->
     <div class="action-btn-row">
       <button class="header-btn" onclick="exportToSpreadsheet()" style="color:var(--green);">Export XLSX</button>
+      <button class="header-btn" onclick="exportTcgPowerToolsCsv()" style="color:var(--green);">Export CSV</button>
+      <button class="header-btn" onclick="refreshSessionPrices()">Refresh Prices</button>
       <button class="header-btn" onclick="undoLastScan()">Undo</button>
-      <button class="header-btn" onclick="showSummary()">Summary</button>
-      <button class="header-btn" onclick="showHistory()">History</button>
     </div>
     <div class="action-btn-row">
+      <button class="header-btn" onclick="showSummary()">Summary</button>
+      <button class="header-btn" onclick="showHistory()">History</button>
       <button class="header-btn" id="customerViewBtn" onclick="toggleCustomerView()">Customer View</button>
       <button class="header-btn" onclick="shareSession()">Share</button>
+    </div>
+    <div class="action-btn-row">
       <button class="header-btn" onclick="openOfferBuilder()">Offer</button>
       <button class="header-btn" onclick="applyBulkDiscount()">Bulk −%</button>
       <button class="header-btn" id="editLogBtn" onclick="toggleDeleteMode()">Edit</button>
@@ -1242,6 +1256,48 @@ function setMode(mode) {
 // ============================================================
 // CAPTURE & IDENTIFY
 // ============================================================
+// ============================================================
+// BLUR DETECTION — Laplacian-variance approximation
+// ============================================================
+// We compute a simplified Laplacian (sum of absolute differences with the
+// 4 cardinal neighbours) over a downscaled grayscale version of the capture.
+// Blurry images have low edge-energy → low variance. ~3ms for a 200×200 grid.
+// Tuned threshold ≈ 120 — adjustable if users see false positives.
+function blurScore(canvas) {
+  try {
+    const SZ = 200;
+    const tmp = document.createElement('canvas');
+    tmp.width = SZ;
+    tmp.height = SZ;
+    const ctx = tmp.getContext('2d');
+    ctx.drawImage(canvas, 0, 0, SZ, SZ);
+    const { data } = ctx.getImageData(0, 0, SZ, SZ);
+    // Grayscale buffer
+    const g = new Float32Array(SZ * SZ);
+    for (let i = 0, p = 0; i < data.length; i += 4, p++) {
+      g[p] = 0.299 * data[i] + 0.587 * data[i+1] + 0.114 * data[i+2];
+    }
+    // Laplacian: |4*c - N - S - E - W|
+    let sum = 0, sumSq = 0, n = 0;
+    for (let y = 1; y < SZ - 1; y++) {
+      for (let x = 1; x < SZ - 1; x++) {
+        const c = g[y*SZ + x];
+        const lap = Math.abs(4*c - g[(y-1)*SZ+x] - g[(y+1)*SZ+x] - g[y*SZ+x-1] - g[y*SZ+x+1]);
+        sum += lap;
+        sumSq += lap*lap;
+        n++;
+      }
+    }
+    const mean = sum / n;
+    const variance = (sumSq / n) - (mean * mean);
+    return variance;
+  } catch (e) {
+    console.warn('Blur check failed:', e);
+    return Infinity; // Skip rejection if we can't measure
+  }
+}
+const BLUR_THRESHOLD = 120;
+
 async function captureAndIdentify() {
   if (state.isProcessing) return;
 
@@ -1252,6 +1308,18 @@ async function captureAndIdentify() {
   canvas.width = video.videoWidth || 1280;
   canvas.height = video.videoHeight || 960;
   canvas.getContext('2d').drawImage(video, 0, 0);
+
+  // Auto-reject blurry captures — huge accuracy win and saves API spend.
+  // Only enforce if user hasn't explicitly disabled it in settings.
+  if (getSetting('blurReject', 'true') !== false && getSetting('blurReject', 'true') !== 'false') {
+    const score = blurScore(canvas);
+    console.log(`[BLUR] variance = ${score.toFixed(1)} (threshold ${BLUR_THRESHOLD})`);
+    if (score < BLUR_THRESHOLD) {
+      if (!confirm(`That shot looks blurry (score ${Math.round(score)}). Scan anyway?\n\nTip: hold the phone steady, tap the card to focus, and make sure the card number is sharp.`)) {
+        return;
+      }
+    }
+  }
 
   const imageData = canvas.toDataURL('image/jpeg', 0.92);
 
@@ -1866,6 +1934,7 @@ function renderSessionLog() {
         <div class="log-detail-row">
           <button class="corr-btn" onclick="ebayTitle(state.sessionLog[${i}])">Copy eBay title</button>
           <button class="corr-btn" onclick="viewLogItem(${i})">View full</button>
+          <button class="corr-btn" style="color:var(--red);" onclick="reportBadId(${i})">${entry.bad_id_reported ? '✓ Reported' : 'Report bad ID'}</button>
         </div>
       </div>
     `;
@@ -2031,6 +2100,206 @@ function exportToSpreadsheet() {
   const today = new Date().toISOString().slice(0, 10);
   const sessName = (state.sessions[state.currentSessionId]?.name || 'session').replace(/[^a-z0-9]/gi, '-');
   XLSX.writeFile(wb, `card-prices-${sessName}-${today}.xlsx`);
+}
+
+// ============================================================
+// TCG POWER TOOLS CSV EXPORT
+// ============================================================
+// Format matches TCG Power Tools' Cardmarket bulk-upload CSV importer:
+// semicolon-separated, one row per card, with the fields TCGPT reads to match
+// against Cardmarket's product catalogue and stage stock changes.
+// Columns: englishName;expansion;cardNumber;amount;price;condition;language;isFoil;isReverseHolo;isSigned;isFirstEdition;comments
+function csvEscape(val) {
+  if (val === null || val === undefined) return '';
+  const s = String(val);
+  // TCGPT uses semicolon separator; quote if the value contains ; or " or newline.
+  if (/[;"\n\r]/.test(s)) return '"' + s.replace(/"/g, '""') + '"';
+  return s;
+}
+
+// Map our internal condition tags to Cardmarket's short codes (the format TCGPT expects).
+const CM_CONDITION_MAP = {
+  'Mint': 'M',
+  'Near Mint': 'NM',
+  'NM': 'NM',
+  'Excellent': 'EX',
+  'EX': 'EX',
+  'Good': 'GD',
+  'GD': 'GD',
+  'Light Played': 'LP',
+  'LP': 'LP',
+  'Played': 'PL',
+  'PL': 'PL',
+  'Poor': 'PO',
+  'PO': 'PO'
+};
+
+function exportTcgPowerToolsCsv() {
+  if (state.sessionLog.length === 0) {
+    alert('No cards to export!');
+    return;
+  }
+
+  const header = [
+    'englishName','expansion','cardNumber','amount','price','condition',
+    'language','isFoil','isReverseHolo','isSigned','isFirstEdition','comments'
+  ];
+
+  const lines = [header.join(';')];
+
+  for (const entry of state.sessionLog) {
+    const card = entry.card || {};
+    // Skip cards that don't have a graded slab or normal sell price — we still include graded for completeness
+    const cm = entry.cardmarket || {};
+    const bp = entry.buy_price || {};
+    const mv = entry.market_value || bp.market_value || cm.price || cm.trend || 0;
+    const sellPrice = entry.custom_sell ?? Math.round(mv * 1.1 * 100) / 100;
+    const cond = CM_CONDITION_MAP[card.condition_estimate] || 'NM';
+    const variant = (card.variant || '').toLowerCase();
+    const isFoil = /foil|holo|rainbow|secret|alt/.test(variant) && !/reverse/.test(variant) ? '1' : '0';
+    const isReverseHolo = /reverse/.test(variant) ? '1' : '0';
+    const isFirstEdition = /1st|first\s*edition/.test(variant) ? '1' : '0';
+    const isSigned = (entry.reason_tags || []).includes('signed') ? '1' : '0';
+
+    const comments = [
+      card.set_code ? `Set: ${card.set_code}` : '',
+      card.graded ? `GRADED ${card.graded.company} ${card.graded.grade}` : '',
+      entry.notes || ''
+    ].filter(Boolean).join(' | ');
+
+    const row = [
+      csvEscape(card.name || ''),
+      csvEscape(card.set_name || ''),
+      csvEscape((card.card_number || '').split('/')[0]),
+      '1',
+      sellPrice.toFixed(2),
+      cond,
+      (card.language || 'English'),
+      isFoil,
+      isReverseHolo,
+      isSigned,
+      isFirstEdition,
+      csvEscape(comments)
+    ];
+    lines.push(row.join(';'));
+  }
+
+  // BOM so Excel opens UTF-8 correctly
+  const csv = '\uFEFF' + lines.join('\r\n');
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const today = new Date().toISOString().slice(0, 10);
+  const sessName = (state.sessions[state.currentSessionId]?.name || 'session').replace(/[^a-z0-9]/gi, '-');
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `tcgpowertools-${sessName}-${today}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+// ============================================================
+// SESSION PRICE REFRESH
+// ============================================================
+// Re-prices every card in the current session by calling /api/price again.
+// Useful before listing — prices move, and a session from last week is stale.
+async function refreshSessionPrices() {
+  if (state.sessionLog.length === 0) {
+    alert('Nothing to refresh!');
+    return;
+  }
+  if (!confirm(`Re-price all ${state.sessionLog.length} cards in this session?\n\nThis re-fetches live market data and will overwrite current prices (custom buy/sell edits are preserved).`)) {
+    return;
+  }
+
+  const overlay = document.getElementById('loadingOverlay');
+  const loadingText = document.getElementById('loadingText');
+  overlay.classList.remove('hidden');
+
+  let done = 0;
+  const total = state.sessionLog.length;
+  const errors = [];
+
+  // Run in batches of 4 to avoid hammering pricing APIs
+  const batchSize = 4;
+  for (let i = 0; i < state.sessionLog.length; i += batchSize) {
+    const chunk = state.sessionLog.slice(i, i + batchSize);
+    await Promise.all(chunk.map(async (entry, j) => {
+      const idx = i + j;
+      try {
+        const resp = await fetch('/api/price', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            card: entry.card,
+            buyPercentage: state.buyPercentage
+          })
+        });
+        if (!resp.ok) throw new Error('pricing failed');
+        const priced = await resp.json();
+        // Preserve user's custom edits and metadata
+        state.sessionLog[idx].cardmarket = priced.cardmarket;
+        state.sessionLog[idx].ebay = priced.ebay;
+        state.sessionLog[idx].buy_price = priced.buy_price;
+        state.sessionLog[idx].justtcg = priced.justtcg;
+        state.sessionLog[idx].rapidapi_cm = priced.rapidapi_cm;
+        state.sessionLog[idx].market_value = priced.market_value;
+        state.sessionLog[idx].refreshed_at = Date.now();
+      } catch (e) {
+        errors.push(entry.card?.name || 'Unknown');
+      }
+      done++;
+      loadingText.textContent = `Refreshing prices... ${done}/${total}`;
+    }));
+  }
+
+  saveSession();
+  renderSessionLog();
+  overlay.classList.add('hidden');
+
+  if (errors.length) {
+    alert(`Refreshed ${total - errors.length}/${total} cards.\n\nFailed:\n${errors.slice(0, 10).join('\n')}${errors.length > 10 ? `\n… +${errors.length - 10} more` : ''}`);
+  } else {
+    alert(`Refreshed ${total} cards with fresh market data.`);
+  }
+}
+
+// ============================================================
+// REPORT BAD ID — per-row feedback to improve identification
+// ============================================================
+async function reportBadId(idx) {
+  const entry = state.sessionLog[idx];
+  if (!entry) return;
+  const reason = prompt(
+    `Report bad identification for "${entry.card?.name || 'card'}"?\n\nOptional: describe what's wrong (e.g. "wrong set", "should be holo", "not Charizard ex").`,
+    ''
+  );
+  if (reason === null) return;
+
+  try {
+    const resp = await fetch('/api/report-bad-id', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        card: entry.card,
+        reason,
+        image: entry.image || null,
+        timestamp: entry.timestamp,
+        ua: navigator.userAgent
+      })
+    });
+    if (resp.ok) {
+      entry.bad_id_reported = true;
+      saveSession();
+      renderSessionLog();
+      alert('Thanks — report logged. You can correct the card with the search pill on the result row.');
+    } else {
+      alert('Could not send report. Try again?');
+    }
+  } catch (e) {
+    alert('Could not send report: ' + e.message);
+  }
 }
 
 // ============================================================

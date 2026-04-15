@@ -319,6 +319,40 @@ app.get('/api/health', (req, res) => {
 });
 
 // ============================================================
+// BAD-ID FEEDBACK: /api/report-bad-id
+// ============================================================
+// Append a JSONL line to logs/bad-ids.log with the card + reason the user
+// flagged. Useful to spot systematic ID failures (e.g. "always mis-IDs
+// reverse-holo Pikachus from Evolving Skies") without needing a DB.
+app.post('/api/report-bad-id', express.json({ limit: '15mb' }), async (req, res) => {
+  try {
+    const { card, reason, image, timestamp, ua } = req.body || {};
+    const fs = await import('fs');
+    const path = await import('path');
+    const logDir = path.join(__dirname, 'logs');
+    if (!fs.existsSync(logDir)) fs.mkdirSync(logDir, { recursive: true });
+    const entry = {
+      t: new Date().toISOString(),
+      reason: (reason || '').slice(0, 500),
+      card: card ? {
+        name: card.name, game: card.game, set_name: card.set_name,
+        set_code: card.set_code, card_number: card.card_number,
+        rarity: card.rarity, variant: card.variant
+      } : null,
+      had_image: !!image,
+      ua: (ua || '').slice(0, 200),
+      orig_timestamp: timestamp
+    };
+    fs.appendFileSync(path.join(logDir, 'bad-ids.log'), JSON.stringify(entry) + '\n');
+    console.log(`[BAD-ID] ${entry.card?.name || '?'} — ${entry.reason || '(no reason)'}`);
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('[BAD-ID] error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ============================================================
 // OCR-FIRST LOOKUP: /api/lookup-by-number
 // ============================================================
 // The client runs Tesseract.js locally, parses the card number, and hits
