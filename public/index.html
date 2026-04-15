@@ -3596,6 +3596,24 @@ function renderResultSheet() {
   const thumb = entry.image || card.image_url || '';
   const isPending = entry._pending;
 
+  // Build a working Cardmarket URL every time — even before pricing returns.
+  // Priority: live product URL from pricing > filtered search > raw search >
+  // last-ditch game-scoped search string built from the card itself.
+  let cmUrl = cm.url || cm.filtered_url || cm.product_url || '';
+  if (cmUrl && !cmUrl.startsWith('http')) cmUrl = 'https://www.cardmarket.com' + cmUrl;
+  if (!cmUrl && card.name) {
+    const gameSlug = card.game === 'magic' ? 'Magic'
+                   : card.game === 'pokemon' ? 'Pokemon'
+                   : card.game === 'yugioh' ? 'YuGiOh'
+                   : card.game === 'lorcana' ? 'Lorcana'
+                   : card.game === 'onepiece' ? 'OnePiece'
+                   : card.game === 'starwars' ? 'StarWarsUnlimited' : '';
+    const q = [card.name, card.card_number].filter(Boolean).join(' ');
+    cmUrl = gameSlug
+      ? `https://www.cardmarket.com/en/${gameSlug}/Products/Search?searchString=${encodeURIComponent(q)}`
+      : `https://www.cardmarket.com/en/Search?searchString=${encodeURIComponent(q)}`;
+  }
+
   const gradedBadge = card.graded ? `<span style="background:#ffd740;color:#1a1200;font-size:10px;font-weight:800;padding:2px 6px;border-radius:6px;margin-left:6px;">${card.graded.company} ${card.graded.grade}</span>` : '';
 
   body.innerHTML = `
@@ -3640,6 +3658,16 @@ function renderResultSheet() {
         <span>Profit at ask: <strong class="${_sheetAsk && (sell - _sheetAsk) >= 0 ? 'profit-pos' : 'profit-neg'}">${_sheetAsk ? (sell - _sheetAsk >= 0 ? '+' : '') + '€' + (sell - _sheetAsk).toFixed(2) : '—'}</strong></span>
       </div>
     </div>
+
+    ${cmUrl ? `
+    <a href="${cmUrl}" target="_blank" rel="noopener"
+       style="display:flex;align-items:center;justify-content:center;gap:8px;
+              margin:12px 0 4px;padding:14px;border-radius:12px;
+              background:linear-gradient(135deg,#ff6b00,#ff8c00);
+              color:#fff;font-weight:700;font-size:15px;text-decoration:none;
+              box-shadow:0 4px 14px rgba(255,107,0,.35);">
+      🛒 View on Cardmarket
+    </a>` : ''}
 
     <div class="sheet-actions">
       <button class="sheet-action bought" onclick="sheetActionBought()">✓ Bought</button>
