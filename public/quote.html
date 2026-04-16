@@ -5,35 +5,27 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
   <meta name="theme-color" content="#0f172a" />
   <title>Get a Quote for Your Cards — Board & Brewed</title>
-  <meta name="description" content="Upload photos of your trading cards and get an instant indicative cash or store-credit offer." />
+  <meta name="description" content="Enter your trading card details and get an instant indicative cash or store-credit offer." />
   <link rel="icon" href="/brand/logo.png" type="image/png" />
 
-  <link rel="preconnect" href="https://api.pokemontcg.io" crossorigin />
-  <link rel="preconnect" href="https://api.scryfall.com" crossorigin />
-  <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin />
   <link rel="preconnect" href="https://fonts.googleapis.com" crossorigin />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link rel="dns-prefetch" href="https://api.pokemontcg.io" />
-  <link rel="dns-prefetch" href="https://api.scryfall.com" />
-  <!-- Fivo Sans isn't on Google Fonts; use Nunito Sans as a close free
-       substitute so the /quote page feels native to boardandbrewed.ie. -->
   <link href="https://fonts.googleapis.com/css2?family=Nunito+Sans:wght@400;600;700;900&display=swap" rel="stylesheet" />
 
   <style>
     :root {
-      /* Board & Brewed brand palette (sampled from boardandbrewed.ie) */
-      --bg: #1c1917;            /* stone-900 warm near-black */
-      --bg-deep: #0c0a09;       /* even darker for body */
-      --panel: #292524;         /* stone-800 */
-      --panel-2: #44403c;       /* stone-700 */
-      --text: #fafaf9;          /* stone-50 */
-      --text-dim: #a8a29e;      /* stone-400 */
-      --accent: #b45309;        /* amber-700 — main brand orange */
-      --accent-hover: #d97706;  /* amber-600 */
-      --yellow: #facc15;        /* yellow-400 — highlight */
-      --cream: #f5f5f4;         /* stone-100 */
-      --cash: #f59e0b;          /* amber-500 */
-      --credit: #facc15;        /* yellow-400 — credit is better than cash */
+      --bg: #1c1917;
+      --bg-deep: #0c0a09;
+      --panel: #292524;
+      --panel-2: #44403c;
+      --text: #fafaf9;
+      --text-dim: #a8a29e;
+      --accent: #b45309;
+      --accent-hover: #d97706;
+      --yellow: #facc15;
+      --cream: #f5f5f4;
+      --cash: #f59e0b;
+      --credit: #facc15;
       --border: #44403c;
       --shadow: 0 4px 20px rgba(0,0,0,0.5);
     }
@@ -47,32 +39,39 @@
     .brand-name { font-size: 20px; font-weight: 900; letter-spacing: -0.01em; color: var(--cream); }
     .brand-tag { font-size: 13px; color: var(--text-dim); font-weight: 600; }
 
-    h1 { font-size: 30px; margin: 8px 0 10px; line-height: 1.15; font-weight: 900; letter-spacing: -0.02em; color: var(--cream); }
+    h1 { font-size: 28px; margin: 8px 0 10px; line-height: 1.15; font-weight: 900; letter-spacing: -0.02em; color: var(--cream); }
     h1 .accent { color: var(--accent); }
-    .sub { color: var(--text-dim); font-size: 15px; margin: 0 0 28px; line-height: 1.55; }
+    .sub { color: var(--text-dim); font-size: 15px; margin: 0 0 24px; line-height: 1.55; }
 
     .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 14px; padding: 18px; margin-bottom: 16px; box-shadow: var(--shadow); }
 
-    .drop { display: block; border: 2px dashed var(--border); border-radius: 12px; padding: 32px 16px; text-align: center; cursor: pointer; transition: all 0.15s; background: rgba(255,255,255,0.02); }
-    .drop:hover, .drop.dragover { border-color: var(--accent); background: rgba(245, 158, 11, 0.06); }
-    .drop-icon { font-size: 38px; margin-bottom: 8px; }
-    .drop-title { font-size: 16px; font-weight: 600; margin-bottom: 4px; }
-    .drop-hint { font-size: 13px; color: var(--text-dim); }
-    .drop input[type=file] { display: none; }
+    /* How-to diagram */
+    .how-to { display: flex; gap: 18px; align-items: flex-start; margin-bottom: 20px; flex-wrap: wrap; }
+    .card-diagram { flex: 0 0 auto; }
+    .how-to-text { flex: 1; min-width: 200px; }
+    .how-to-text h3 { margin: 0 0 8px; font-size: 16px; font-weight: 700; color: var(--cream); }
+    .how-to-text p { margin: 0 0 6px; font-size: 13px; color: var(--text-dim); line-height: 1.55; }
+    .how-to-text .step { display: flex; gap: 8px; align-items: flex-start; margin-bottom: 8px; }
+    .step-num { width: 22px; height: 22px; border-radius: 50%; background: var(--accent); color: white; font-size: 12px; font-weight: 700; display: grid; place-items: center; flex-shrink: 0; margin-top: 1px; }
+    .step-text { font-size: 13px; color: var(--text); line-height: 1.45; }
+    .step-text code { background: var(--panel-2); padding: 1px 5px; border-radius: 4px; font-size: 12px; color: var(--yellow); }
 
-    .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(100px, 1fr)); gap: 8px; margin-top: 16px; }
-    .tile { position: relative; aspect-ratio: 2.5 / 3.5; border-radius: 8px; background-size: cover; background-position: center; background-color: #000; overflow: hidden; }
-    .tile-status { position: absolute; bottom: 0; left: 0; right: 0; padding: 6px 4px; font-size: 11px; font-weight: 600; text-align: center; background: rgba(0,0,0,0.75); backdrop-filter: blur(4px); }
-    .tile.queued .tile-status { color: var(--text-dim); }
-    .tile.processing .tile-status { color: var(--accent); animation: pulse 1s infinite; }
-    .tile.done .tile-status { color: var(--yellow); }
-    .tile.error .tile-status { color: #ef4444; }
-    .tile-remove { position: absolute; top: 4px; right: 4px; width: 22px; height: 22px; border-radius: 50%; background: rgba(0,0,0,0.6); color: white; border: none; font-size: 14px; cursor: pointer; line-height: 1; }
-    @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.5; } }
-
-    .progress-wrap { margin-top: 14px; height: 8px; background: var(--panel-2); border-radius: 4px; overflow: hidden; }
-    .progress-bar { height: 100%; background: linear-gradient(90deg, var(--accent), var(--yellow)); width: 0%; transition: width 0.3s; }
-    .progress-label { font-size: 12px; color: var(--text-dim); text-align: center; margin-top: 6px; }
+    /* Entry area */
+    .entry-section { margin-bottom: 16px; }
+    .entry-section label { display: block; font-size: 13px; font-weight: 600; color: var(--text-dim); margin-bottom: 6px; }
+    .entry-section select, .entry-section textarea {
+      width: 100%; padding: 12px 14px; border-radius: 10px;
+      border: 1px solid var(--border); background: var(--panel-2); color: var(--text);
+      font-size: 15px; font-family: inherit;
+    }
+    .entry-section textarea {
+      min-height: 160px; font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+      font-size: 14px; line-height: 1.7; resize: vertical;
+    }
+    .entry-section select:focus, .entry-section textarea:focus { outline: none; border-color: var(--accent); }
+    .entry-section textarea::placeholder { color: var(--text-dim); opacity: 0.5; }
+    .format-hint { font-size: 12px; color: var(--text-dim); margin-top: 6px; line-height: 1.5; }
+    .format-hint code { background: var(--panel-2); padding: 1px 5px; border-radius: 4px; font-size: 11px; color: var(--yellow); }
 
     .btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; padding: 14px 20px; border-radius: 10px; border: none; font-size: 15px; font-weight: 700; cursor: pointer; transition: all 0.15s; font-family: inherit; width: 100%; letter-spacing: 0.01em; }
     .btn.primary { background: var(--accent); color: var(--cream); box-shadow: 0 4px 14px rgba(180,83,9,0.4); }
@@ -81,6 +80,10 @@
     .btn.secondary { background: var(--panel-2); color: var(--text); }
     .btn.secondary:hover { background: #57534e; }
     .btn-row { display: flex; gap: 8px; margin-top: 14px; }
+
+    .progress-wrap { margin-top: 14px; height: 8px; background: var(--panel-2); border-radius: 4px; overflow: hidden; }
+    .progress-bar { height: 100%; background: linear-gradient(90deg, var(--accent), var(--yellow)); width: 0%; transition: width 0.3s; }
+    .progress-label { font-size: 12px; color: var(--text-dim); text-align: center; margin-top: 6px; }
 
     .results { display: none; }
     .results.visible { display: block; }
@@ -93,8 +96,8 @@
     .totals .stat.credit { border: 1px solid rgba(250,204,21,0.25); }
 
     .card-list { display: flex; flex-direction: column; gap: 8px; }
-    .card-row { display: grid; grid-template-columns: 56px 1fr auto; gap: 12px; align-items: center; padding: 10px; background: var(--panel-2); border-radius: 10px; }
-    .card-thumb { width: 56px; aspect-ratio: 2.5/3.5; border-radius: 6px; background-size: cover; background-position: center; background-color: #000; }
+    .card-row { display: grid; grid-template-columns: 48px 1fr auto; gap: 12px; align-items: center; padding: 10px; background: var(--panel-2); border-radius: 10px; }
+    .card-icon { width: 48px; height: 48px; border-radius: 8px; background: var(--bg-deep); display: grid; place-items: center; font-size: 22px; }
     .card-meta .card-name { font-weight: 600; font-size: 14px; margin-bottom: 2px; }
     .card-meta .card-set { font-size: 12px; color: var(--text-dim); }
     .card-prices { text-align: right; font-size: 13px; }
@@ -102,16 +105,14 @@
     .card-prices .label { color: var(--text-dim); font-size: 11px; }
     .card-prices .cash { color: var(--cash); font-weight: 600; }
     .card-prices .credit { color: var(--credit); font-weight: 600; }
-    .card-error { color: #ef4444; font-size: 12px; }
+    .card-error-row { padding: 8px 10px; background: rgba(239,68,68,0.1); border: 1px solid rgba(239,68,68,0.3); border-radius: 8px; font-size: 13px; color: #fca5a5; }
 
-    .lead-form { margin-top: 16px; }
-    .lead-form input { width: 100%; padding: 12px 14px; border-radius: 10px; border: 1px solid var(--border); background: var(--panel-2); color: var(--text); font-size: 15px; margin-bottom: 10px; font-family: inherit; }
+    .lead-form input { width: 100%; padding: 12px 14px; border-radius: 10px; border: 1px solid var(--border); background: var(--panel-2); color: var(--text); font-size: 15px; margin-bottom: 10px; font-family: inherit; box-sizing: border-box; }
     .lead-form input:focus { outline: none; border-color: var(--accent); }
 
     .note { font-size: 12px; color: var(--text-dim); line-height: 1.5; padding: 10px 0; }
     .success-banner { background: rgba(250, 204, 21, 0.1); border: 1px solid var(--yellow); color: var(--yellow); padding: 12px; border-radius: 10px; text-align: center; margin-bottom: 12px; font-weight: 600; }
 
-    /* Email gate — blurs the quote until email is provided */
     .results-wrap { position: relative; }
     .results-wrap.locked .card-list,
     .results-wrap.locked .totals { filter: blur(8px); pointer-events: none; user-select: none; }
@@ -124,14 +125,12 @@
     .checkbox-row label { font-size: 13px; color: var(--text); line-height: 1.4; cursor: pointer; }
     .gate-small { font-size: 11px; color: var(--text-dim); margin: 8px 0 0; text-align: center; }
 
-    .limit-pill { display: inline-block; background: var(--panel-2); color: var(--text-dim); font-size: 12px; padding: 4px 10px; border-radius: 12px; margin-top: 12px; }
-
     footer { text-align: center; color: var(--text-dim); font-size: 12px; padding: 24px 0 12px; }
     footer a { color: var(--text-dim); }
 
     @media (min-width: 640px) {
-      .grid { grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); }
       h1 { font-size: 32px; }
+      .how-to { flex-wrap: nowrap; }
     }
   </style>
 </head>
@@ -140,7 +139,7 @@
     <div class="brand">
       <div class="brand-logo">
         <img src="/brand/logo.png" alt="Board & Brewed logo"
-             onerror="this.onerror=null;this.parentElement.innerHTML='<div style=\'background:var(--accent);width:100%;height:100%;display:grid;place-items:center;font-size:28px;\'>🎴</div>'" />
+             onerror="this.onerror=null;this.parentElement.innerHTML='<div style=\'background:var(--accent);width:100%;height:100%;display:grid;place-items:center;font-size:28px;\'>&#x1F3B4;</div>'" />
       </div>
       <div>
         <div class="brand-name">Board &amp; Brewed</div>
@@ -148,27 +147,98 @@
       </div>
     </div>
 
-    <h1>Get an <span class="accent">indicative offer</span> on your cards in under a minute.</h1>
-    <p class="sub">Snap or upload photos of the cards you'd like to sell or trade in. We'll identify each one, price it against live market data, and email you a quote. Bring the cards in to the shop for a firm offer.</p>
+    <h1>Get an <span class="accent">instant quote</span> on your cards</h1>
+    <p class="sub">Type the set code and card number from each card you'd like to sell or trade in. We'll price them against live market data and email you an offer.</p>
 
-    <!-- Upload panel -->
-    <div class="panel" id="uploadPanel">
-      <label class="drop" id="dropZone">
-        <input type="file" id="fileInput" accept="image/*" multiple />
-        <div class="drop-icon">📸</div>
-        <div class="drop-title">Drop photos here or tap to upload</div>
-        <div class="drop-hint">One card per photo · JPEG/PNG · up to 20 cards</div>
-        <div class="limit-pill" id="limitPill">0 / 20</div>
-      </label>
+    <!-- How-to panel with card diagram -->
+    <div class="panel">
+      <div class="how-to">
+        <div class="card-diagram">
+          <svg width="160" height="224" viewBox="0 0 160 224" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <!-- Card body -->
+            <rect x="2" y="2" width="156" height="220" rx="10" fill="#1a1a22" stroke="#44403c" stroke-width="2"/>
+            <!-- Image area -->
+            <rect x="14" y="42" width="132" height="88" rx="4" fill="#292524" stroke="#57534e" stroke-width="1"/>
+            <!-- Name bar at top -->
+            <rect x="14" y="14" width="100" height="16" rx="3" fill="#44403c"/>
+            <text x="20" y="26" font-size="10" fill="#a8a29e" font-family="sans-serif">Bulbasaur</text>
+            <!-- HP at top right -->
+            <rect x="120" y="14" width="26" height="16" rx="3" fill="#44403c"/>
+            <text x="124" y="26" font-size="9" fill="#a8a29e" font-family="sans-serif">HP80</text>
+            <!-- Placeholder art -->
+            <text x="80" y="92" text-anchor="middle" font-size="28" fill="#57534e">&#x1F5BC;</text>
+            <!-- Text area (attacks etc.) -->
+            <rect x="14" y="140" width="132" height="40" rx="3" fill="#292524" stroke="#57534e" stroke-width="0.5"/>
+            <rect x="20" y="148" width="80" height="6" rx="2" fill="#3a3a44"/>
+            <rect x="20" y="160" width="60" height="6" rx="2" fill="#3a3a44"/>
+            <rect x="20" y="172" width="90" height="4" rx="2" fill="#3a3a44" opacity="0.5"/>
+            <!-- Bottom info bar - SET CODE + NUMBER highlighted -->
+            <rect x="10" y="190" width="140" height="24" rx="4" fill="rgba(180,83,9,0.15)" stroke="#b45309" stroke-width="1.5" stroke-dasharray="4 2"/>
+            <!-- Set code text -->
+            <text x="18" y="206" font-size="11" fill="#facc15" font-weight="bold" font-family="monospace">MEG 133/132</text>
+            <!-- Arrow pointing to it -->
+            <line x1="105" y1="206" x2="140" y2="206" stroke="#b45309" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+            <defs>
+              <marker id="arrowhead" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto">
+                <polygon points="0 0, 6 3, 0 6" fill="#b45309"/>
+              </marker>
+            </defs>
+            <!-- Label -->
+            <text x="80" y="222" text-anchor="middle" font-size="8" fill="#b45309" font-family="sans-serif">LOOK HERE</text>
+          </svg>
+        </div>
+        <div class="how-to-text">
+          <h3>Where to find the info</h3>
+          <div class="step">
+            <div class="step-num">1</div>
+            <div class="step-text">Look at the <strong>bottom-left</strong> corner of the card. You'll see a code like <code>MEG 133/132</code> or <code>TWM 200/167</code>.</div>
+          </div>
+          <div class="step">
+            <div class="step-num">2</div>
+            <div class="step-text">The <strong>letters</strong> are the set code (e.g. <code>MEG</code>, <code>PFL</code>, <code>TWM</code>). The <strong>number before the /</strong> is the card number.</div>
+          </div>
+          <div class="step">
+            <div class="step-num">3</div>
+            <div class="step-text">Type one card per line below: <code>MEG 133</code>. You can ignore the part after the slash.</div>
+          </div>
+          <p style="margin-top:8px; font-size:12px; color:var(--text-dim);">For Magic cards, the set code is 3 letters at the bottom (e.g. <code>MKM</code>, <code>OTJ</code>).</p>
+        </div>
+      </div>
+    </div>
 
-      <div class="grid" id="grid"></div>
+    <!-- Input panel -->
+    <div class="panel" id="inputPanel">
+      <div class="entry-section">
+        <label>Game</label>
+        <select id="gameSelect">
+          <option value="pokemon">Pokémon</option>
+          <option value="magic">Magic: The Gathering</option>
+          <option value="yugioh">Yu-Gi-Oh!</option>
+          <option value="lorcana">Lorcana</option>
+          <option value="onepiece">One Piece</option>
+          <option value="starwars">Star Wars Unlimited</option>
+          <option value="digimon">Digimon</option>
+          <option value="fleshandblood">Flesh and Blood</option>
+          <option value="dragonball">Dragon Ball Super</option>
+        </select>
+      </div>
+
+      <div class="entry-section">
+        <label>Your cards (one per line, up to 20)</label>
+        <textarea id="cardInput" placeholder="MEG 133&#10;PFL 94&#10;TWM 200&#10;POR 100&#10;PFL 102"></textarea>
+        <div class="format-hint">
+          Format: <code>SET NUMBER</code> — e.g. <code>MEG 133</code> or <code>TWM 200</code><br>
+          Don't know the set? Just enter the number: <code>133</code><br>
+          Optionally add the name: <code>MEG 133 Bulbasaur</code>
+        </div>
+      </div>
 
       <div id="progressWrap" style="display:none;">
         <div class="progress-wrap"><div class="progress-bar" id="progressBar"></div></div>
         <div class="progress-label" id="progressLabel">0 / 0</div>
       </div>
 
-      <div class="btn-row" id="actionRow" style="display:none;">
+      <div class="btn-row">
         <button class="btn primary" id="startBtn">Get my quote</button>
         <button class="btn secondary" id="clearBtn" style="flex:0 0 auto; width:auto; padding:14px 16px;">Clear</button>
       </div>
@@ -182,19 +252,21 @@
 
       <div class="results-wrap locked" id="resultsWrap">
         <div class="totals">
-          <div class="stat"><div class="stat-label">Market</div><div class="stat-value" id="totalMarket">€0.00</div></div>
-          <div class="stat cash"><div class="stat-label">Cash offer</div><div class="stat-value" id="totalCash">€0.00</div></div>
-          <div class="stat credit"><div class="stat-label">Store credit</div><div class="stat-value" id="totalCredit">€0.00</div></div>
+          <div class="stat"><div class="stat-label">Market</div><div class="stat-value" id="totalMarket">&euro;0.00</div></div>
+          <div class="stat cash"><div class="stat-label">Cash offer</div><div class="stat-value" id="totalCash">&euro;0.00</div></div>
+          <div class="stat credit"><div class="stat-label">Store credit</div><div class="stat-value" id="totalCredit">&euro;0.00</div></div>
         </div>
         <div class="card-list" id="cardList"></div>
 
-        <!-- Gate overlay — visible until email is submitted -->
+        <!-- Gate overlay -->
         <div class="gate" id="gate">
           <div class="gate-inner">
-            <div class="gate-title">🔓 Enter your email to see your quote</div>
-            <p class="gate-sub">We'll reveal your prices here and email you a copy so you don't lose it. Bring the cards in and we'll give you a firm offer.</p>
-            <input type="text" id="leadName" placeholder="Your name (optional)" autocomplete="name" />
-            <input type="email" id="leadEmail" placeholder="you@example.com" autocomplete="email" required />
+            <div class="gate-title">Enter your email to see your quote</div>
+            <p class="gate-sub">We'll reveal your prices here and email you a copy so you don't lose it. Bring the cards in to the shop for a firm offer.</p>
+            <div class="lead-form">
+              <input type="text" id="leadName" placeholder="Your name (optional)" autocomplete="name" />
+              <input type="email" id="leadEmail" placeholder="you@example.com" autocomplete="email" required />
+            </div>
             <div class="checkbox-row">
               <input type="checkbox" id="leadNewsletter" />
               <label for="leadNewsletter">Keep me posted on new arrivals, tournaments &amp; card buying offers at Board &amp; Brewed.</label>
@@ -206,427 +278,187 @@
       </div>
 
       <div id="leadSuccess" class="success-banner" style="display:none; margin-top:14px;">
-        ✓ Sent! Check your inbox for a copy of your quote.
+        Sent! Check your inbox for a copy of your quote.
       </div>
     </div>
 
     <footer>
-      <p>Powered by live Cardmarket &amp; Scryfall pricing · <a href="mailto:dave@boardandbrewed.ie">Contact us</a></p>
+      <p>Powered by live Cardmarket &amp; Scryfall pricing &middot; <a href="mailto:dave@boardandbrewed.ie">Contact us</a></p>
     </footer>
   </div>
 
   <script>
     const MAX_CARDS = 20;
-    const CONCURRENCY = 3; // polite concurrency for a public endpoint
     const CASH_PCT = 55;
     const CREDIT_PCT = 70;
     const CONDITION_MULTS = { 'NM': 1.0, 'LP': 0.85, 'MP': 0.70, 'HP': 0.50, 'DMG': 0.30 };
 
     const state = {
-      queue: [],     // { id, dataUrl, status, card?, market?, cash?, credit?, error? }
-      seq: 0,
+      results: [],   // { card, market, cash, credit } or { error, line }
       running: false,
       submitted: false
     };
 
     const $ = (id) => document.getElementById(id);
 
-    // Drag & drop
-    const dz = $('dropZone');
-    ['dragenter','dragover'].forEach(ev => dz.addEventListener(ev, e => { e.preventDefault(); dz.classList.add('dragover'); }));
-    ['dragleave','drop'].forEach(ev => dz.addEventListener(ev, e => { e.preventDefault(); dz.classList.remove('dragover'); }));
-    dz.addEventListener('drop', e => {
-      const files = Array.from(e.dataTransfer?.files || []).filter(f => f.type.startsWith('image/'));
-      if (files.length) handleFiles(files);
-    });
-    $('fileInput').addEventListener('change', e => {
-      const files = Array.from(e.target.files || []);
-      e.target.value = '';
-      if (files.length) handleFiles(files);
-    });
-
-    async function handleFiles(files) {
-      const room = MAX_CARDS - state.queue.length;
-      if (room <= 0) { alert(`Max ${MAX_CARDS} cards per quote — remove one to add more.`); return; }
-      const toAdd = files.slice(0, room);
-      if (files.length > room) alert(`Only adding first ${room} — max ${MAX_CARDS} cards per quote.`);
-      for (const f of toAdd) {
-        const dataUrl = await readFile(f);
-        state.queue.push({ id: ++state.seq, dataUrl, status: 'queued' });
-      }
-      // If new cards are added after an unlock, re-lock — email must be
-      // re-submitted so the new quote gets emailed too.
-      if (state.submitted && state.queue.some(i => i.status === 'queued')) {
-        state.submitted = false;
-        $('resultsWrap').classList.add('locked');
-        $('gate').style.display = '';
-        $('leadSuccess').style.display = 'none';
-        const btn = $('leadSubmit'); if (btn) { btn.disabled = false; btn.textContent = 'Unlock my quote'; }
-      }
-      render();
+    // ---- Parse lines ----
+    function parseLines(raw) {
+      return raw.split('\n')
+        .map(l => l.trim())
+        .filter(l => l && !l.startsWith('#') && !l.startsWith('//'))
+        .slice(0, MAX_CARDS)
+        .map(line => {
+          const parts = line.split(/\s+/);
+          if (parts.length === 1) {
+            return { set_code: '', card_number: parts[0].split('/')[0], name: '', raw: line };
+          }
+          const set_code = parts[0];
+          const card_number = parts[1].split('/')[0];
+          const name = parts.slice(2).join(' ');
+          return { set_code, card_number, name, raw: line };
+        });
     }
 
-    function readFile(file) {
-      return new Promise((res, rej) => {
-        const r = new FileReader();
-        r.onload = () => res(r.result);
-        r.onerror = rej;
-        r.readAsDataURL(file);
-      });
-    }
-
-    function render() {
-      const grid = $('grid');
-      grid.innerHTML = state.queue.map(it => {
-        const label = it.status === 'queued' ? 'Ready'
-                    : it.status === 'processing' ? 'Reading…'
-                    : it.status === 'done' ? (it.card?.name?.slice(0, 14) || '✓')
-                    : 'Couldn\'t read';
-        const removable = !state.running && it.status !== 'processing';
-        return `<div class="tile ${it.status}" style="background-image:url('${it.dataUrl}')">
-          ${removable ? `<button class="tile-remove" onclick="removeItem(${it.id})">×</button>` : ''}
-          <div class="tile-status">${escapeHtml(label)}</div>
-        </div>`;
-      }).join('');
-
-      $('limitPill').textContent = `${state.queue.length} / ${MAX_CARDS}`;
-      $('actionRow').style.display = state.queue.length ? 'flex' : 'none';
-      $('progressWrap').style.display = state.running ? 'block' : 'none';
-
-      const pending = state.queue.filter(i => i.status === 'queued').length;
-      const startBtn = $('startBtn');
-      startBtn.disabled = state.running || pending === 0;
-      startBtn.textContent = state.running ? 'Pricing…'
-                           : pending === 0 && state.queue.length ? 'Already priced'
-                           : `Get my quote (${pending} card${pending !== 1 ? 's' : ''})`;
-
-      const done = state.queue.filter(i => i.status === 'done' || i.status === 'error').length;
-      const total = state.queue.length;
-      $('progressBar').style.width = total ? (done/total*100) + '%' : '0%';
-      $('progressLabel').textContent = `${done} / ${total}`;
-
-      // Results panel
-      const priced = state.queue.filter(i => i.status === 'done' && i.card);
-      const resultsPanel = $('resultsPanel');
-      if (priced.length && !state.running) {
-        resultsPanel.classList.add('visible');
-        renderResults(priced);
-      } else if (!state.queue.length) {
-        resultsPanel.classList.remove('visible');
-      }
-    }
-
-    function renderResults(priced) {
-      let mTotal = 0, cTotal = 0, crTotal = 0;
-      const rows = priced.map(it => {
-        mTotal += it.market || 0;
-        cTotal += it.cash || 0;
-        crTotal += it.credit || 0;
-        return `<div class="card-row">
-          <div class="card-thumb" style="background-image:url('${it.dataUrl}')"></div>
-          <div class="card-meta">
-            <div class="card-name">${escapeHtml(it.card.name || 'Unknown')}</div>
-            <div class="card-set">${escapeHtml(it.card.set_name || it.card.set_code || '')}${it.card.card_number ? ' · #' + escapeHtml(it.card.card_number) : ''}</div>
-          </div>
-          <div class="card-prices">
-            <div class="row"><span class="label">MV</span><span>€${(it.market || 0).toFixed(2)}</span></div>
-            <div class="row"><span class="label">Cash</span><span class="cash">€${(it.cash || 0).toFixed(2)}</span></div>
-            <div class="row"><span class="label">Credit</span><span class="credit">€${(it.credit || 0).toFixed(2)}</span></div>
-          </div>
-        </div>`;
-      }).join('');
-      $('cardList').innerHTML = rows || '<p class="note">No cards could be priced. Try clearer photos showing the card number.</p>';
-      $('totalMarket').textContent = '€' + mTotal.toFixed(2);
-      $('totalCash').textContent = '€' + cTotal.toFixed(2);
-      $('totalCredit').textContent = '€' + crTotal.toFixed(2);
-    }
-
-    window.removeItem = (id) => {
-      if (state.running) return;
-      state.queue = state.queue.filter(i => i.id !== id);
-      render();
-    };
-
-    $('clearBtn').addEventListener('click', () => {
-      if (state.running) return;
-      if (state.queue.length && !confirm('Clear all cards?')) return;
-      state.queue = [];
-      state.submitted = false;
-      $('leadSuccess').style.display = 'none';
-      // Re-lock the quote for next run
-      $('resultsWrap').classList.add('locked');
-      $('gate').style.display = '';
-      render();
-    });
-
+    // ---- Start processing ----
     $('startBtn').addEventListener('click', startProcessing);
 
     async function startProcessing() {
       if (state.running) return;
-      const pending = state.queue.filter(i => i.status === 'queued');
-      if (!pending.length) return;
+      const lines = parseLines($('cardInput').value);
+      if (!lines.length) { alert('Enter at least one card — e.g. MEG 133'); return; }
+      const game = $('gameSelect').value;
+
       state.running = true;
-      render();
-      const q = [...pending];
-      const workers = Array.from({ length: Math.min(CONCURRENCY, q.length) }, () => worker(q));
-      await Promise.all(workers);
-      state.running = false;
-      render();
-    }
+      state.results = [];
+      state.submitted = false;
+      $('resultsWrap').classList.add('locked');
+      $('gate').style.display = '';
+      $('leadSuccess').style.display = 'none';
 
-    async function worker(q) {
-      while (q.length) {
-        const item = q.shift();
-        if (!item) break;
-        item.status = 'processing';
-        render();
+      const startBtn = $('startBtn');
+      startBtn.disabled = true;
+      startBtn.textContent = 'Looking up cards...';
+      $('progressWrap').style.display = 'block';
+
+      let done = 0;
+      const total = lines.length;
+
+      for (const entry of lines) {
+        $('progressBar').style.width = (done / total * 100) + '%';
+        $('progressLabel').textContent = done + ' / ' + total;
+
         try {
-          await processItem(item);
-          item.status = 'done';
-        } catch (e) {
-          console.error('[QUOTE] failed', e);
-          item.status = 'error';
-          item.error = e.message || 'Failed';
-        }
-        render();
-      }
-    }
-
-    // ============================================================
-    // FAST-IDENTIFY — OCR first path (Pokémon only)
-    // ============================================================
-    // Runs Tesseract.js in the browser to extract card number + name,
-    // then queries the Pokémon TCG API to confirm. On a match, we skip
-    // Claude entirely → ~$0.008 saved per card. Any uncertainty → null,
-    // and processItem falls back to the Claude pipeline silently.
-    const fastIdentifyStats = { attempts: 0, hits: 0 };
-
-    let _tesseractLoader = null;
-    function loadTesseract() {
-      if (window.Tesseract) return Promise.resolve(window.Tesseract);
-      if (_tesseractLoader) return _tesseractLoader;
-      _tesseractLoader = new Promise((resolve, reject) => {
-        const s = document.createElement('script');
-        s.src = 'https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js';
-        s.onload = () => resolve(window.Tesseract);
-        s.onerror = reject;
-        document.head.appendChild(s);
-      });
-      return _tesseractLoader;
-    }
-
-    // Crop the bottom 22% of the image (where Pokémon print number/set code)
-    // to a separate canvas — Tesseract is ~4x faster + more accurate on
-    // the cropped strip than the full card.
-    function cropBottom(dataUrl, pct = 0.22) {
-      return new Promise((resolve, reject) => {
-        const img = new Image();
-        img.onload = () => {
-          const h = Math.round(img.height * pct);
-          const canvas = document.createElement('canvas');
-          canvas.width = img.width;
-          canvas.height = h;
-          const ctx = canvas.getContext('2d');
-          ctx.drawImage(img, 0, img.height - h, img.width, h, 0, 0, img.width, h);
-          resolve(canvas.toDataURL('image/jpeg', 0.9));
-        };
-        img.onerror = reject;
-        img.src = dataUrl;
-      });
-    }
-    function cropTop(dataUrl, pct = 0.15) {
-      return new Promise((resolve, reject) => {
-        const img = new Image();
-        img.onload = () => {
-          const h = Math.round(img.height * pct);
-          const canvas = document.createElement('canvas');
-          canvas.width = img.width;
-          canvas.height = h;
-          const ctx = canvas.getContext('2d');
-          ctx.drawImage(img, 0, 0, img.width, h, 0, 0, img.width, h);
-          resolve(canvas.toDataURL('image/jpeg', 0.9));
-        };
-        img.onerror = reject;
-        img.src = dataUrl;
-      });
-    }
-
-    async function tryFastIdentify(dataUrl) {
-      fastIdentifyStats.attempts++;
-      const t0 = performance.now();
-      try {
-        const T = await loadTesseract();
-        const [numCrop, nameCrop] = await Promise.all([
-          cropBottom(dataUrl, 0.22),
-          cropTop(dataUrl, 0.15)
-        ]);
-
-        // Two small OCR runs in parallel. Allowlist filters most misreads.
-        const [numRes, nameRes] = await Promise.all([
-          T.recognize(numCrop, 'eng', {
-            tessedit_char_whitelist: '0123456789/ABCDEFGHIJKLMNOPQRSTUVWXYZ',
-            tessedit_pageseg_mode: T.PSM?.SINGLE_BLOCK || 6
-          }),
-          T.recognize(nameCrop, 'eng', {
-            tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz \'-',
-            tessedit_pageseg_mode: T.PSM?.SINGLE_BLOCK || 6
-          })
-        ]);
-        const numText = (numRes?.data?.text || '').toUpperCase();
-        const nameText = (nameRes?.data?.text || '').replace(/[^A-Za-z '\-]+/g, ' ').trim();
-
-        // Extract number in form NNN/NNN (modern Pokémon)
-        const numMatch = numText.match(/\b(\d{1,3})\s*\/\s*(\d{1,3})\b/);
-        if (!numMatch) {
-          console.log('[FAST-ID] no number found in:', numText.slice(0, 60));
-          return null;
-        }
-        const cardNum = numMatch[1].padStart(1, '0');
-        const printedTotal = parseInt(numMatch[2], 10);
-
-        // Candidate name(s) — take the longest 4+ char word from the top strip.
-        const nameWords = nameText.split(/\s+/).filter(w => w.length >= 4 && w.length <= 20);
-        if (!nameWords.length) {
-          console.log('[FAST-ID] no name candidate in:', nameText.slice(0, 60));
-          return null;
-        }
-        const nameCandidate = nameWords.sort((a, b) => b.length - a.length)[0];
-
-        // Query Pokémon TCG API — require BOTH name AND number match.
-        const q = `name:"${nameCandidate}" number:${cardNum}`;
-        const url = `https://api.pokemontcg.io/v2/cards?q=${encodeURIComponent(q)}&pageSize=8`;
-        const resp = await fetch(url);
-        if (!resp.ok) return null;
-        const data = await resp.json();
-        const results = data?.data || [];
-        if (!results.length) {
-          console.log('[FAST-ID] no api match for', nameCandidate, cardNum);
-          return null;
-        }
-        // Prefer the set with matching printedTotal when multiple hits.
-        const narrowed = results.filter(c => c.set?.printedTotal === printedTotal);
-        const pool = narrowed.length ? narrowed : results;
-
-        // Safety: only trust if exactly one card remains after narrowing.
-        if (pool.length !== 1) {
-          console.log('[FAST-ID] ambiguous (' + pool.length + ' matches) for', nameCandidate, cardNum);
-          return null;
-        }
-        const c = pool[0];
-
-        // Shape response to match Claude's identify output so /api/price works.
-        const card = {
-          game: 'pokemon',
-          name: c.name,
-          set_name: c.set?.name || '',
-          set_code: (c.set?.id || '').toUpperCase(),
-          card_number: `${c.number}/${c.set?.printedTotal || ''}`,
-          rarity: c.rarity || '',
-          variant: 'normal',         // can't determine from OCR — fallback assumption
-          language: 'english',
-          condition_estimate: 'NM',  // can't grade without vision; assume NM
-          hp: c.hp || ''
-        };
-
-        fastIdentifyStats.hits++;
-        const ms = Math.round(performance.now() - t0);
-        console.log(`[FAST-ID] ✓ ${c.name} ${card.card_number} in ${ms}ms (hit rate ${fastIdentifyStats.hits}/${fastIdentifyStats.attempts})`);
-        return card;
-      } catch (e) {
-        console.warn('[FAST-ID] error:', e.message);
-        return null;
-      }
-    }
-
-    async function processItem(item) {
-      // Resize client-side to cut upload time.
-      const upload = await resizeDataUrl(item.dataUrl, 1100, 0.88);
-
-      // Always use Claude identify — OCR fast-path disabled due to false positives.
-      const ident = await fetchIdentifyStream({ image: upload });
-      const cards = ident?.cards || [];
-      if (!cards.length) throw new Error('No card detected');
-      let card = cards[0];
-
-      // Price it.
-      const pr = await fetch('/api/price', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ card, buyPercentage: CASH_PCT })
-      });
-      if (!pr.ok) throw new Error('Price lookup failed');
-      const priced = await pr.json();
-
-      const mv = priced.market_value || priced.buy_price?.market_value || priced.cardmarket?.price || priced.cardmarket?.trend || 0;
-      const condMult = CONDITION_MULTS[card.condition_estimate] || 1;
-      const effectiveMV = mv * condMult;
-
-      item.card = priced.card || card;
-      item.market = mv;
-      item.cash = Math.round(effectiveMV * (CASH_PCT / 100) * 100) / 100;
-      item.credit = Math.round(effectiveMV * (CREDIT_PCT / 100) * 100) / 100;
-    }
-
-    async function fetchIdentifyStream({ image }) {
-      // Try streaming endpoint first, fall back to /api/identify.
-      try {
-        const res = await fetch('/api/identify-stream', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ image, batch: false, hint: '' })
-        });
-        if (!res.ok || !res.body) throw new Error('stream not ok');
-        const reader = res.body.getReader();
-        const decoder = new TextDecoder();
-        let buf = '';
-        let final = null;
-        while (true) {
-          const { value, done } = await reader.read();
-          if (done) break;
-          buf += decoder.decode(value, { stream: true });
-          const lines = buf.split('\n');
-          buf = lines.pop() || '';
-          for (const line of lines) {
-            if (!line.trim()) continue;
-            try {
-              const msg = JSON.parse(line);
-              if (msg.type === 'verified' || msg.type === 'ident') final = { cards: msg.cards };
-              if (msg.type === 'error') throw new Error(msg.error || 'Identify failed');
-            } catch (e) { /* skip */ }
+          const resp = await fetch('/api/identify-manual', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              game,
+              set_code: entry.set_code,
+              card_number: entry.card_number,
+              name: entry.name || undefined
+            })
+          });
+          if (!resp.ok) {
+            const err = await resp.json().catch(() => ({}));
+            throw new Error(err.error || 'Not found');
           }
+          const data = await resp.json();
+          const cards = data.cards || [];
+          if (!cards.length) throw new Error('Card not found');
+
+          const card = cards[0];
+
+          // Price it
+          const pr = await fetch('/api/price', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ card, buyPercentage: CASH_PCT })
+          });
+          let priced = pr.ok ? await pr.json() : null;
+
+          const mv = priced?.market_value || priced?.buy_price?.market_value || priced?.cardmarket?.price || priced?.cardmarket?.trend || 0;
+          const condMult = CONDITION_MULTS[card.condition_estimate] || 1;
+          const effectiveMV = mv * condMult;
+
+          state.results.push({
+            card: priced?.card || card,
+            market: mv,
+            cash: Math.round(effectiveMV * (CASH_PCT / 100) * 100) / 100,
+            credit: Math.round(effectiveMV * (CREDIT_PCT / 100) * 100) / 100
+          });
+        } catch (e) {
+          console.warn('[QUOTE]', entry.raw, e.message);
+          state.results.push({ error: e.message, line: entry.raw });
         }
-        return final || { cards: [] };
-      } catch (e) {
-        // Fallback to non-streaming
-        const res = await fetch('/api/identify', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ image, batch: false })
-        });
-        if (!res.ok) throw new Error('Identify failed');
-        return await res.json();
+
+        done++;
+        $('progressBar').style.width = (done / total * 100) + '%';
+        $('progressLabel').textContent = done + ' / ' + total;
+      }
+
+      state.running = false;
+      startBtn.disabled = false;
+      startBtn.textContent = 'Get my quote';
+
+      // Show results
+      const priced = state.results.filter(r => !r.error);
+      if (priced.length || state.results.length) {
+        $('resultsPanel').classList.add('visible');
+        renderResults();
       }
     }
 
-    function resizeDataUrl(dataUrl, maxSize = 1100, quality = 0.88) {
-      return new Promise((resolve, reject) => {
-        const img = new Image();
-        img.onload = () => {
-          let { width, height } = img;
-          const scale = Math.min(1, maxSize / Math.max(width, height));
-          width = Math.round(width * scale);
-          height = Math.round(height * scale);
-          const canvas = document.createElement('canvas');
-          canvas.width = width; canvas.height = height;
-          const ctx = canvas.getContext('2d');
-          ctx.drawImage(img, 0, 0, width, height);
-          resolve(canvas.toDataURL('image/jpeg', quality));
-        };
-        img.onerror = reject;
-        img.src = dataUrl;
-      });
+    function renderResults() {
+      let mTotal = 0, cTotal = 0, crTotal = 0;
+      const gameIcons = {
+        pokemon: '&#x26A1;', magic: '&#x2728;', yugioh: '&#x1F31F;',
+        lorcana: '&#x1FA84;', onepiece: '&#x2693;', starwars: '&#x2B50;',
+        digimon: '&#x1F432;', fleshandblood: '&#x2694;', dragonball: '&#x1F525;'
+      };
+      const icon = gameIcons[$('gameSelect').value] || '&#x1F0CF;';
+
+      const rows = state.results.map(it => {
+        if (it.error) {
+          return '<div class="card-error-row">Could not find: ' + escapeHtml(it.line) + ' (' + escapeHtml(it.error) + ')</div>';
+        }
+        mTotal += it.market || 0;
+        cTotal += it.cash || 0;
+        crTotal += it.credit || 0;
+        return '<div class="card-row">' +
+          '<div class="card-icon">' + icon + '</div>' +
+          '<div class="card-meta">' +
+            '<div class="card-name">' + escapeHtml(it.card.name || 'Unknown') + '</div>' +
+            '<div class="card-set">' + escapeHtml(it.card.set_name || it.card.set_code || '') +
+              (it.card.card_number ? ' &middot; #' + escapeHtml(it.card.card_number) : '') + '</div>' +
+          '</div>' +
+          '<div class="card-prices">' +
+            '<div class="row"><span class="label">MV</span><span>&euro;' + (it.market || 0).toFixed(2) + '</span></div>' +
+            '<div class="row"><span class="label">Cash</span><span class="cash">&euro;' + (it.cash || 0).toFixed(2) + '</span></div>' +
+            '<div class="row"><span class="label">Credit</span><span class="credit">&euro;' + (it.credit || 0).toFixed(2) + '</span></div>' +
+          '</div>' +
+        '</div>';
+      }).join('');
+
+      $('cardList').innerHTML = rows || '<p class="note">No cards could be priced.</p>';
+      $('totalMarket').textContent = '\u20AC' + mTotal.toFixed(2);
+      $('totalCash').textContent = '\u20AC' + cTotal.toFixed(2);
+      $('totalCredit').textContent = '\u20AC' + crTotal.toFixed(2);
     }
 
+    $('clearBtn').addEventListener('click', () => {
+      if (state.running) return;
+      $('cardInput').value = '';
+      state.results = [];
+      state.submitted = false;
+      $('resultsPanel').classList.remove('visible');
+      $('resultsWrap').classList.add('locked');
+      $('gate').style.display = '';
+      $('leadSuccess').style.display = 'none';
+      $('progressWrap').style.display = 'none';
+      const btn = $('leadSubmit'); if (btn) { btn.disabled = false; btn.textContent = 'Unlock my quote'; }
+    });
+
+    // ---- Email gate ----
     $('leadSubmit').addEventListener('click', async () => {
       const email = $('leadEmail').value.trim();
       const name = $('leadName').value.trim();
@@ -635,35 +467,26 @@
         alert('Please enter a valid email to see your quote.');
         return;
       }
-      const priced = state.queue.filter(i => i.status === 'done' && i.card);
+      const priced = state.results.filter(r => !r.error && r.card);
       if (!priced.length) { alert('No priced cards to send.'); return; }
 
       const btn = $('leadSubmit');
       btn.disabled = true;
-      btn.textContent = 'Unlocking…';
+      btn.textContent = 'Unlocking...';
 
       let mTotal = 0, cTotal = 0, crTotal = 0;
-      // Shrink photos for the shop email — 500px jpeg @ 0.75 quality keeps
-      // attachments small (~30-60KB each) so 20 cards fit comfortably
-      // within Brevo's 10MB email limit.
-      const photos = await Promise.all(priced.map(async (it, i) => {
-        try {
-          const thumb = await resizeDataUrl(it.dataUrl, 500, 0.75);
-          return { idx: i, dataUrl: thumb };
-        } catch { return { idx: i, dataUrl: null }; }
-      }));
-      const cards = priced.map((it, i) => {
+      const cards = priced.map(it => {
         mTotal += it.market || 0; cTotal += it.cash || 0; crTotal += it.credit || 0;
         return {
           name: it.card.name,
           set_name: it.card.set_name,
           set_code: it.card.set_code,
           card_number: it.card.card_number,
-          condition_estimate: it.card.condition_estimate,
+          condition_estimate: it.card.condition_estimate || 'NM',
           market_value: it.market,
           cash_offer: it.cash,
           credit_offer: it.credit,
-          photo: photos[i]?.dataUrl || null
+          photo: null
         };
       });
 
@@ -680,15 +503,14 @@
         if (!r.ok) throw new Error('Server rejected quote');
         const data = await r.json();
         state.submitted = true;
-        // Unlock the quote visually
         $('resultsWrap').classList.remove('locked');
         $('gate').style.display = 'none';
         $('leadSuccess').style.display = '';
         $('leadSuccess').textContent = data.emailed
-          ? (newsletter ? '✓ Quote unlocked & emailed. Welcome to the list!' : '✓ Quote unlocked & emailed — check your inbox.')
-          : '✓ Quote unlocked. We\'ll be in touch shortly.';
+          ? (newsletter ? 'Quote unlocked & emailed. Welcome to the list!' : 'Quote unlocked & emailed — check your inbox.')
+          : 'Quote unlocked. We\'ll be in touch shortly.';
       } catch (e) {
-        alert('Couldn\'t save your details — please try again in a moment, or email dave@boardandbrewed.ie directly.');
+        alert('Couldn\'t save your details — please try again, or email dave@boardandbrewed.ie directly.');
         btn.disabled = false;
         btn.textContent = 'Unlock my quote';
       }
