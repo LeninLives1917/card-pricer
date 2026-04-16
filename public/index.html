@@ -401,6 +401,47 @@
     @keyframes spin { to { transform: rotate(360deg); } }
     .loading-text { font-size: 14px; color: var(--text-dim); }
 
+    /* ---- MANUAL ENTRY MODAL ---- */
+    .manual-modal {
+      position: fixed; inset: 0; background: rgba(0,0,0,0.75);
+      display: flex; align-items: center; justify-content: center;
+      z-index: 1000; padding: 20px;
+    }
+    .manual-modal.hidden { display: none; }
+    .manual-modal-card {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: 16px; padding: 24px; width: 100%; max-width: 420px;
+      display: flex; flex-direction: column; gap: 14px;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.4);
+    }
+    .manual-modal-title { font-size: 18px; font-weight: 600; color: var(--text); margin-bottom: 4px; }
+    .manual-modal-sub { font-size: 12px; color: var(--text-dim); margin-top: -8px; margin-bottom: 6px; }
+    .manual-field { display: flex; flex-direction: column; gap: 4px; }
+    .manual-field label { font-size: 12px; color: var(--text-dim); font-weight: 500; }
+    .manual-field input, .manual-field select {
+      padding: 10px 12px; background: var(--bg); color: var(--text);
+      border: 1px solid var(--border); border-radius: 8px; font-size: 15px;
+      font-family: inherit;
+    }
+    .manual-field input:focus, .manual-field select:focus {
+      outline: none; border-color: var(--accent);
+    }
+    .manual-row { display: flex; gap: 10px; }
+    .manual-row > .manual-field { flex: 1; }
+    .manual-modal-actions { display: flex; gap: 10px; margin-top: 8px; }
+    .manual-btn-cancel, .manual-btn-submit {
+      flex: 1; padding: 12px; border-radius: 10px; font-size: 15px;
+      font-weight: 600; border: none; cursor: pointer; font-family: inherit;
+    }
+    .manual-btn-cancel { background: var(--surface2); color: var(--text); }
+    .manual-btn-submit { background: var(--accent); color: white; }
+    .manual-btn-submit:disabled { background: var(--surface2); color: var(--text-dim); cursor: not-allowed; }
+    .manual-hint {
+      font-size: 11px; color: var(--text-dim); font-style: italic;
+      background: var(--bg); padding: 8px 10px; border-radius: 6px;
+      border-left: 2px solid var(--accent);
+    }
+
     /* ---- RESULTS CARD ---- */
     .result-card {
       background: var(--surface);
@@ -1295,6 +1336,9 @@
         </button>
         <button class="upload-btn" onclick="document.getElementById('fileInput').click()" title="Upload photo">
           <svg viewBox="0 0 24 24"><path d="M19 7v2.99s-1.99.01-2 0V7h-3s.01-1.99 0-2h3V2h2v3h3v2h-3zm-3 4V8h-3V5H5c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2v-8h-3zM5 19l3-4 2 3 3-4 4 5H5z"/></svg>
+        </button>
+        <button class="upload-btn manual-btn" onclick="openManualEntry()" title="Enter card number manually">
+          <svg viewBox="0 0 24 24"><path d="M20 2H4c-1.1 0-1.99.9-1.99 2L2 22l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm-2 12H6v-2h12v2zm0-3H6V9h12v2zm0-3H6V6h12v2z"/></svg>
         </button>
       </div>
 
@@ -4307,6 +4351,153 @@ function dismissInstall() {
   document.getElementById('installNudge').classList.add('hidden');
   localStorage.setItem('cp_install_dismissed', '1');
 }
+
+// ============================================================
+// MANUAL ENTRY (bypass scanning — operator types set + number)
+// ============================================================
+function openManualEntry() {
+  document.getElementById('manualModal').classList.remove('hidden');
+  // Pre-fill game from hint if possible, else pokemon
+  const hint = (document.getElementById('hintInput').value || '').toLowerCase();
+  const gameSel = document.getElementById('manualGame');
+  if (hint.includes('magic') || hint.includes('mtg')) gameSel.value = 'magic';
+  else if (hint.includes('yugioh') || hint.includes('yu-gi')) gameSel.value = 'yugioh';
+  else if (hint.includes('lorcana')) gameSel.value = 'lorcana';
+  else if (hint.includes('one piece') || hint.includes('onepiece')) gameSel.value = 'onepiece';
+  else gameSel.value = 'pokemon';
+  // Focus the number field (most common entry point)
+  setTimeout(() => document.getElementById('manualNumber').focus(), 100);
+}
+function closeManualEntry() {
+  document.getElementById('manualModal').classList.add('hidden');
+  document.getElementById('manualSet').value = '';
+  document.getElementById('manualNumber').value = '';
+  document.getElementById('manualName').value = '';
+}
+async function submitManualEntry() {
+  const game = document.getElementById('manualGame').value;
+  const set_code = document.getElementById('manualSet').value.trim();
+  const card_number = document.getElementById('manualNumber').value.trim();
+  const name = document.getElementById('manualName').value.trim();
+  if (!card_number) {
+    alert('Card number is required');
+    return;
+  }
+  const submitBtn = document.getElementById('manualSubmitBtn');
+  submitBtn.disabled = true;
+  submitBtn.textContent = 'Looking up...';
+  try {
+    const resp = await fetch('/api/identify-manual', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ game, set_code, card_number, name: name || undefined })
+    });
+    if (!resp.ok) {
+      const err = await resp.json().catch(() => ({ error: 'Lookup failed' }));
+      throw new Error(err.error || 'Lookup failed');
+    }
+    const data = await resp.json();
+    const cards = data.cards || [];
+    if (!cards.length) throw new Error('No card found');
+
+    closeManualEntry();
+
+    // Reuse the same pricing + session log pipeline as a normal scan.
+    // No image to attach — placeholder is fine (session log tolerates missing photo).
+    state.currentResults = cards.map(card => ({
+      card, cardmarket: null, ebay: null, buy_price: null, _pending: true
+    }));
+    renderResults(state.currentResults);
+
+    const singleMode = state.mode !== 'batch';
+    if (!singleMode) switchTab('results');
+
+    const pricingJobs = cards.map((card, idx) =>
+      fetch('/api/price', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ card, buyPercentage: state.buyPercentage })
+      })
+        .then(r => r.ok ? r.json() : null)
+        .catch(e => { console.error('Pricing error:', e); return null; })
+        .then(priced => {
+          const result = priced || { card, cardmarket: null, ebay: null, buy_price: null };
+          state.currentResults[idx] = result;
+          renderResults(state.currentResults);
+          addToSessionLog(result, null);  // no photo for manual entries
+          if (singleMode && idx === 0) {
+            _sheetCurrentIdx = 0;
+            renderResultSheet();
+          }
+          return result;
+        })
+    );
+
+    if (singleMode) {
+      openResultSheet(0);
+      haptic('scan');
+    }
+    await Promise.all(pricingJobs);
+  } catch (err) {
+    alert('Manual lookup failed: ' + err.message);
+  } finally {
+    submitBtn.disabled = false;
+    submitBtn.textContent = 'Look up & price';
+  }
+}
+// Enter key submits the form
+document.addEventListener('keydown', (e) => {
+  const modal = document.getElementById('manualModal');
+  if (!modal || modal.classList.contains('hidden')) return;
+  if (e.key === 'Enter') { e.preventDefault(); submitManualEntry(); }
+  if (e.key === 'Escape') { e.preventDefault(); closeManualEntry(); }
+});
 </script>
+
+<!-- MANUAL ENTRY MODAL -->
+<div class="manual-modal hidden" id="manualModal" onclick="if(event.target===this)closeManualEntry()">
+  <div class="manual-modal-card">
+    <div class="manual-modal-title">Enter card manually</div>
+    <div class="manual-modal-sub">Skip the scan — type the set code and card number</div>
+
+    <div class="manual-field">
+      <label>Game</label>
+      <select id="manualGame">
+        <option value="pokemon">Pokémon</option>
+        <option value="magic">Magic: The Gathering</option>
+        <option value="yugioh">Yu-Gi-Oh!</option>
+        <option value="lorcana">Lorcana</option>
+        <option value="onepiece">One Piece</option>
+        <option value="starwars">Star Wars Unlimited</option>
+        <option value="digimon">Digimon</option>
+        <option value="fleshandblood">Flesh and Blood</option>
+        <option value="dragonball">Dragon Ball Super</option>
+      </select>
+    </div>
+
+    <div class="manual-row">
+      <div class="manual-field">
+        <label>Set code</label>
+        <input type="text" id="manualSet" placeholder="e.g. MEG, PRE, SSP" autocomplete="off" />
+      </div>
+      <div class="manual-field">
+        <label>Card number *</label>
+        <input type="text" id="manualNumber" placeholder="e.g. 133 or 133/132" autocomplete="off" />
+      </div>
+    </div>
+
+    <div class="manual-field">
+      <label>Name (optional, helps disambiguate)</label>
+      <input type="text" id="manualName" placeholder="e.g. Bulbasaur" autocomplete="off" />
+    </div>
+
+    <div class="manual-hint">Bottom-left of most cards shows the set code + number (e.g. "MEG 133/132").</div>
+
+    <div class="manual-modal-actions">
+      <button class="manual-btn-cancel" onclick="closeManualEntry()">Cancel</button>
+      <button class="manual-btn-submit" id="manualSubmitBtn" onclick="submitManualEntry()">Look up &amp; price</button>
+    </div>
+  </div>
+</div>
 </body>
 </html>

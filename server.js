@@ -328,7 +328,8 @@ app.post('/api/identify', upload.single('image'), async (req, res) => {
       parsed.cards = await Promise.all(parsed.cards.map(card => verifyCard(card)));
     }
 
-    if (cacheKey) cacheSet(cacheKey, parsed);
+    const anyRejected = (parsed.cards || []).some(c => c?.verify_rejected);
+    if (cacheKey && !anyRejected) cacheSet(cacheKey, parsed);
     res.json(parsed);
   } catch (err) {
     console.error('Identification error:', err.message);
@@ -445,7 +446,12 @@ app.post('/api/identify-stream', upload.single('image'), async (req, res) => {
       }
     }
     send({ type: 'verified', cards: parsed.cards || [] });
-    if (cacheKey) cacheSet(cacheKey, parsed);
+    // Only cache if every card was either confidently verified or at least didn't fail verification.
+    // Don't cache when verify rejected a card (e.g. HP mismatch unresolved) — re-scanning might
+    // give us a better image and a better answer.
+    const anyRejected = (parsed.cards || []).some(c => c?.verify_rejected);
+    if (cacheKey && !anyRejected) cacheSet(cacheKey, parsed);
+    else if (anyRejected) console.log(`[IDENT-STREAM-CACHE] SKIP — one or more cards had verify_rejected flag`);
     send({ type: 'done' });
     res.end();
   } catch (err) {
@@ -459,6 +465,138 @@ app.post('/api/identify-stream', upload.single('image'), async (req, res) => {
 // to keep the Render free-tier dyno warm (no cold-start wait at card shows).
 app.get('/api/health', (req, res) => {
   res.json({ ok: true, ts: Date.now(), uptime: process.uptime() });
+});
+
+// ============================================================
+// MANUAL IDENTIFY: /api/identify-manual
+// ============================================================
+// Skip Claude entirely — operator types in set code + card number (+ optional name)
+// and we resolve it against the relevant card database directly.
+// Use when scans are failing (sleeves, glare, damaged cards) and speed matters.
+//
+// Request body: { game: 'pokemon'|'magic'|..., set_code, card_number, name? }
+// Response: { cards: [<one card shaped like /api/identify output>] }
+app.post('/api/identify-manual', async (req, res) => {
+  try {
+    const { game, set_code, card_number, name } = req.body || {};
+    if (!game) return res.status(400).json({ error: 'game is required' });
+    if (!card_number) return res.status(400).json({ error: 'card_number is required' });
+
+    const cleanNum = String(card_number).replace(/\/.*/, '').replace(/^0+/, '') || String(card_number);
+    let card = null;
+
+    if (game === 'pokemon') {
+      // Try set-code-scoped search first, then fall back to number-only.
+      const queries = [];
+      if (set_code) {
+        queries.push(`set.id:${String(set_code).toLowerCase()} number:${cleanNum}`);
+        queries.push(`set.ptcgoCode:${String(set_code).toUpperCase()} number:${cleanNum}`);
+      }
+      if (name) queries.push(`name:"${name}" number:${cleanNum}`);
+      queries.push(`number:${cleanNum}${name ? ` name:"${name}"` : ''}`);
+
+      for (const q of queries) {
+        console.log(`[MANUAL-PKM] Trying: ${q}`);
+        try {
+          const resp = await axios.get('https://api.pokemontcg.io/v2/cards', {
+            params: { q, pageSize: 10 }, timeout: 10000
+          });
+          const results = resp.data?.data;
+          if (!results?.length) continue;
+          // If we have a name, prefer an exact-name match.
+          let best = results[0];
+          if (name) {
+            const exact = results.find(d => d.name?.toLowerCase() === String(name).toLowerCase());
+            if (exact) best = exact;
+          }
+          card = {
+            game: 'pokemon',
+            name: best.name,
+            set_name: best.set?.name,
+            set_code: best.set?.id?.toUpperCase(),
+            card_number: best.number,
+            rarity: best.rarity,
+            hp: best.hp,
+            reference_image: best.images?.large || best.images?.small,
+            cardmarket_url: best.cardmarket?.url || null,
+            tcgplayer_url: best.tcgplayer?.url || null,
+            verified: true,
+            db_source: 'pokemontcg.io (manual)',
+            _manual: true
+          };
+          break;
+        } catch (e) {
+          console.error(`[MANUAL-PKM] Query failed: ${e.message}`);
+        }
+      }
+    } else if (game === 'magic') {
+      // Scryfall supports direct set+collector number lookup.
+      const sc = set_code ? String(set_code).toLowerCase() : null;
+      if (sc) {
+        try {
+          const url = `https://api.scryfall.com/cards/${sc}/${cleanNum}`;
+          console.log(`[MANUAL-MTG] GET ${url}`);
+          const resp = await axios.get(url, { timeout: 10000 });
+          const d = resp.data;
+          card = {
+            game: 'magic',
+            name: d.name,
+            set_name: d.set_name,
+            set_code: d.set?.toUpperCase(),
+            card_number: d.collector_number,
+            rarity: d.rarity,
+            reference_image: d.image_uris?.normal || d.card_faces?.[0]?.image_uris?.normal,
+            cardmarket_url: d.purchase_uris?.cardmarket || null,
+            tcgplayer_url: d.purchase_uris?.tcgplayer || null,
+            verified: true,
+            db_source: 'scryfall.com (manual)',
+            _manual: true
+          };
+        } catch (e) {
+          console.error(`[MANUAL-MTG] Direct lookup failed: ${e.message}`);
+        }
+      }
+      // Name-based fallback
+      if (!card && name) {
+        try {
+          const resp = await axios.get('https://api.scryfall.com/cards/named', {
+            params: { exact: name, set: sc || undefined }, timeout: 10000
+          });
+          const d = resp.data;
+          card = {
+            game: 'magic',
+            name: d.name, set_name: d.set_name, set_code: d.set?.toUpperCase(),
+            card_number: d.collector_number, rarity: d.rarity,
+            reference_image: d.image_uris?.normal || d.card_faces?.[0]?.image_uris?.normal,
+            cardmarket_url: d.purchase_uris?.cardmarket || null,
+            tcgplayer_url: d.purchase_uris?.tcgplayer || null,
+            verified: true, db_source: 'scryfall.com (manual)', _manual: true
+          };
+        } catch (e) { console.error(`[MANUAL-MTG] Named fallback failed: ${e.message}`); }
+      }
+    } else {
+      // Generic / fallback: just build a shell card from the inputs so pricing can still try.
+      card = {
+        game,
+        name: name || `${set_code || ''} #${card_number}`.trim(),
+        set_name: set_code || null,
+        set_code: set_code ? String(set_code).toUpperCase() : null,
+        card_number: cleanNum,
+        verified: false,
+        _manual: true,
+        db_source: 'manual entry (no DB lookup for ' + game + ')'
+      };
+    }
+
+    if (!card) {
+      return res.status(404).json({ error: 'No card found for that set/number combination. Double-check the set code and number.' });
+    }
+
+    res.json({ cards: [card] });
+  } catch (err) {
+    console.error('[MANUAL] Error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // ============================================================
@@ -715,6 +853,7 @@ async function verifyCard(card) {
           // The AI read the HP from the image correctly but identified the wrong card.
           // Search using the AI's HP + base name to find the actual card.
           const baseName = (card.name || '').replace(/\s*(ex|GX|EX|V|VMAX|VSTAR|LV\.X|-GX|-EX)\s*$/, '').replace(/-$/, '').trim();
+          let hpMismatchResolved = false;
           try {
             const hpSearch = await axios.get('https://api.pokemontcg.io/v2/cards', {
               params: { q: `name:"${baseName}" hp:${card.hp}`, pageSize: 15 },
@@ -760,10 +899,19 @@ async function verifyCard(card) {
                   image: best.images?.large || best.images?.small,
                   source: 'pokemontcg.io (HP re-search)'
                 };
+                hpMismatchResolved = true;
               }
             }
           } catch (hpErr) {
             console.error(`[VERIFY] HP re-search failed: ${hpErr.message}`);
+          }
+
+          // CRITICAL: if HP mismatch wasn't resolved (re-search timed out or found nothing better),
+          // we MUST reject the original verified match — it's almost certainly the wrong card.
+          // Return the AI's identification as-is; better to have a less-precise ID than a confidently wrong one.
+          if (!hpMismatchResolved) {
+            console.log(`[VERIFY] REJECTED — HP mismatch unresolved. Keeping AI identification as-is.`);
+            return { ...card, verified: false, verify_rejected: 'hp_mismatch' };
           }
         }
       }
@@ -1045,15 +1193,20 @@ async function verifyPokemon(card) {
           }
 
           // Set total match — if AI says "44/101", the set must have ~101 cards
-          // This is a strong disambiguator when same card appears across multiple sets
+          // This is a strong disambiguator when same card appears across multiple sets.
+          // Mismatch penalty raised: if AI clearly read "133/132" and DB card is from
+          // a 165-card set, that is a near-certain wrong-set signal.
           if (card.card_number && card.card_number.includes('/')) {
-            const aiSetTotal = card.card_number.split('/')[1]?.replace(/^0+/, '');
-            const dbSetTotal = String(d.set?.printedTotal || d.set?.total || '');
+            const aiSetTotal = parseInt(card.card_number.split('/')[1]?.replace(/^0+/, '') || '0');
+            const dbSetTotal = parseInt(d.set?.printedTotal || d.set?.total || '0');
             if (aiSetTotal && dbSetTotal) {
               if (aiSetTotal === dbSetTotal) {
-                score += 35;  // Set size matches — strong confirmation
+                score += 50;  // Set size matches exactly — strong confirmation
               } else {
-                score -= 25;  // Set size mismatch — likely wrong set
+                const diff = Math.abs(aiSetTotal - dbSetTotal);
+                if (diff <= 2) score += 20;         // Close enough (OCR ±1-2)
+                else if (diff <= 10) score -= 30;   // Different set probably
+                else score -= 80;                    // Totally different era of set
               }
             }
           }
@@ -1094,8 +1247,12 @@ async function verifyPokemon(card) {
       }
     }
 
-    // Return the best match found across ALL queries
-    if (globalBest && globalBestScore >= 40) {
+    // Return the best match found across ALL queries.
+    // Threshold raised from 40 → 120: a score of 40-100 is typically just
+    // "name matched but everything else is wrong", which leads to confidently
+    // wrong "corrections" (e.g. modern Bulbasaur being swapped for 2002 Expedition #94
+    // because only the name matched). 120 requires at least 2-3 signals to agree.
+    if (globalBest && globalBestScore >= 120) {
       console.log(`[VERIFY-PKM] Best match: "${globalBest.name}" from ${globalBest.set?.name} (score: ${globalBestScore})`);
       return {
         name: globalBest.name,
@@ -1108,8 +1265,11 @@ async function verifyPokemon(card) {
         // Direct Cardmarket product URL for this exact print — not a search.
         cardmarket_url: globalBest.cardmarket?.url || null,
         tcgplayer_url: globalBest.tcgplayer?.url || null,
-        source: 'pokemontcg.io'
+        source: 'pokemontcg.io',
+        confidence_score: globalBestScore
       };
+    } else if (globalBest) {
+      console.log(`[VERIFY-PKM] Best match "${globalBest.name}" scored ${globalBestScore}, below threshold 120 — rejecting.`);
     }
     // FALLBACK: If nothing matched, try alternate suffixes
     // AI commonly confuses ex↔GX, V↔VMAX etc.
