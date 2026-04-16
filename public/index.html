@@ -448,6 +448,57 @@
       background: var(--bg); padding: 8px 10px; border-radius: 6px;
       border-left: 2px solid var(--accent);
     }
+    /* Camera placeholder (shown before camera starts) */
+    .camera-placeholder {
+      position: absolute; inset: 0;
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      gap: 10px; cursor: pointer; z-index: 5;
+      background: var(--surface);
+      color: var(--text-dim);
+      border-radius: var(--radius);
+    }
+    .camera-placeholder svg { width: 48px; height: 48px; fill: var(--accent); opacity: 0.7; }
+    .camera-placeholder span { font-size: 14px; font-weight: 600; }
+    .camera-placeholder:hover { background: var(--surface2); }
+    .camera-placeholder:hover svg { opacity: 1; }
+
+    /* Text entry mode panel */
+    .text-entry-panel { display: flex; flex-direction: column; gap: 12px; padding: 12px 0; }
+    .text-entry-panel.hidden { display: none; }
+    .text-entry-panel textarea {
+      width: 100%; min-height: 180px; padding: 14px;
+      background: var(--bg); color: var(--text);
+      border: 1px solid var(--border); border-radius: 10px;
+      font-family: 'SF Mono', 'Fira Code', monospace; font-size: 14px;
+      resize: vertical; line-height: 1.6;
+      touch-action: manipulation;
+    }
+    .text-entry-panel textarea:focus { outline: none; border-color: var(--accent); }
+    .text-entry-panel textarea::placeholder { color: var(--text-dim); opacity: 0.6; }
+    .text-entry-hint {
+      font-size: 12px; color: var(--text-dim);
+      background: var(--bg); padding: 10px 12px;
+      border-radius: 8px; border-left: 3px solid var(--accent);
+      line-height: 1.5;
+    }
+    .text-entry-controls { display: flex; gap: 10px; }
+    .text-entry-progress {
+      position: relative; height: 22px;
+      background: var(--surface); border-radius: 11px;
+      overflow: hidden; border: 1px solid var(--border);
+    }
+    .text-entry-progress-bar {
+      position: absolute; inset: 0 auto 0 0; width: 0%;
+      background: linear-gradient(90deg, #6c5ce7, #00d4ff);
+      transition: width .2s ease;
+    }
+    .text-entry-progress-label {
+      position: absolute; inset: 0; display: flex; align-items: center;
+      justify-content: center; font-size: 12px; font-weight: 700; color: #fff;
+      text-shadow: 0 1px 2px rgba(0,0,0,.5);
+    }
+
     /* Quick-access manual entry link shown above capture controls */
     .manual-link {
       text-align: center; font-size: 13px; color: var(--accent-light);
@@ -1271,6 +1322,7 @@
         <button class="mode-btn active" onclick="setMode('single')">Single</button>
         <button class="mode-btn" onclick="setMode('batch')">Binder</button>
         <button class="mode-btn" onclick="setMode('bulk')">Bulk</button>
+        <button class="mode-btn" onclick="setMode('text')">Text</button>
       </div>
 
       <!-- BULK MODE PANEL -->
@@ -1297,9 +1349,45 @@
         </div>
       </div>
 
+      <!-- TEXT ENTRY PANEL (bulk manual) -->
+      <div id="textEntryPanel" class="text-entry-panel hidden">
+        <div class="manual-field">
+          <label>Game</label>
+          <select id="textEntryGame">
+            <option value="pokemon">Pokémon</option>
+            <option value="magic">Magic: The Gathering</option>
+            <option value="yugioh">Yu-Gi-Oh!</option>
+            <option value="lorcana">Lorcana</option>
+            <option value="onepiece">One Piece</option>
+            <option value="starwars">Star Wars Unlimited</option>
+            <option value="digimon">Digimon</option>
+            <option value="fleshandblood">Flesh and Blood</option>
+            <option value="dragonball">Dragon Ball Super</option>
+          </select>
+        </div>
+        <textarea id="textEntryArea" placeholder="One card per line:&#10;PFL 94&#10;PFL 102&#10;POR 100&#10;TWM 200&#10;MEG 136"></textarea>
+        <div class="text-entry-hint">
+          Format: <strong>SET NUMBER</strong> — one per line.<br>
+          e.g. <code>PFL 94</code> or <code>TWM 200</code> or just <code>94</code> (no set).<br>
+          Optionally add a name: <code>PFL 94 Wondrous Patch</code>
+        </div>
+        <div class="text-entry-progress hidden" id="textEntryProgress">
+          <div class="text-entry-progress-bar" id="textEntryProgressBar"></div>
+          <div class="text-entry-progress-label" id="textEntryProgressLabel">0 / 0</div>
+        </div>
+        <div class="text-entry-controls">
+          <button class="bulk-btn primary" id="textEntryStartBtn" onclick="startTextEntryProcess()">Look up all</button>
+          <button class="bulk-btn" onclick="clearTextEntry()">Clear</button>
+        </div>
+      </div>
+
       <!-- Camera -->
       <div class="camera-container" id="cameraContainer" onclick="tapToFocus(event)">
-        <video id="cameraVideo" autoplay playsinline muted></video>
+        <div class="camera-placeholder" id="cameraPlaceholder" onclick="activateCamera()">
+          <svg viewBox="0 0 24 24"><path d="M17 10.5V7c0-.55-.45-1-1-1H4c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h12c.55 0 1-.45 1-1v-3.5l4 4v-11l-4 4z"/></svg>
+          <span>Tap to start camera</span>
+        </div>
+        <video id="cameraVideo" autoplay playsinline muted</video>
         <img id="capturedImage" class="hidden" />
         <div class="focus-ring" id="focusRing"></div>
         <div class="camera-overlay">
@@ -1708,7 +1796,9 @@ async function startCamera() {
     document.getElementById('capturedImage').classList.add('hidden');
   } catch (err) {
     console.error('Camera error:', err);
-    alert('Camera access is required. Please allow camera permissions and refresh.');
+    // Show placeholder again instead of blocking alert
+    const ph = document.getElementById('cameraPlaceholder');
+    if (ph) { ph.style.display = ''; ph.querySelector('span').textContent = 'Camera unavailable — tap to retry'; }
   }
 }
 
@@ -1786,37 +1876,49 @@ function retakePhoto() {
 
 function setMode(mode) {
   state.mode = mode;
-  const idx = mode === 'single' ? 0 : mode === 'batch' ? 1 : 2;
+  const modes = ['single', 'batch', 'bulk', 'text'];
+  const idx = modes.indexOf(mode);
   document.querySelectorAll('.mode-btn').forEach((btn, i) => {
     btn.classList.toggle('active', i === idx);
   });
   const frame = document.getElementById('scanFrame');
   const svgFrame = document.getElementById('frameSvg');
   const bulkPanel = document.getElementById('bulkPanel');
+  const textPanel = document.getElementById('textEntryPanel');
   const camera = document.getElementById('cameraContainer');
   const captureRow = document.querySelector('.capture-row');
   const zoomRow = document.querySelector('.zoom-row');
   const scanControls = document.getElementById('scanControls');
   const recentRibbon = document.getElementById('recentRibbon');
+  const manualLink = document.querySelector('.manual-link');
+  const hintRow = document.getElementById('hintInput')?.parentElement;
 
-  if (mode === 'bulk') {
-    // Hide camera chrome; show bulk panel.
-    if (bulkPanel) bulkPanel.classList.remove('hidden');
+  // Hide all panels first
+  if (bulkPanel) bulkPanel.classList.add('hidden');
+  if (textPanel) textPanel.classList.add('hidden');
+
+  if (mode === 'bulk' || mode === 'text') {
+    // Hide camera chrome
     if (camera) camera.style.display = 'none';
     if (captureRow) captureRow.style.display = 'none';
     if (zoomRow) zoomRow.style.display = 'none';
     if (scanControls) scanControls.style.display = 'none';
     if (recentRibbon) recentRibbon.style.display = 'none';
+    if (manualLink) manualLink.style.display = 'none';
+    if (hintRow) hintRow.style.display = 'none';
+    if (mode === 'bulk') bulkPanel.classList.remove('hidden');
+    if (mode === 'text') textPanel.classList.remove('hidden');
     return;
   }
 
-  // Leaving bulk: restore camera chrome.
-  if (bulkPanel) bulkPanel.classList.add('hidden');
+  // Leaving bulk/text: restore camera chrome.
   if (camera) camera.style.display = '';
   if (captureRow) captureRow.style.display = '';
   if (zoomRow) zoomRow.style.display = '';
   if (scanControls) scanControls.style.display = '';
   if (recentRibbon) recentRibbon.style.display = '';
+  if (manualLink) manualLink.style.display = '';
+  if (hintRow) hintRow.style.display = '';
 
   if (mode === 'batch') {
     frame.className = 'batch-frame';
@@ -1878,6 +1980,8 @@ async function captureAndIdentify() {
   if (state.isProcessing) return;
 
   const video = document.getElementById('cameraVideo');
+  // If camera hasn't been started, start it first
+  if (!state.stream) { activateCamera(); return; }
   const canvas = document.getElementById('captureCanvas');
 
   // Capture frame from video
@@ -3971,7 +4075,8 @@ document.addEventListener('DOMContentLoaded', () => {
   const pairId = params.get('pair');
   if (pairId) joinAsScanner(pairId);
   else document.getElementById('pairStatus') && (document.getElementById('pairStatus').textContent = 'Not paired');
-  startCamera();
+  // Don't auto-start camera — show placeholder; user taps to activate
+  showCameraPlaceholder();
   document.getElementById('logCount').textContent = state.sessionLog.length;
   const cashSlider = document.getElementById('cashPctSlider');
   const cashDisplay = document.getElementById('cashPctDisplay');
@@ -4482,6 +4587,152 @@ document.addEventListener('keydown', (e) => {
   if (e.key === 'Enter') { e.preventDefault(); submitManualEntry(); }
   if (e.key === 'Escape') { e.preventDefault(); closeManualEntry(); }
 });
+
+// ============================================================
+// CAMERA PLACEHOLDER — don't start camera until user taps
+// ============================================================
+function showCameraPlaceholder() {
+  const ph = document.getElementById('cameraPlaceholder');
+  if (ph) ph.style.display = '';
+}
+function activateCamera() {
+  const ph = document.getElementById('cameraPlaceholder');
+  if (ph) ph.style.display = 'none';
+  startCamera();
+}
+
+// ============================================================
+// TEXT ENTRY MODE — bulk manual card lookups from typed list
+// ============================================================
+let _textEntryRunning = false;
+
+function parseTextEntryLines(raw) {
+  return raw.split('\n')
+    .map(l => l.trim())
+    .filter(l => l && !l.startsWith('#') && !l.startsWith('//'))
+    .map(line => {
+      // Formats: "SET NUM", "SET NUM Name", "NUM", "SET NUM/TOTAL", "SET NUM/TOTAL Name"
+      const parts = line.split(/\s+/);
+      if (parts.length === 1) {
+        // Just a number
+        return { set_code: '', card_number: parts[0].split('/')[0], name: '' };
+      }
+      const set_code = parts[0];
+      const card_number = parts[1].split('/')[0]; // strip /TOTAL
+      const name = parts.slice(2).join(' ');
+      return { set_code, card_number, name };
+    });
+}
+
+async function startTextEntryProcess() {
+  if (_textEntryRunning) return;
+  const textarea = document.getElementById('textEntryArea');
+  const game = document.getElementById('textEntryGame').value;
+  const lines = parseTextEntryLines(textarea.value);
+  if (!lines.length) { alert('Enter at least one card (SET NUMBER per line)'); return; }
+
+  _textEntryRunning = true;
+  const startBtn = document.getElementById('textEntryStartBtn');
+  startBtn.disabled = true;
+  startBtn.textContent = 'Processing...';
+
+  const progressEl = document.getElementById('textEntryProgress');
+  const progressBar = document.getElementById('textEntryProgressBar');
+  const progressLabel = document.getElementById('textEntryProgressLabel');
+  progressEl.classList.remove('hidden');
+
+  let done = 0;
+  const total = lines.length;
+  const results = [];
+
+  for (const entry of lines) {
+    progressLabel.textContent = `${done} / ${total}`;
+    progressBar.style.width = `${(done / total) * 100}%`;
+    try {
+      const resp = await fetch('/api/identify-manual', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          game,
+          set_code: entry.set_code,
+          card_number: entry.card_number,
+          name: entry.name || undefined
+        })
+      });
+      if (!resp.ok) {
+        const err = await resp.json().catch(() => ({}));
+        console.warn(`[TEXT-ENTRY] Failed: ${entry.set_code} ${entry.card_number} — ${err.error || resp.status}`);
+        results.push({ error: true, entry, message: err.error || 'Lookup failed' });
+        done++;
+        continue;
+      }
+      const data = await resp.json();
+      const cards = data.cards || [];
+      if (!cards.length) {
+        results.push({ error: true, entry, message: 'No card found' });
+        done++;
+        continue;
+      }
+      const card = cards[0];
+      // Price it
+      let priced = null;
+      try {
+        const pr = await fetch('/api/price', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ card, buyPercentage: state.buyPercentage })
+        });
+        if (pr.ok) priced = await pr.json();
+      } catch (pe) { console.error('Price error:', pe); }
+
+      const result = priced || { card, cardmarket: null, ebay: null, buy_price: null };
+      results.push(result);
+      addToSessionLog(result, null);
+    } catch (e) {
+      console.error(`[TEXT-ENTRY] Error: ${entry.set_code} ${entry.card_number}`, e);
+      results.push({ error: true, entry, message: e.message });
+    }
+    done++;
+  }
+
+  // Final update
+  progressLabel.textContent = `${done} / ${total}`;
+  progressBar.style.width = '100%';
+
+  // Show results on Results tab
+  const goodResults = results.filter(r => !r.error);
+  if (goodResults.length) {
+    state.currentResults = goodResults;
+    renderResults(state.currentResults);
+    switchTab('results');
+  }
+
+  // Report errors
+  const errors = results.filter(r => r.error);
+  if (errors.length) {
+    const failList = errors.map(e => `${e.entry.set_code} ${e.entry.card_number}: ${e.message}`).join('\n');
+    alert(`${goodResults.length} found, ${errors.length} failed:\n\n${failList}`);
+  }
+
+  // Reset
+  _textEntryRunning = false;
+  startBtn.disabled = false;
+  startBtn.textContent = 'Look up all';
+  setTimeout(() => {
+    progressEl.classList.add('hidden');
+    progressBar.style.width = '0%';
+  }, 2000);
+
+  renderSessionLog();
+  updateSessionStrip();
+  updateRecentRibbon();
+}
+
+function clearTextEntry() {
+  if (_textEntryRunning) return;
+  document.getElementById('textEntryArea').value = '';
+  document.getElementById('textEntryProgress').classList.add('hidden');
+}
 </script>
 
 <!-- MANUAL ENTRY MODAL -->
