@@ -406,6 +406,7 @@
       position: fixed; inset: 0; background: rgba(0,0,0,0.75);
       display: flex; align-items: center; justify-content: center;
       z-index: 1000; padding: 20px;
+      touch-action: none;          /* prevent background swipe-through */
     }
     .manual-modal.hidden { display: none; }
     .manual-modal-card {
@@ -413,6 +414,10 @@
       border-radius: 16px; padding: 24px; width: 100%; max-width: 420px;
       display: flex; flex-direction: column; gap: 14px;
       box-shadow: 0 20px 60px rgba(0,0,0,0.4);
+      touch-action: pan-y;         /* allow vertical scroll inside card */
+      overscroll-behavior: contain; /* don't propagate scroll to parent */
+      max-height: 90dvh;
+      overflow-y: auto;
     }
     .manual-modal-title { font-size: 18px; font-weight: 600; color: var(--text); margin-bottom: 4px; }
     .manual-modal-sub { font-size: 12px; color: var(--text-dim); margin-top: -8px; margin-bottom: 6px; }
@@ -420,8 +425,10 @@
     .manual-field label { font-size: 12px; color: var(--text-dim); font-weight: 500; }
     .manual-field input, .manual-field select {
       padding: 10px 12px; background: var(--bg); color: var(--text);
-      border: 1px solid var(--border); border-radius: 8px; font-size: 15px;
+      border: 1px solid var(--border); border-radius: 8px; font-size: 16px;
       font-family: inherit;
+      touch-action: manipulation;   /* prevent zoom/swipe on inputs */
+      -webkit-appearance: none;     /* consistent rendering on iOS */
     }
     .manual-field input:focus, .manual-field select:focus {
       outline: none; border-color: var(--accent);
@@ -440,6 +447,17 @@
       font-size: 11px; color: var(--text-dim); font-style: italic;
       background: var(--bg); padding: 8px 10px; border-radius: 6px;
       border-left: 2px solid var(--accent);
+    }
+    /* Quick-access manual entry link shown above capture controls */
+    .manual-link {
+      text-align: center; font-size: 13px; color: var(--accent-light);
+      cursor: pointer; padding: 2px 0; text-decoration: underline;
+      text-underline-offset: 3px;
+    }
+    .manual-link:hover { color: var(--accent); }
+    /* On laptop/desktop, limit camera height so buttons stay visible */
+    @media (min-width: 768px) {
+      .camera-container { max-height: 50vh; aspect-ratio: 4/3; }
     }
 
     /* ---- RESULTS CARD ---- */
@@ -1322,6 +1340,9 @@
         <button class="zoom-btn" onclick="setZoom(2)">2x</button>
         <button class="zoom-btn" onclick="setZoom(3)">3x</button>
       </div>
+
+      <!-- Manual entry quick link -->
+      <div class="manual-link" onclick="openManualEntry()">Or enter card number manually</div>
 
       <!-- Capture Controls -->
       <div class="capture-row">
@@ -4355,6 +4376,15 @@ function dismissInstall() {
 // ============================================================
 // MANUAL ENTRY (bypass scanning — operator types set + number)
 // ============================================================
+// Stop touch events inside the manual modal from propagating to anything below
+(function() {
+  const m = document.getElementById('manualModal');
+  if (!m) return;
+  ['touchstart','touchmove','touchend'].forEach(evt => {
+    m.addEventListener(evt, e => { e.stopPropagation(); }, { passive: false });
+  });
+})();
+
 function openManualEntry() {
   document.getElementById('manualModal').classList.remove('hidden');
   // Pre-fill game from hint if possible, else pokemon
