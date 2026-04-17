@@ -380,11 +380,15 @@
           const condMult = CONDITION_MULTS[card.condition_estimate] || 1;
           const effectiveMV = mv * condMult;
 
+          // Grab cardmarket link from wherever it's available
+          const cmUrl = priced?.cardmarket?.url || priced?.card?.cardmarket_url || card.cardmarket_url || null;
+
           state.results.push({
             card: priced?.card || card,
             market: mv,
             cash: Math.round(effectiveMV * (CASH_PCT / 100) * 100) / 100,
-            credit: Math.round(effectiveMV * (CREDIT_PCT / 100) * 100) / 100
+            credit: Math.round(effectiveMV * (CREDIT_PCT / 100) * 100) / 100,
+            cardmarket_url: cmUrl
           });
         } catch (e) {
           console.warn('[QUOTE]', entry.raw, e.message);
@@ -424,10 +428,14 @@
         mTotal += it.market || 0;
         cTotal += it.cash || 0;
         crTotal += it.credit || 0;
+        const cmLink = it.cardmarket_url || it.card?.cardmarket_url;
+        const nameHtml = cmLink
+          ? '<a href="' + escapeHtml(cmLink) + '" target="_blank" rel="noopener" style="color:var(--cream);text-decoration:underline;text-underline-offset:3px;">' + escapeHtml(it.card.name || 'Unknown') + '</a>'
+          : escapeHtml(it.card.name || 'Unknown');
         return '<div class="card-row">' +
           '<div class="card-icon">' + icon + '</div>' +
           '<div class="card-meta">' +
-            '<div class="card-name">' + escapeHtml(it.card.name || 'Unknown') + '</div>' +
+            '<div class="card-name">' + nameHtml + '</div>' +
             '<div class="card-set">' + escapeHtml(it.card.set_name || it.card.set_code || '') +
               (it.card.card_number ? ' &middot; #' + escapeHtml(it.card.card_number) : '') + '</div>' +
           '</div>' +
