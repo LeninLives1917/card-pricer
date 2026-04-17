@@ -554,16 +554,16 @@ const PKM_SET_ALIASES = {
 
 // Resolve a user-typed set code to an API set.id
 function resolveSetCode(raw) {
-  if (!raw) return { setId: null, ptcgoCode: null };
+  if (!raw) return { setId: null, ptcgoCode: null, aliased: false };
   const upper = String(raw).toUpperCase().trim();
   const lower = String(raw).toLowerCase().trim();
   const mapped = PKM_SET_ALIASES[upper];
   if (mapped) {
     console.log(`[SET-ALIAS] "${upper}" -> set.id "${mapped}"`);
-    return { setId: mapped, ptcgoCode: upper };
+    return { setId: mapped, ptcgoCode: upper, aliased: true };
   }
   // No alias found — try as-is (might already be a valid set.id or ptcgoCode)
-  return { setId: lower, ptcgoCode: upper };
+  return { setId: lower, ptcgoCode: upper, aliased: false };
 }
 
 // ============================================================
@@ -593,11 +593,15 @@ app.post('/api/identify-manual', async (req, res) => {
       if (resolved.setId) {
         queries.push(`set.id:${resolved.setId} number:${cleanNum}`);
       }
-      if (resolved.ptcgoCode) {
+      // Only try ptcgoCode search if we did NOT resolve via our alias table.
+      // Reason: ptcgoCodes can be reused/reassigned (e.g. PRE = Journey Together
+      // in the API, but our alias correctly maps PRE -> sv8pt5 Prismatic Evolutions).
+      // Using ptcgoCode after a known alias would return the WRONG set.
+      if (resolved.ptcgoCode && !resolved.aliased) {
         queries.push(`set.ptcgoCode:${resolved.ptcgoCode} number:${cleanNum}`);
       }
       // Also try the raw input in case it's already a valid set.id we don't have aliased
-      if (set_code && resolved.setId !== String(set_code).toLowerCase()) {
+      if (set_code && !resolved.aliased && resolved.setId !== String(set_code).toLowerCase()) {
         queries.push(`set.id:${String(set_code).toLowerCase()} number:${cleanNum}`);
       }
       if (name) queries.push(`name:"${name}" number:${cleanNum}`);
