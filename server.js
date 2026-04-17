@@ -487,16 +487,18 @@ const PKM_SET_ALIASES = {
   'SFA':  'sv6pt5',     // Shrouded Fable
   'SCR':  'sv7',        // Stellar Crown
   'SSP':  'sv8',        // Surging Sparks
-  'PRE':  'sv9',        // Prismatic Evolutions
-  'SVE':  'sv9',        // Prismatic Evolutions (alternate)
+  'PRE':  'sv8pt5',     // Prismatic Evolutions
+  'SVE':  'sv8pt5',     // Prismatic Evolutions (alternate)
+  'JTG':  'sv9',        // Journey Together
+  'JT':   'sv9',        // Journey Together (short)
   'DRI':  'sv10',       // Destined Rivals
-  // Japanese-origin / newer set codes
-  'PFL':  'sv9pt5',     // Phantasmal Flames (ME02)
-  'ME2':  'sv9pt5',     // Phantasmal Flames (ME02 alternate)
-  'MEG':  'sv8pt5',     // Mega Evolution (ME01)
-  'ME1':  'sv8pt5',     // Mega Evolution (ME01 alternate)
-  'POR':  'sv10pt5',    // Perfect Order (ME03)
-  'ME3':  'sv10pt5',    // Perfect Order (ME03 alternate)
+  // Mega Evolution sub-sets (ME01/ME02/ME03)
+  'MEG':  'me1',        // Mega Evolution (ME01)
+  'ME1':  'me1',        // Mega Evolution (ME01 alternate)
+  'PFL':  'me2',        // Phantasmal Flames (ME02)
+  'ME2':  'me2',        // Phantasmal Flames (ME02 alternate)
+  'POR':  'me3',        // Perfect Order (ME03)
+  'ME3':  'me3',        // Perfect Order (ME03 alternate)
   // SV promo
   'SVP':  'svp',        // SV Black Star Promos
 
