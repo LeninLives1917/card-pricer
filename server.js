@@ -603,38 +603,72 @@ app.post('/api/identify-manual', async (req, res) => {
       // random matches like Primal Groudon #151 when user meant MEW 151).
       if (name) queries.push(`number:${cleanNum} name:"${name}"`);
 
-      for (const q of queries) {
-        console.log(`[MANUAL-PKM] Trying: ${q}`);
+      // Also try direct card ID lookup: pokemontcg.io stores cards as {setId}-{number}
+      // e.g. sv3pt5-151. This is the fastest and most reliable approach.
+      if (resolved.setId) {
+        const directId = `${resolved.setId}-${cleanNum}`;
+        console.log(`[MANUAL-PKM] Direct lookup: ${directId}`);
         try {
-          const resp = await axios.get('https://api.pokemontcg.io/v2/cards', {
-            params: { q, pageSize: 10 }, timeout: 10000
-          });
-          const results = resp.data?.data;
-          if (!results?.length) continue;
-          // If we have a name, prefer an exact-name match.
-          let best = results[0];
-          if (name) {
-            const exact = results.find(d => d.name?.toLowerCase() === String(name).toLowerCase());
-            if (exact) best = exact;
+          const resp = await axios.get(`https://api.pokemontcg.io/v2/cards/${directId}`, { timeout: 10000 });
+          const best = resp.data?.data;
+          if (best) {
+            card = {
+              game: 'pokemon',
+              name: best.name,
+              set_name: best.set?.name,
+              set_code: best.set?.id?.toUpperCase(),
+              card_number: best.number,
+              rarity: best.rarity,
+              hp: best.hp,
+              reference_image: best.images?.large || best.images?.small,
+              cardmarket_url: best.cardmarket?.url || null,
+              tcgplayer_url: best.tcgplayer?.url || null,
+              verified: true,
+              db_source: 'pokemontcg.io (manual)',
+              _manual: true
+            };
+            console.log(`[MANUAL-PKM] Direct hit: ${best.name} (${directId})`);
           }
-          card = {
-            game: 'pokemon',
-            name: best.name,
-            set_name: best.set?.name,
-            set_code: best.set?.id?.toUpperCase(),
-            card_number: best.number,
-            rarity: best.rarity,
-            hp: best.hp,
-            reference_image: best.images?.large || best.images?.small,
-            cardmarket_url: best.cardmarket?.url || null,
-            tcgplayer_url: best.tcgplayer?.url || null,
-            verified: true,
-            db_source: 'pokemontcg.io (manual)',
-            _manual: true
-          };
-          break;
         } catch (e) {
-          console.error(`[MANUAL-PKM] Query failed: ${e.message}`);
+          console.log(`[MANUAL-PKM] Direct lookup ${directId} failed: ${e.message}`);
+        }
+      }
+
+      // If direct lookup didn't work, fall back to search queries.
+      if (!card) {
+        for (const q of queries) {
+          console.log(`[MANUAL-PKM] Trying: ${q}`);
+          try {
+            const resp = await axios.get('https://api.pokemontcg.io/v2/cards', {
+              params: { q, pageSize: 10 }, timeout: 10000
+            });
+            const results = resp.data?.data;
+            if (!results?.length) continue;
+            // If we have a name, prefer an exact-name match.
+            let best = results[0];
+            if (name) {
+              const exact = results.find(d => d.name?.toLowerCase() === String(name).toLowerCase());
+              if (exact) best = exact;
+            }
+            card = {
+              game: 'pokemon',
+              name: best.name,
+              set_name: best.set?.name,
+              set_code: best.set?.id?.toUpperCase(),
+              card_number: best.number,
+              rarity: best.rarity,
+              hp: best.hp,
+              reference_image: best.images?.large || best.images?.small,
+              cardmarket_url: best.cardmarket?.url || null,
+              tcgplayer_url: best.tcgplayer?.url || null,
+              verified: true,
+              db_source: 'pokemontcg.io (manual)',
+              _manual: true
+            };
+            break;
+          } catch (e) {
+            console.error(`[MANUAL-PKM] Query failed: ${e.message}`);
+          }
         }
       }
     } else if (game === 'magic') {
