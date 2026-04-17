@@ -380,15 +380,31 @@
           const condMult = CONDITION_MULTS[card.condition_estimate] || 1;
           const effectiveMV = mv * condMult;
 
-          // Grab cardmarket link from wherever it's available
-          const cmUrl = priced?.cardmarket?.url || priced?.card?.cardmarket_url || card.cardmarket_url || null;
+          // Grab the most specific cardmarket link available:
+          // 1. filtered_url = exact product page with condition filter (best)
+          // 2. cardmarket.url = product page from pricing lookup
+          // 3. card.cardmarket_url = from the TCG API (often generic/redirect)
+          // 4. Build a search URL as last resort
+          const cmUrl = priced?.cardmarket?.filtered_url
+            || priced?.cardmarket?.url
+            || priced?.card?.cardmarket_url
+            || card.cardmarket_url
+            || null;
+
+          // If we still only have a generic/redirect URL, build a precise search instead
+          const cardName = (priced?.card || card).name || '';
+          const setName = (priced?.card || card).set_name || '';
+          const fallbackCmUrl = cmUrl && cmUrl.includes('cardmarket.com')
+            ? cmUrl
+            : 'https://www.cardmarket.com/en/Pokemon/Products/Search?searchString=' +
+              encodeURIComponent(cardName + ' ' + setName).replace(/%20/g, '+');
 
           state.results.push({
             card: priced?.card || card,
             market: mv,
             cash: Math.round(effectiveMV * (CASH_PCT / 100) * 100) / 100,
             credit: Math.round(effectiveMV * (CREDIT_PCT / 100) * 100) / 100,
-            cardmarket_url: cmUrl
+            cardmarket_url: fallbackCmUrl
           });
         } catch (e) {
           console.warn('[QUOTE]', entry.raw, e.message);
