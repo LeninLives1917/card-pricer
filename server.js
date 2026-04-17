@@ -468,6 +468,103 @@ app.get('/api/health', (req, res) => {
 });
 
 // ============================================================
+// POKEMON SET CODE ALIAS TABLE
+// ============================================================
+// Maps common abbreviations (ptcgoCode, printed codes, collector slang)
+// to the pokemontcg.io set.id so manual lookups hit the right set.
+// Keys are UPPERCASE. Values are the API's set.id (lowercase).
+const PKM_SET_ALIASES = {
+  // ---- Scarlet & Violet era ----
+  'SVI':  'sv1',        // Scarlet & Violet
+  'PAL':  'sv2',        // Paldea Evolved
+  'OBF':  'sv3',        // Obsidian Flames
+  'MEW':  'sv3pt5',     // Pokémon 151
+  '151':  'sv3pt5',     // Pokémon 151 (alternate)
+  'PAR':  'sv4',        // Paradox Rift
+  'PAF':  'sv4pt5',     // Paldean Fates
+  'TEF':  'sv5',        // Temporal Forces
+  'TWM':  'sv6',        // Twilight Masquerade
+  'SFA':  'sv6pt5',     // Shrouded Fable
+  'SCR':  'sv7',        // Stellar Crown
+  'SSP':  'sv8',        // Surging Sparks
+  'PRE':  'sv9',        // Prismatic Evolutions
+  'SVE':  'sv9',        // Prismatic Evolutions (alternate)
+  'DRI':  'sv10',       // Destined Rivals
+  // Japanese-origin / newer set codes
+  'PFL':  'sv9pt5',     // Phantasmal Flames (ME02)
+  'ME2':  'sv9pt5',     // Phantasmal Flames (ME02 alternate)
+  'MEG':  'sv8pt5',     // Mega Evolution (ME01)
+  'ME1':  'sv8pt5',     // Mega Evolution (ME01 alternate)
+  'POR':  'sv10pt5',    // Perfect Order (ME03)
+  'ME3':  'sv10pt5',    // Perfect Order (ME03 alternate)
+  // SV promo
+  'SVP':  'svp',        // SV Black Star Promos
+
+  // ---- Sword & Shield era ----
+  'SSH':  'swsh1',      // Sword & Shield
+  'RCL':  'swsh2',      // Rebel Clash
+  'DAA':  'swsh3',      // Darkness Ablaze
+  'VIV':  'swsh4',      // Vivid Voltage
+  'BST':  'swsh5',      // Battle Styles
+  'CRE':  'swsh6',      // Chilling Reign
+  'EVS':  'swsh7',      // Evolving Skies
+  'FST':  'swsh8',      // Fusion Strike
+  'BRS':  'swsh9',      // Brilliant Stars
+  'ASR':  'swsh10',     // Astral Radiance
+  'LOR':  'swsh11',     // Lost Origin
+  'SIT':  'swsh12',     // Silver Tempest
+  'CRZ':  'swsh12pt5',  // Crown Zenith
+  'CPA':  'swsh35',     // Champion's Path
+  'SHF':  'swsh45',     // Shining Fates
+
+  // ---- Sun & Moon era ----
+  'SUM':  'sm1',        // Sun & Moon
+  'GRI':  'sm2',        // Guardians Rising
+  'BUS':  'sm3',        // Burning Shadows
+  'SLG':  'sm35',       // Shining Legends
+  'CIN':  'sm4',        // Crimson Invasion
+  'UPR':  'sm5',        // Ultra Prism
+  'FLI':  'sm6',        // Forbidden Light
+  'CES':  'sm7',        // Celestial Storm
+  'LOT':  'sm8',        // Lost Thunder
+  'TEU':  'sm9',        // Team Up
+  'UNB':  'sm10',       // Unbroken Bonds
+  'UNM':  'sm11',       // Unified Minds
+  'CEC':  'sm12',       // Cosmic Eclipse
+  'HIF':  'sm35',       // Hidden Fates (shares with Shining Legends)
+  'DET':  'det1',       // Detective Pikachu
+
+  // ---- XY era ----
+  'XY':   'xy1',        // XY
+  'FLF':  'xy2',        // Flashfire
+  'FFI':  'xy3',        // Furious Fists
+  'PHF':  'xy4',        // Phantom Forces
+  'PRC':  'xy5',        // Primal Clash
+  'ROS':  'xy6',        // Roaring Skies
+  'AOR':  'xy7',        // Ancient Origins
+  'BKT':  'xy8',        // BREAKthrough
+  'BKP':  'xy9',        // BREAKpoint
+  'FCO':  'xy10',       // Fates Collide
+  'STS':  'xy11',       // Steam Siege
+  'EVO':  'xy12',       // Evolutions
+  'GEN':  'g1',         // Generations
+};
+
+// Resolve a user-typed set code to an API set.id
+function resolveSetCode(raw) {
+  if (!raw) return { setId: null, ptcgoCode: null };
+  const upper = String(raw).toUpperCase().trim();
+  const lower = String(raw).toLowerCase().trim();
+  const mapped = PKM_SET_ALIASES[upper];
+  if (mapped) {
+    console.log(`[SET-ALIAS] "${upper}" -> set.id "${mapped}"`);
+    return { setId: mapped, ptcgoCode: upper };
+  }
+  // No alias found — try as-is (might already be a valid set.id or ptcgoCode)
+  return { setId: lower, ptcgoCode: upper };
+}
+
+// ============================================================
 // MANUAL IDENTIFY: /api/identify-manual
 // ============================================================
 // Skip Claude entirely — operator types in set code + card number (+ optional name)
@@ -486,14 +583,25 @@ app.post('/api/identify-manual', async (req, res) => {
     let card = null;
 
     if (game === 'pokemon') {
+      // Resolve aliases first (e.g. PAL -> sv2, OBF -> sv3, MEW -> sv3pt5)
+      const resolved = set_code ? resolveSetCode(set_code) : { setId: null, ptcgoCode: null };
+
       // Try set-code-scoped search first, then fall back to number-only.
       const queries = [];
-      if (set_code) {
+      if (resolved.setId) {
+        queries.push(`set.id:${resolved.setId} number:${cleanNum}`);
+      }
+      if (resolved.ptcgoCode) {
+        queries.push(`set.ptcgoCode:${resolved.ptcgoCode} number:${cleanNum}`);
+      }
+      // Also try the raw input in case it's already a valid set.id we don't have aliased
+      if (set_code && resolved.setId !== String(set_code).toLowerCase()) {
         queries.push(`set.id:${String(set_code).toLowerCase()} number:${cleanNum}`);
-        queries.push(`set.ptcgoCode:${String(set_code).toUpperCase()} number:${cleanNum}`);
       }
       if (name) queries.push(`name:"${name}" number:${cleanNum}`);
-      queries.push(`number:${cleanNum}${name ? ` name:"${name}"` : ''}`);
+      // Only fall back to bare number search if a name was given (to avoid
+      // random matches like Primal Groudon #151 when user meant MEW 151).
+      if (name) queries.push(`number:${cleanNum} name:"${name}"`);
 
       for (const q of queries) {
         console.log(`[MANUAL-PKM] Trying: ${q}`);
