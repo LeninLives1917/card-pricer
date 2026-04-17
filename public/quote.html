@@ -301,6 +301,62 @@
 
     const $ = (id) => document.getElementById(id);
 
+    // ---- Build Cardmarket direct URL ----
+    // Pattern: /en/Pokemon/Products/Singles/{Set-Slug}/{Card-Slug}-{SetCode}{PaddedNum}
+    // Falls back to set-filtered search if we can't build a direct URL.
+    const CM_SET_SLUGS = {
+      // SV era
+      'sv1': 'Scarlet-Violet', 'sv2': 'Paldea-Evolved', 'sv3': 'Obsidian-Flames',
+      'sv3pt5': '151', 'sv4': 'Paradox-Rift', 'sv4pt5': 'Paldean-Fates',
+      'sv5': 'Temporal-Forces', 'sv6': 'Twilight-Masquerade', 'sv6pt5': 'Shrouded-Fable',
+      'sv7': 'Stellar-Crown', 'sv8': 'Surging-Sparks', 'sv8pt5': 'Prismatic-Evolutions',
+      'sv9': 'Journey-Together', 'sv10': 'Destined-Rivals',
+      'me1': 'Mega-Evolution', 'me2': 'Phantasmal-Flames', 'me3': 'Perfect-Order',
+      'svp': 'SV-Black-Star-Promos',
+      // SwSh era
+      'swsh1': 'Sword-Shield', 'swsh2': 'Rebel-Clash', 'swsh3': 'Darkness-Ablaze',
+      'swsh4': 'Vivid-Voltage', 'swsh5': 'Battle-Styles', 'swsh6': 'Chilling-Reign',
+      'swsh7': 'Evolving-Skies', 'swsh8': 'Fusion-Strike', 'swsh9': 'Brilliant-Stars',
+      'swsh10': 'Astral-Radiance', 'swsh11': 'Lost-Origin', 'swsh12': 'Silver-Tempest',
+      'swsh12pt5': 'Crown-Zenith', 'swsh35': 'Champions-Path', 'swsh45': 'Shining-Fates',
+    };
+    const CM_PTCGO_CODES = {
+      'sv1': 'SVI', 'sv2': 'PAL', 'sv3': 'OBF', 'sv3pt5': 'MEW',
+      'sv4': 'PAR', 'sv4pt5': 'PAF', 'sv5': 'TEF', 'sv6': 'TWM',
+      'sv6pt5': 'SFA', 'sv7': 'SCR', 'sv8': 'SSP', 'sv8pt5': 'PRE',
+      'sv9': 'JTG', 'sv10': 'DRI',
+      'me1': 'MEG', 'me2': 'PFL', 'me3': 'POR',
+      'svp': 'SVP',
+      'swsh1': 'SSH', 'swsh2': 'RCL', 'swsh3': 'DAA', 'swsh4': 'VIV',
+      'swsh5': 'BST', 'swsh6': 'CRE', 'swsh7': 'EVS', 'swsh8': 'FST',
+      'swsh9': 'BRS', 'swsh10': 'ASR', 'swsh11': 'LOR', 'swsh12': 'SIT',
+      'swsh12pt5': 'CRZ', 'swsh35': 'CPA', 'swsh45': 'SHF',
+    };
+
+    function buildCardmarketUrl(card) {
+      if (!card || card.game !== 'pokemon') return null;
+      const setId = (card.set_code || '').toLowerCase();
+      const setSlug = CM_SET_SLUGS[setId];
+      if (!setSlug) {
+        // Fall back to slugifying the set name
+        const fallbackSlug = (card.set_name || '').replace(/[^a-zA-Z0-9\s-]/g, '').replace(/\s+/g, '-');
+        if (!fallbackSlug) return null;
+        return 'https://www.cardmarket.com/en/Pokemon/Products/Singles/' + fallbackSlug +
+          '?searchString=' + encodeURIComponent(card.name || '');
+      }
+      // Build the direct product URL
+      const ptcgo = CM_PTCGO_CODES[setId] || setId.toUpperCase();
+      const num = String(card.card_number || '').replace(/\/.*/, '');
+      const padNum = num.padStart(3, '0');
+      const nameSlug = (card.name || 'Unknown')
+        .replace(/['':]/g, '')          // remove apostrophes, colons
+        .replace(/[^a-zA-Z0-9\s-]/g, '') // remove other special chars
+        .trim()
+        .replace(/\s+/g, '-');          // spaces to hyphens
+      return 'https://www.cardmarket.com/en/Pokemon/Products/Singles/' +
+        setSlug + '/' + nameSlug + '-' + ptcgo + padNum;
+    }
+
     // ---- Parse lines ----
     function parseLines(raw) {
       return raw.split('\n')
@@ -380,31 +436,16 @@
           const condMult = CONDITION_MULTS[card.condition_estimate] || 1;
           const effectiveMV = mv * condMult;
 
-          // Grab the most specific cardmarket link available:
-          // 1. filtered_url = exact product page with condition filter (best)
-          // 2. cardmarket.url = product page from pricing lookup
-          // 3. card.cardmarket_url = from the TCG API (often generic/redirect)
-          // 4. Build a search URL as last resort
-          const cmUrl = priced?.cardmarket?.filtered_url
-            || priced?.cardmarket?.url
-            || priced?.card?.cardmarket_url
-            || card.cardmarket_url
-            || null;
-
-          // If we still only have a generic/redirect URL, build a precise search instead
-          const cardName = (priced?.card || card).name || '';
-          const setName = (priced?.card || card).set_name || '';
-          const fallbackCmUrl = cmUrl && cmUrl.includes('cardmarket.com')
-            ? cmUrl
-            : 'https://www.cardmarket.com/en/Pokemon/Products/Search?searchString=' +
-              encodeURIComponent(cardName + ' ' + setName).replace(/%20/g, '+');
+          const finalCard = priced?.card || card;
+          // Build direct Cardmarket product URL from card data
+          const cmUrl = buildCardmarketUrl(finalCard);
 
           state.results.push({
-            card: priced?.card || card,
+            card: finalCard,
             market: mv,
             cash: Math.round(effectiveMV * (CASH_PCT / 100) * 100) / 100,
             credit: Math.round(effectiveMV * (CREDIT_PCT / 100) * 100) / 100,
-            cardmarket_url: fallbackCmUrl
+            cardmarket_url: cmUrl
           });
         } catch (e) {
           console.warn('[QUOTE]', entry.raw, e.message);
