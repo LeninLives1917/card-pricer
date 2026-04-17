@@ -17,7 +17,7 @@ const __dirname = dirname(__filename);
 const app = express();
 app.use(cors());
 app.use(express.json({ limit: '50mb' }));
-app.use(express.static(join(__dirname, 'public')));
+app.use(express.static(join(__dirname, 'public'), { etag: false, maxAge: 0 }));
 
 // Multer for file uploads (in-memory)
 const upload = multer({

@@ -448,9 +448,10 @@
             cardmarket_url: cmUrl
           });
         } catch (e) {
-          console.warn('[QUOTE]', entry.raw, e.message);
+          console.warn('[QUOTE] Error for', entry.raw, ':', e.message);
           state.results.push({ error: e.message, line: entry.raw });
         }
+        console.log('[QUOTE] Results so far:', state.results.length, 'items,', state.results.filter(r=>r.card).length, 'with card');
 
         done++;
         $('progressBar').style.width = (done / total * 100) + '%';
@@ -533,7 +534,18 @@
         return;
       }
       const priced = state.results.filter(r => !r.error && r.card);
-      if (!priced.length) { alert('No priced cards to send.'); return; }
+      console.log('[GATE] state.results:', JSON.stringify(state.results.map(r => ({ hasCard: !!r.card, hasError: !!r.error, error: r.error, line: r.line }))));
+      if (!priced.length) {
+        const errCount = state.results.filter(r => r.error).length;
+        if (errCount > 0) {
+          alert('None of the ' + errCount + ' card(s) could be priced. Please check the set codes and card numbers and try again.');
+        } else if (!state.results.length) {
+          alert('Please enter your cards and click "Get my quote" first.');
+        } else {
+          alert('No priced cards to send. Please try again.');
+        }
+        return;
+      }
 
       const btn = $('leadSubmit');
       btn.disabled = true;
