@@ -772,8 +772,8 @@ app.post('/api/read-set-code', async (req, res) => {
     // We only need to read small text — 800px wide is plenty.
     const rawBuffer = Buffer.from(match[2], 'base64');
     const resized = await sharp(rawBuffer)
-      .resize({ width: 800, withoutEnlargement: true })
-      .jpeg({ quality: 75 })
+      .resize({ width: 1400, withoutEnlargement: true })
+      .jpeg({ quality: 90 })
       .toBuffer();
     const imageBase64 = resized.toString('base64');
     const mediaType = 'image/jpeg';
