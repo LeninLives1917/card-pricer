@@ -2222,9 +2222,9 @@ async function getTesseractWorker() {
 // Crop the bottom ~18% of the card — that's where the number lives for
 // Pokemon, Magic, One Piece, Lorcana, etc. Saves a ton of OCR noise.
 function cropBottomStrip(dataUrl) {
-  // Crop the bottom 40% of the image and apply heavy preprocessing to
-  // help Tesseract read the small set code text on coloured card backgrounds.
-  // Pipeline: crop → grayscale → high-contrast threshold → sharpen.
+  // Crop the bottom 40% of the image and convert to grayscale.
+  // Grayscale helps Tesseract without the destructive thresholding
+  // that breaks on coloured card backgrounds.
   return new Promise((resolve, reject) => {
     const img = new Image();
     img.onload = () => {
@@ -2237,15 +2237,12 @@ function cropBottomStrip(dataUrl) {
         const ctx = canvas.getContext('2d');
         ctx.drawImage(img, 0, h - stripH, w, stripH, 0, 0, w, stripH);
 
-        // Convert to high-contrast black-on-white for OCR
+        // Convert to grayscale — improves OCR on coloured backgrounds
         const imageData = ctx.getImageData(0, 0, w, stripH);
         const d = imageData.data;
         for (let i = 0; i < d.length; i += 4) {
-          // Grayscale using luminance weights
           const gray = 0.299 * d[i] + 0.587 * d[i+1] + 0.114 * d[i+2];
-          // Adaptive threshold: anything below 140 → black, above → white
-          const bw = gray < 140 ? 0 : 255;
-          d[i] = d[i+1] = d[i+2] = bw;
+          d[i] = d[i+1] = d[i+2] = gray;
         }
         ctx.putImageData(imageData, 0, 0);
 
@@ -4563,23 +4560,12 @@ async function startLiveOCRLoop() {
       try {
         const worker = await getTesseractWorker();
         if (worker && video.readyState >= 2 && video.videoWidth > 0) {
-          // OCR the full video frame with B&W preprocessing.
-          // User is centering the card code in the camera view.
+          // OCR the full video frame — user is centering the card code.
           const vw = video.videoWidth, vh = video.videoHeight;
           const cropCanvas = document.createElement('canvas');
           cropCanvas.width = vw;
           cropCanvas.height = vh;
-          const cropCtx = cropCanvas.getContext('2d');
-          cropCtx.drawImage(video, 0, 0, vw, vh);
-          // Convert to high-contrast B&W for better OCR
-          const imgData = cropCtx.getImageData(0, 0, vw, vh);
-          const px = imgData.data;
-          for (let i = 0; i < px.length; i += 4) {
-            const gray = 0.299 * px[i] + 0.587 * px[i+1] + 0.114 * px[i+2];
-            const bw = gray < 140 ? 0 : 255;
-            px[i] = px[i+1] = px[i+2] = bw;
-          }
-          cropCtx.putImageData(imgData, 0, 0);
+          cropCanvas.getContext('2d').drawImage(video, 0, 0, vw, vh);
 
           const { data } = await worker.recognize(cropCanvas);
           const rawText = (data.text || '').trim();
