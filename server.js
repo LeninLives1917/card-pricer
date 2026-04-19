@@ -794,14 +794,20 @@ app.post('/api/read-set-code', async (req, res) => {
           },
           {
             type: 'text',
-            text: `Read the set code and card number printed at the bottom of this Pokemon card. Look for text like "MEP EN 066" or "DRI EN 204/182" or "SVP EN 153" — it's usually in a small box near the bottom edge, formatted as: [letter] [SET CODE] [LANG] [NUMBER].
+            text: `Read the set code and card number printed at the bottom of this Pokemon card. The set code and number are in a small line near the bottom edge, formatted as: [regulation letter] [SET CODE] [LANG] [NUMBER]
 
-Return ONLY the set code and number in this exact format, nothing else:
-SET NUMBER
+The set code is 2-4 uppercase letters. Valid set codes include:
+SVI, PAL, OBF, MEW, PAR, PAF, TEF, TWM, SFA, SCR, SSP, PRE, JTG, DRI, MEG, PFL, POR, SVP, MEP, SSH, RCL, DAA, CPA, VIV, BST, CRE, EVS, FST, BRS, ASR, LOR, SIT, CRZ, SWP
 
-Examples: MEP 066, DRI 204/182, SVP 153, MEW 173/165, PAL 091/091
+The number is 1-4 digits, sometimes with /NNN after it (e.g. 204/182).
 
-If you cannot read a set code and number, respond with just: NONE`
+Return ONLY the set code and number, nothing else. Examples:
+MEP 066
+DRI 204/182
+SVP 153
+MEW 173/165
+
+If you cannot read a set code, respond: NONE`
           }
         ]
       }]
