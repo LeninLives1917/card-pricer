@@ -2222,23 +2222,12 @@ async function getTesseractWorker() {
 // Crop the bottom ~18% of the card — that's where the number lives for
 // Pokemon, Magic, One Piece, Lorcana, etc. Saves a ton of OCR noise.
 function cropBottomStrip(dataUrl) {
-  return new Promise((resolve, reject) => {
-    const img = new Image();
-    img.onload = () => {
-      try {
-        const w = img.naturalWidth, h = img.naturalHeight;
-        const stripH = Math.round(h * 0.18);
-        const canvas = document.createElement('canvas');
-        canvas.width = w;
-        canvas.height = stripH;
-        const ctx = canvas.getContext('2d');
-        ctx.drawImage(img, 0, h - stripH, w, stripH, 0, 0, w, stripH);
-        resolve(canvas.toDataURL('image/png'));
-      } catch (e) { reject(e); }
-    };
-    img.onerror = reject;
-    img.src = dataUrl;
-  });
+  // When the user points the camera at the card code, the text is in the
+  // CENTER of the frame — not at the very bottom.  We OCR the full image
+  // and let extractCardNumber() pull out the set code pattern from whatever
+  // Tesseract returns.  This is fast enough on modern phones (~200-400ms)
+  // and far more reliable than guessing where the text sits.
+  return Promise.resolve(dataUrl);
 }
 
 // Parse common card-number patterns out of raw OCR text.
@@ -4547,13 +4536,13 @@ async function startLiveOCRLoop() {
       try {
         const worker = await getTesseractWorker();
         if (worker && video.readyState >= 2 && video.videoWidth > 0) {
-          // Crop the bottom 25% of the live video — where card numbers live
+          // OCR the full video frame — user is centering the card code
+          // in the camera view, so the text could be anywhere in the frame.
           const vw = video.videoWidth, vh = video.videoHeight;
-          const stripH = Math.round(vh * 0.25);
           const cropCanvas = document.createElement('canvas');
           cropCanvas.width = vw;
-          cropCanvas.height = stripH;
-          cropCanvas.getContext('2d').drawImage(video, 0, vh - stripH, vw, stripH, 0, 0, vw, stripH);
+          cropCanvas.height = vh;
+          cropCanvas.getContext('2d').drawImage(video, 0, 0, vw, vh);
 
           const { data } = await worker.recognize(cropCanvas);
           const rawText = (data.text || '').trim();
