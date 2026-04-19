@@ -1470,10 +1470,10 @@
         </div>
       </div>
 
-      <!-- Continuous scan toggle -->
+      <!-- Live OCR scan toggle -->
       <div class="scan-controls" id="scanControls" onclick="toggleContinuousScan()">
         <span class="pulse-dot"></span>
-        <span id="scanControlsLabel">Tap to enable auto-scan</span>
+        <span id="scanControlsLabel">Tap to enable live scan</span>
       </div>
 
       <!-- Recent scans ribbon -->
@@ -1957,7 +1957,8 @@ function setMode(mode) {
   if (textPanel) textPanel.classList.add('hidden');
 
   if (mode === 'bulk' || mode === 'text') {
-    // Hide camera chrome
+    // Hide camera chrome + stop live scan if running
+    if (_liveScanOn) { _liveScanOn = false; dismissLiveDetect(); scanControls.classList.remove('on'); document.getElementById('scanControlsLabel').textContent = 'Tap to enable live scan'; }
     if (camera) camera.style.display = 'none';
     if (captureRow) captureRow.style.display = 'none';
     if (zoomRow) zoomRow.style.display = 'none';
@@ -2250,37 +2251,51 @@ function extractCardNumber(text) {
     .replace(/O(?=\d{2})/g, '0')    // O before two digits → 0
     .toUpperCase();
 
-  // Priority 1: "SET NNN/NNN" — Pokemon with set code prefix e.g. MEG 133/132
+  // Priority 1a: "SET EN NNN/NNN" — Pokemon with language code e.g. DRI EN 204/182, MEW EN 173/165
+  // The bottom of modern Pokemon cards reads: [reg mark] SET LANG NNN/NNN
+  // where LANG is a 2-letter language code (EN, JP, FR, DE, ES, IT, PT, KO, ZH).
+  const setLangSlash = cleaned.match(/\b([A-Z]{2,5})\s+(?:EN|JP|FR|DE|ES|IT|PT|KO|ZH)\s+(\d{1,4})\s*\/\s*(\d{1,4})\b/);
+  if (setLangSlash) {
+    return { set_code: setLangSlash[1], number: setLangSlash[2], game: 'pokemon' };
+  }
+
+  // Priority 1b: "SET EN NNN" — Pokemon with language code, no slash e.g. MEP EN 066, SVP EN 153
+  const setLangNum = cleaned.match(/\b([A-Z]{2,5})\s+(?:EN|JP|FR|DE|ES|IT|PT|KO|ZH)\s+(\d{1,4})\b/);
+  if (setLangNum) {
+    return { set_code: setLangNum[1], number: setLangNum[2], game: 'pokemon' };
+  }
+
+  // Priority 2: "SET NNN/NNN" — Pokemon with set code prefix e.g. MEG 133/132
   const setSlash = cleaned.match(/\b([A-Z]{2,5})\s+(\d{1,4})\s*\/\s*(\d{1,4})\b/);
   if (setSlash) {
     return { set_code: setSlash[1], number: setSlash[2], game: 'pokemon' };
   }
 
-  // Priority 2: "NNN/NNN" — Pokemon/Magic standard without set code
+  // Priority 3: "NNN/NNN" — Pokemon/Magic standard without set code
   const slash = cleaned.match(/\b(\d{1,4})\s*\/\s*(\d{1,4})\b/);
   if (slash) {
     return { number: `${slash[1]}/${slash[2]}`, game: 'pokemon' };
   }
 
-  // Priority 3: "SET NNN" — set code + number without slash e.g. TWM 200
+  // Priority 4: "SET NNN" — set code + number without slash e.g. TWM 200
   const setNum = cleaned.match(/\b([A-Z]{2,5})\s+(\d{1,4})\b/);
   if (setNum) {
     return { set_code: setNum[1], number: setNum[2], game: 'pokemon' };
   }
 
-  // Priority 4: Pokemon promos — SWSH066, SM211, SVP 076, XY99, BW100
+  // Priority 5: Pokemon promos — SWSH066, SM211, SVP 076, XY99, BW100
   const promo = cleaned.match(/\b(SWSH|SVP|SV|SM|XY|BW|HGSS|DP)[\s-]?(\d{1,4})\b/);
   if (promo) {
     return { number: `${promo[1]}${promo[2]}`, game: 'pokemon' };
   }
 
-  // Priority 5: One Piece — OP06-001, ST01-002
+  // Priority 6: One Piece — OP06-001, ST01-002
   const op = cleaned.match(/\b(OP|ST|EB)\d{1,2}-\d{1,3}\b/);
   if (op) {
     return { number: op[0], game: 'onepiece' };
   }
 
-  // Priority 6: Yu-Gi-Oh — ABCD-EN001
+  // Priority 7: Yu-Gi-Oh — ABCD-EN001
   const ygo = cleaned.match(/\b[A-Z]{3,5}-[A-Z]{2}\d{3}\b/);
   if (ygo) {
     return { number: ygo[0], game: 'yugioh' };
@@ -4486,68 +4501,191 @@ function sheetActionDetails() {
   });
 })();
 
-// ---- Continuous auto-scan ----------------------------------------
-let _continuousScanOn = false;
-let _motionHistory = [];
-let _lastAutoFire = 0;
-const AUTO_FIRE_COOLDOWN = 2500;        // ms between auto-fires (don't double-scan same card)
-const MOTION_THRESHOLD = 8;              // avg per-pixel diff below this = stable
-const MOTION_WINDOW = 6;                 // consecutive stable frames needed
+// ---- Live OCR scan ------------------------------------------------
+// Continuously reads the camera feed with Tesseract, looking for set
+// codes + numbers. When found, shows a confirmation banner with
+// Add (OCR lookup) / AI (full Claude ID) / Skip.
+let _liveScanOn = false;
+let _liveScanRunning = false;
+let _liveLastDetect = '';    // "SET-NUM" key to debounce
+let _liveLastDetectTime = 0;
+let _livePendingParsed = null;
+const LIVE_SCAN_INTERVAL = 1500;  // ms between OCR reads
+const LIVE_DEBOUNCE = 5000;       // don't re-detect same card for 5s
 
 function toggleContinuousScan() {
-  _continuousScanOn = !_continuousScanOn;
+  _liveScanOn = !_liveScanOn;
   const el = document.getElementById('scanControls');
   const label = document.getElementById('scanControlsLabel');
-  el.classList.toggle('on', _continuousScanOn);
-  label.textContent = _continuousScanOn ? 'Auto-scanning — hold up a card' : 'Tap to enable auto-scan';
+  el.classList.toggle('on', _liveScanOn);
+  label.textContent = _liveScanOn ? 'Live scanning — move camera across cards' : 'Tap to enable live scan';
   haptic('tap');
-  if (_continuousScanOn) startMotionLoop();
+  if (_liveScanOn) {
+    // Make sure camera is on
+    if (!state.stream) activateCamera();
+    startLiveOCRLoop();
+  } else {
+    dismissLiveDetect();
+  }
 }
 
-let _lastFrameData = null;
-let _scanLoopRunning = false;
-async function startMotionLoop() {
-  if (_scanLoopRunning) return;
-  _scanLoopRunning = true;
-  const video = document.getElementById('cameraVideo');
-  const probe = document.createElement('canvas');
-  probe.width = 64; probe.height = 48;
-  const ctx = probe.getContext('2d', { willReadFrequently: true });
+function dismissLiveDetect() {
+  document.getElementById('liveDetectBanner').classList.remove('show');
+  _livePendingParsed = null;
+}
 
-  const step = () => {
-    if (!_continuousScanOn) { _scanLoopRunning = false; _lastFrameData = null; _motionHistory = []; return; }
-    try {
-      if (video.readyState >= 2 && !state.isProcessing) {
-        ctx.drawImage(video, 0, 0, probe.width, probe.height);
-        const frame = ctx.getImageData(0, 0, probe.width, probe.height);
-        if (_lastFrameData) {
-          let diff = 0;
-          const a = _lastFrameData.data, b = frame.data;
-          for (let i = 0; i < a.length; i += 4) {
-            diff += Math.abs(a[i] - b[i]) + Math.abs(a[i+1] - b[i+1]) + Math.abs(a[i+2] - b[i+2]);
-          }
-          const avgDiff = diff / (a.length / 4 * 3);
-          _motionHistory.push(avgDiff);
-          if (_motionHistory.length > MOTION_WINDOW) _motionHistory.shift();
-          const stable = _motionHistory.length === MOTION_WINDOW && _motionHistory.every(v => v < MOTION_THRESHOLD);
-          const now = Date.now();
-          if (stable && now - _lastAutoFire > AUTO_FIRE_COOLDOWN) {
-            _lastAutoFire = now;
-            _motionHistory = [];
-            // Auto-fire! Flash + capture.
-            document.getElementById('cameraContainer').classList.add('flash');
-            setTimeout(() => document.getElementById('cameraContainer').classList.remove('flash'), 360);
-            haptic('scan');
-            captureAndIdentify();
+async function startLiveOCRLoop() {
+  if (_liveScanRunning) return;
+  _liveScanRunning = true;
+  const video = document.getElementById('cameraVideo');
+
+  const loop = async () => {
+    if (!_liveScanOn) { _liveScanRunning = false; return; }
+
+    // Don't scan while processing a card or while banner is showing
+    if (!state.isProcessing && !_livePendingParsed) {
+      try {
+        const worker = await getTesseractWorker();
+        if (worker && video.readyState >= 2 && video.videoWidth > 0) {
+          // Crop the bottom 25% of the live video — where card numbers live
+          const vw = video.videoWidth, vh = video.videoHeight;
+          const stripH = Math.round(vh * 0.25);
+          const cropCanvas = document.createElement('canvas');
+          cropCanvas.width = vw;
+          cropCanvas.height = stripH;
+          cropCanvas.getContext('2d').drawImage(video, 0, vh - stripH, vw, stripH, 0, 0, vw, stripH);
+
+          const { data } = await worker.recognize(cropCanvas);
+          const rawText = (data.text || '').trim();
+          const parsed = extractCardNumber(rawText);
+
+          if (parsed && (parsed.set_code || parsed.number)) {
+            const key = ((parsed.set_code || '') + '-' + parsed.number).toLowerCase();
+            const now = Date.now();
+
+            // Check confidence — skip low-confidence reads
+            let conf = data.confidence || 0;
+            if (Array.isArray(data.words)) {
+              const target = (parsed.number || '').toUpperCase();
+              for (const w of data.words) {
+                const wt = (w.text || '').toUpperCase().replace(/\s/g, '');
+                if (wt.includes(target) || target.includes(wt)) {
+                  conf = Math.max(conf, w.confidence || 0);
+                }
+              }
+            }
+
+            if (conf >= OCR_MIN_CONFIDENCE && (key !== _liveLastDetect || now - _liveLastDetectTime > LIVE_DEBOUNCE)) {
+              _liveLastDetect = key;
+              _liveLastDetectTime = now;
+              _livePendingParsed = parsed;
+              showLiveDetectBanner(parsed);
+              haptic('scan');
+              console.log(`[LIVE-OCR] Detected: ${parsed.set_code || '?'} ${parsed.number} (conf=${conf.toFixed(0)}) raw="${rawText}"`);
+            }
           }
         }
-        _lastFrameData = frame;
+      } catch (e) {
+        console.warn('[LIVE-OCR] error:', e.message);
       }
-    } catch (e) { /* video not ready */ }
-    setTimeout(step, 180);
+    }
+
+    setTimeout(loop, LIVE_SCAN_INTERVAL);
   };
-  step();
+  loop();
 }
+
+function showLiveDetectBanner(parsed) {
+  const label = parsed.set_code ? `${parsed.set_code} ${parsed.number}` : `#${parsed.number}`;
+  document.getElementById('liveDetectText').textContent = label;
+  document.getElementById('liveDetectSub').textContent = parsed.set_code
+    ? 'Card detected — add it or send to AI for full identification'
+    : 'Number detected (no set code) — send to AI for best results';
+  document.getElementById('liveDetectBanner').classList.add('show');
+}
+
+// Wire up the live detect banner buttons
+document.getElementById('liveDetectAdd').addEventListener('click', async () => {
+  const parsed = _livePendingParsed;
+  if (!parsed) return;
+  dismissLiveDetect();
+
+  // Determine game from hint or default
+  const hint = (document.getElementById('hintInput')?.value || '').toLowerCase();
+  const game = parsed.game
+    || (hint.includes('magic') ? 'magic' : hint.includes('yugioh') ? 'yugioh' : 'pokemon');
+
+  state.isProcessing = true;
+  const overlay = document.getElementById('loadingOverlay');
+  const loadingText = document.getElementById('loadingText');
+  overlay.classList.remove('hidden');
+  loadingText.textContent = `Looking up ${parsed.set_code || ''} ${parsed.number}...`;
+
+  try {
+    const resp = await fetch('/api/identify-manual', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        game: game,
+        set_code: parsed.set_code || '',
+        card_number: parsed.number.replace(/\/.*/, ''),
+      })
+    });
+
+    if (!resp.ok) throw new Error('Lookup failed');
+    const idResult = await resp.json();
+    const cards = idResult.cards || [];
+    if (!cards.length) throw new Error('Card not found');
+
+    // Seed results with pending placeholders, render immediately
+    state.currentResults = cards.map(card => ({
+      card, cardmarket: null, ebay: null, buy_price: null, _pending: true
+    }));
+    renderResults(state.currentResults);
+    overlay.classList.add('hidden');
+
+    // Open result sheet so user sees the card instantly
+    openResultSheet(0);
+    haptic('scan');
+
+    // Price in parallel, update UI as each resolves
+    await Promise.all(cards.map((card, idx) =>
+      fetch('/api/price', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ card, buyPercentage: state.buyPercentage })
+      })
+        .then(r => r.ok ? r.json() : null)
+        .catch(() => null)
+        .then(priced => {
+          const result = priced || { card, cardmarket: null, ebay: null, buy_price: null };
+          state.currentResults[idx] = result;
+          renderResults(state.currentResults);
+          addToSessionLog(result, null);
+          if (idx === 0) { _sheetCurrentIdx = 0; renderResultSheet(); }
+        })
+    ));
+
+    haptic('success');
+  } catch (e) {
+    console.error('[LIVE-ADD]', e);
+    overlay.classList.add('hidden');
+    alert('Could not find card: ' + e.message);
+  } finally {
+    state.isProcessing = false;
+    overlay.classList.add('hidden');
+  }
+});
+
+document.getElementById('liveDetectAI').addEventListener('click', () => {
+  dismissLiveDetect();
+  // Fire the normal capture+AI pipeline
+  captureAndIdentify();
+});
+
+document.getElementById('liveDetectSkip').addEventListener('click', () => {
+  dismissLiveDetect();
+});
 
 // ---- PWA install nudge -------------------------------------------
 let _deferredInstall = null;

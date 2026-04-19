@@ -501,6 +501,8 @@ const PKM_SET_ALIASES = {
   'ME3':  'me3',        // Perfect Order (ME03 alternate)
   // SV promo
   'SVP':  'svp',        // SV Black Star Promos
+  // Mega Evolution promos
+  'MEP':  'mep',        // MEP Black Star Promos (Mega Evolution Promos)
 
   // ---- Sword & Shield era ----
   'SSH':  'swsh1',      // Sword & Shield
