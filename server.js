@@ -17,6 +17,17 @@ const __dirname = dirname(__filename);
 const app = express();
 app.use(cors());
 app.use(express.json({ limit: '50mb' }));
+// Force no-cache on service-worker.js and index.html to bust PWA staleness
+app.get('/service-worker.js', (req, res) => {
+  res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+  res.setHeader('Pragma', 'no-cache');
+  res.setHeader('Expires', '0');
+  res.sendFile(join(__dirname, 'public', 'service-worker.js'));
+});
+app.get(['/', '/index.html'], (req, res) => {
+  res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+  res.sendFile(join(__dirname, 'public', 'index.html'));
+});
 app.use(express.static(join(__dirname, 'public'), { etag: false, maxAge: 0 }));
 
 // Multer for file uploads (in-memory)
