@@ -750,6 +750,81 @@ app.post('/api/identify-manual', async (req, res) => {
 });
 
 // ============================================================
+// READ SET CODE: /api/read-set-code
+// ============================================================
+// Lightweight Claude Vision call — reads ONLY the set code + card number
+// from the bottom of a card image.  Much cheaper than full identify because
+// the prompt is tiny, the response is a few tokens, and we use Haiku.
+// Returns: { text: "MEP 066" } or { text: "DRI 204/182" } or { error }
+app.post('/api/read-set-code', upload.single('image'), async (req, res) => {
+  try {
+    let imageBase64, mediaType;
+
+    if (req.file) {
+      // Resize to small image — we only need to read tiny text, no detail needed
+      const processed = await sharp(req.file.buffer)
+        .resize({ width: 800, withoutEnlargement: true })
+        .jpeg({ quality: 80 })
+        .toBuffer();
+      imageBase64 = processed.toString('base64');
+      mediaType = 'image/jpeg';
+    } else if (req.body?.image) {
+      const dataUrl = req.body.image;
+      const match = dataUrl.match(/^data:(image\/\w+);base64,(.+)$/);
+      if (match) {
+        mediaType = match[1];
+        imageBase64 = match[2];
+      } else {
+        return res.status(400).json({ error: 'Invalid image data' });
+      }
+    } else {
+      return res.status(400).json({ error: 'No image provided' });
+    }
+
+    console.log('[READ-SET-CODE] Sending to Claude Haiku...');
+    const t0 = Date.now();
+
+    const response = await anthropic.messages.create({
+      model: 'claude-haiku-4-5-20251001',
+      max_tokens: 60,
+      messages: [{
+        role: 'user',
+        content: [
+          {
+            type: 'image',
+            source: { type: 'base64', media_type: mediaType, data: imageBase64 }
+          },
+          {
+            type: 'text',
+            text: `Read the set code and card number printed at the bottom of this Pokemon card. Look for text like "MEP EN 066" or "DRI EN 204/182" or "SVP EN 153" — it's usually in a small box near the bottom edge, formatted as: [letter] [SET CODE] [LANG] [NUMBER].
+
+Return ONLY the set code and number in this exact format, nothing else:
+SET NUMBER
+
+Examples: MEP 066, DRI 204/182, SVP 153, MEW 173/165, PAL 091/091
+
+If you cannot read a set code and number, respond with just: NONE`
+          }
+        ]
+      }]
+    });
+
+    const raw = (response.content?.[0]?.text || '').trim();
+    const elapsed = Date.now() - t0;
+    console.log(`[READ-SET-CODE] ${elapsed}ms → "${raw}"`);
+
+    if (!raw || raw === 'NONE') {
+      return res.status(404).json({ error: 'Could not read set code from image' });
+    }
+
+    res.json({ text: raw });
+  } catch (err) {
+    console.error('[READ-SET-CODE] Error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ============================================================
 // BAD-ID FEEDBACK: /api/report-bad-id
 // ============================================================
 // Append a JSONL line to logs/bad-ids.log with the card + reason the user

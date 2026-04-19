@@ -2317,57 +2317,48 @@ function extractCardNumber(text) {
   return null;
 }
 
-// Full OCR pipeline: worker ready → crop strip → read → parse → lookup.
+// Set-code reader: sends the card image to a lightweight Claude Haiku call
+// that reads ONLY the set code + number from the bottom of the card.
+// Then looks up the card via /api/identify-manual (no full AI identify needed).
 // Returns { cards: [...] } on success, null on any miss.
-// OCR_MIN_CONFIDENCE: Tesseract reports a per-word confidence 0-100.
-// A single misread digit (3 vs 5, 0 vs 8) on a €200 card mis-IDs it to a
-// same-set neighbour. We require VERY high confidence on the number token,
-// otherwise we fall through to Claude Vision which handles ambiguous chars
-// much better. Ambiguous digits drop confidence dramatically — the check
-// is naturally self-limiting to clean, unambiguous scans.
-const OCR_MIN_CONFIDENCE = 55;
 
 async function tryOcrIdentify(imageData) {
   try {
-    // Default is ON — OCR-first saves API cost and is faster. Users can
-    // disable in Settings if they hit misreads on holo/textured cards.
+    // Default is ON — set-code reader saves API cost vs full identify.
+    // Users can disable in Settings if they prefer full AI identify.
     const ocrPref = getSetting('ocrFirst', 'true');
     if (ocrPref === false || ocrPref === 'false') {
       return null;
     }
-    const worker = await getTesseractWorker();
-    if (!worker) return null;
-    const strip = await cropBottomStrip(imageData);
+
     const t0 = performance.now();
-    const { data } = await worker.recognize(strip);
-    const rawText = (data.text || '').trim().replace(/\n/g, ' ');
-    const parsed = extractCardNumber(data.text || '');
+    console.log('[SET-CODE] Sending image to Claude Haiku to read set code...');
 
-    // Find the word-level confidence for the token matching our parsed number.
-    // If the OCR layer isn't sure, we don't trust it — fall through to Claude.
-    let tokenConfidence = 0;
-    if (parsed && Array.isArray(data.words)) {
-      const target = parsed.number.toUpperCase().replace(/\s/g, '');
-      for (const w of data.words) {
-        const wt = (w.text || '').toUpperCase().replace(/\s/g, '');
-        if (wt.includes(target) || target.includes(wt)) {
-          tokenConfidence = Math.max(tokenConfidence, w.confidence || 0);
-        }
-      }
-      // Fallback: use overall avg confidence if no word match
-      if (tokenConfidence === 0 && data.confidence) tokenConfidence = data.confidence;
-    }
+    // Send the image to our lightweight set-code reader endpoint
+    const resp = await fetch('/api/read-set-code', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ image: imageData })
+    });
 
-    console.log(`[OCR] ${Math.round(performance.now() - t0)}ms conf=${tokenConfidence.toFixed(0)} text="${rawText}" parsed=`, parsed);
-
-    if (!parsed) return null;
-    if (tokenConfidence < OCR_MIN_CONFIDENCE) {
-      console.log(`[OCR] LOW CONFIDENCE ${tokenConfidence.toFixed(0)} < ${OCR_MIN_CONFIDENCE} — falling through to Claude`);
+    if (!resp.ok) {
+      console.log(`[SET-CODE] Server returned ${resp.status} — falling through to full identify`);
       return null;
     }
 
-    // If we got a set code, use /api/identify-manual which has full alias
-    // mapping (PAL→sv2, MEG→me1 etc.) and direct card ID lookup.
+    const result = await resp.json();
+    const raw = (result.text || '').trim();
+    console.log(`[SET-CODE] ${Math.round(performance.now() - t0)}ms → "${raw}"`);
+
+    if (!raw || raw === 'NONE') return null;
+
+    // Parse the set code response using our existing parser
+    const parsed = extractCardNumber(raw);
+    console.log('[SET-CODE] Parsed:', parsed);
+
+    if (!parsed) return null;
+
+    // Look up the card via identify-manual (has full alias mapping)
     if (parsed.set_code) {
       const manualResp = await fetch('/api/identify-manual', {
         method: 'POST',
@@ -2381,7 +2372,7 @@ async function tryOcrIdentify(imageData) {
       if (manualResp.ok) {
         const json = await manualResp.json();
         if (json.cards && json.cards.length) {
-          console.log(`[OCR] direct hit via identify-manual: ${parsed.set_code} ${parsed.number} → ${json.cards[0].name}`);
+          console.log(`[SET-CODE] HIT: ${parsed.set_code} ${parsed.number} → ${json.cards[0].name}`);
           return json;
         }
       }
@@ -2396,12 +2387,12 @@ async function tryOcrIdentify(imageData) {
     if (!lookupResp.ok) return null;
     const json = await lookupResp.json();
     if (json.cards && json.cards.length) {
-      console.log('[OCR] direct hit via lookup-by-number — skipping Claude');
+      console.log('[SET-CODE] HIT via lookup-by-number');
       return json;
     }
     return null;
   } catch (e) {
-    console.warn('OCR pipeline failed:', e);
+    console.warn('[SET-CODE] Pipeline failed:', e);
     return null;
   }
 }
