@@ -785,7 +785,7 @@ app.post('/api/read-set-code', upload.single('image'), async (req, res) => {
     const t0 = Date.now();
 
     const response = await anthropic.messages.create({
-      model: 'claude-haiku-4-5-20251001',
+      model: 'claude-sonnet-4-20250514',
       max_tokens: 60,
       messages: [{
         role: 'user',
