@@ -767,8 +767,17 @@ app.post('/api/read-set-code', async (req, res) => {
     if (!match) {
       return res.status(400).json({ error: 'Invalid image data URL' });
     }
-    const mediaType = match[1];
-    const imageBase64 = match[2];
+
+    // Resize to stay under Claude's 5MB base64 limit.
+    // We only need to read small text — 800px wide is plenty.
+    const rawBuffer = Buffer.from(match[2], 'base64');
+    const resized = await sharp(rawBuffer)
+      .resize({ width: 800, withoutEnlargement: true })
+      .jpeg({ quality: 75 })
+      .toBuffer();
+    const imageBase64 = resized.toString('base64');
+    const mediaType = 'image/jpeg';
+    console.log(`[READ-SET-CODE] Resized: ${(rawBuffer.length/1024).toFixed(0)}KB → ${(resized.length/1024).toFixed(0)}KB`);
 
     console.log('[READ-SET-CODE] Sending to Claude Haiku...');
     const t0 = Date.now();
