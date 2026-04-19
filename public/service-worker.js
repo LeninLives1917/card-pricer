@@ -3,7 +3,7 @@
 // prices). If the network fails for the shell, we serve the cached index so
 // the app still opens on flaky venue wifi.
 
-const CACHE_VERSION = 'cardpricer-v11';
+const CACHE_VERSION = 'cardpricer-v12';
 const SHELL = [
   '/',
   '/index.html',
