@@ -756,36 +756,25 @@ app.post('/api/identify-manual', async (req, res) => {
 // from the bottom of a card image.  Much cheaper than full identify because
 // the prompt is tiny, the response is a few tokens, and we use Haiku.
 // Returns: { text: "MEP 066" } or { text: "DRI 204/182" } or { error }
-app.post('/api/read-set-code', upload.single('image'), async (req, res) => {
+app.post('/api/read-set-code', async (req, res) => {
   try {
-    let imageBase64, mediaType;
-
-    if (req.file) {
-      // Resize to small image — we only need to read tiny text, no detail needed
-      const processed = await sharp(req.file.buffer)
-        .resize({ width: 800, withoutEnlargement: true })
-        .jpeg({ quality: 80 })
-        .toBuffer();
-      imageBase64 = processed.toString('base64');
-      mediaType = 'image/jpeg';
-    } else if (req.body?.image) {
-      const dataUrl = req.body.image;
-      const match = dataUrl.match(/^data:(image\/\w+);base64,(.+)$/);
-      if (match) {
-        mediaType = match[1];
-        imageBase64 = match[2];
-      } else {
-        return res.status(400).json({ error: 'Invalid image data' });
-      }
-    } else {
+    const dataUrl = req.body?.image;
+    if (!dataUrl) {
       return res.status(400).json({ error: 'No image provided' });
     }
+
+    const match = dataUrl.match(/^data:(image\/[a-zA-Z]+);base64,(.+)$/);
+    if (!match) {
+      return res.status(400).json({ error: 'Invalid image data URL' });
+    }
+    const mediaType = match[1];
+    const imageBase64 = match[2];
 
     console.log('[READ-SET-CODE] Sending to Claude Haiku...');
     const t0 = Date.now();
 
     const response = await anthropic.messages.create({
-      model: 'claude-sonnet-4-20250514',
+      model: 'claude-haiku-4-5-20251001',
       max_tokens: 60,
       messages: [{
         role: 'user',
@@ -819,7 +808,7 @@ If you cannot read a set code and number, respond with just: NONE`
 
     res.json({ text: raw });
   } catch (err) {
-    console.error('[READ-SET-CODE] Error:', err.message);
+    console.error('[READ-SET-CODE] Error:', err.message, err.status || '', err.error?.message || '');
     res.status(500).json({ error: err.message });
   }
 });
