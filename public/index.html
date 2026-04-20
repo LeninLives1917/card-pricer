@@ -16,7 +16,7 @@
   <title>Card Pricer</title>
   <script>
     // Register service worker for PWA install + offline shell.
-    console.log('[APP] Card Pricer client v17 loaded');
+    console.log('[APP] Card Pricer client v18 loaded');
     if ('serviceWorker' in navigator) {
       window.addEventListener('load', () => {
         navigator.serviceWorker.register('/service-worker.js', { updateViaCache: 'none' })
@@ -2423,16 +2423,20 @@ let _bulkRunning = false;
 // fat batch of dataUrls can't blow the 5MB localStorage quota.
 function saveBulkQueue() {
   try {
-    // Only persist if total queue size is reasonable (<4MB of dataUrls).
-    const payload = JSON.stringify(state.bulkQueue);
+    // Strip full dataUrls before persisting — only keep thumbs + results.
+    // This keeps localStorage well under 5MB even for large batches.
+    const slim = state.bulkQueue.map(item => ({
+      ...item,
+      dataUrl: item.thumbUrl || '',
+      thumbUrl: item.thumbUrl || ''
+    }));
+    const payload = JSON.stringify(slim);
     if (payload.length > 4 * 1024 * 1024) {
-      // Too big — drop persistence rather than risk quota errors.
       localStorage.removeItem(BULK_STORAGE_KEY);
       return;
     }
     localStorage.setItem(BULK_STORAGE_KEY, payload);
   } catch (e) {
-    // QuotaExceededError or serialization fail — nothing we can do, just skip.
     console.warn('[BULK] persist failed:', e.message);
     try { localStorage.removeItem(BULK_STORAGE_KEY); } catch {}
   }
@@ -2459,16 +2463,25 @@ async function handleBulkFiles(event) {
   const files = Array.from(event.target.files || []);
   event.target.value = ''; // allow re-picking same files
   if (!files.length) return;
+
+  // Process files one at a time to avoid holding 29 full-res photos in memory.
+  // Each file is read, immediately resized to a medium upload version (1100px)
+  // and a tiny thumbnail (120px), then the full-res original is discarded.
   for (const f of files) {
-    const dataUrl = await readFileAsDataURL(f);
+    const rawUrl = await readFileAsDataURL(f);
+    // Resize for upload (1100px) and thumbnail (120px) — drop raw immediately
+    let uploadUrl, thumbUrl;
+    try { uploadUrl = await resizeDataUrl(rawUrl, 1100, 0.88); } catch { uploadUrl = rawUrl; }
+    try { thumbUrl = await resizeDataUrl(rawUrl, 120, 0.6); } catch { thumbUrl = uploadUrl; }
     state.bulkQueue.push({
       id: ++state._bulkSeq,
       name: f.name || `card-${state._bulkSeq}`,
-      dataUrl,
+      dataUrl: uploadUrl,
+      thumbUrl,
       status: 'queued'
     });
+    renderBulkQueue();
   }
-  renderBulkQueue();
   saveBulkQueue();
   haptic && haptic('light');
 }
@@ -2496,8 +2509,9 @@ function renderBulkQueue() {
                 : item.status === 'processing' ? '…'
                 : item.status === 'done' ? (item.name_short || '✓')
                 : 'Error';
+    const bgImg = item.thumbUrl || item.dataUrl;
     return `
-      <div class="bulk-tile ${item.status}" style="background-image:url('${item.dataUrl}')">
+      <div class="bulk-tile ${item.status}" style="background-image:url('${bgImg}')">
         ${item.status === 'queued' ? `<button class="bulk-remove" onclick="removeBulkItem(${item.id})">×</button>` : ''}
         <div class="bulk-status">${label}</div>
       </div>`;
@@ -2592,15 +2606,18 @@ async function bulkWorker(queue) {
       item.name_short = 'Err';
       item.error_message = e.message || String(e);
     }
+    // Free the upload-size image after processing — only keep tiny thumbnail
+    if (item.status !== 'queued') {
+      item.dataUrl = item.thumbUrl || '';
+    }
     renderBulkQueue();
     saveBulkQueue();
   }
 }
 
 async function processBulkItem(item) {
-  // Resize client-side once per item (saves server CPU, huge upload-time win).
+  // dataUrl is already resized to 1100px in handleBulkFiles.
   let uploadImage = item.dataUrl;
-  try { uploadImage = await resizeDataUrl(item.dataUrl, 1100, 0.88); } catch {}
 
   // Identify (streams ident + verified events; we only need the final cards).
   const idResult = await fetchIdentifyStream({
