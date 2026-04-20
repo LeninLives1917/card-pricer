@@ -4020,4 +4020,97 @@ app.post('/api/quote-lead', async (req, res) => {
     // Best-effort send via Brevo. If no API key, just log + return ok so the
     // tool still works during setup — you'll still see the lead server-side.
     if (!process.env.BREVO_API_KEY) {
-      console.log('[QUOTE-LEAD] (no BREVO_API_KEY set) would email to', email, 'and', SHOP_EMAI
+      console.log('[QUOTE-LEAD] (no BREVO_API_KEY set) would email to', email, 'and', SHOP_EMAIL);
+      console.log('[QUOTE-LEAD] payload:', { email, name, newsletter, cardCount: trimmed.length, totals });
+      return res.json({ ok: true, emailed: false, note: 'Logged server-side. Set BREVO_API_KEY to enable email.' });
+    }
+
+    const sendOne = (toEmail, subject, htmlContent, attachmentsList) => {
+      const payload = {
+        sender: { name: SHOP_NAME, email: SENDER_EMAIL },
+        to: [{ email: toEmail }],
+        subject,
+        htmlContent
+      };
+      if (attachmentsList && attachmentsList.length) payload.attachment = attachmentsList;
+      return fetch('https://api.brevo.com/v3/smtp/email', {
+        method: 'POST',
+        headers: {
+          'api-key': process.env.BREVO_API_KEY,
+          'Content-Type': 'application/json',
+          'Accept': 'application/json'
+        },
+        body: JSON.stringify(payload)
+      }).then(r => r.ok ? r.json() : r.text().then(t => { throw new Error('Brevo ' + r.status + ': ' + t); }));
+    };
+
+    // If the customer opted in, add them to your Brevo newsletter list.
+    // Set BREVO_NEWSLETTER_LIST_ID in Render env vars (it's the numeric list ID from Brevo).
+    const subscribeIfOptedIn = async () => {
+      if (!newsletter) return { subscribed: false };
+      const listId = parseInt(process.env.BREVO_NEWSLETTER_LIST_ID || '0', 10);
+      if (!listId) {
+        console.log('[QUOTE-LEAD] newsletter opt-in but no BREVO_NEWSLETTER_LIST_ID set');
+        return { subscribed: false, reason: 'no list configured' };
+      }
+      try {
+        // createContact will add OR update. updateEnabled: true lets us upsert without a 400 if they already exist.
+        const res = await fetch('https://api.brevo.com/v3/contacts', {
+          method: 'POST',
+          headers: {
+            'api-key': process.env.BREVO_API_KEY,
+            'Content-Type': 'application/json',
+            'Accept': 'application/json'
+          },
+          body: JSON.stringify({
+            email,
+            attributes: name ? { FIRSTNAME: name } : {},
+            listIds: [listId],
+            updateEnabled: true
+          })
+        });
+        if (!res.ok) {
+          const text = await res.text();
+          console.warn('[QUOTE-LEAD] newsletter subscribe failed:', res.status, text);
+          return { subscribed: false, reason: text };
+        }
+        return { subscribed: true };
+      } catch (e) {
+        console.warn('[QUOTE-LEAD] newsletter subscribe error:', e.message);
+        return { subscribed: false, reason: e.message };
+      }
+    };
+
+    const [,, subRes] = await Promise.all([
+      sendOne(email, `Your ${SHOP_NAME} card quote`, customerHtml),
+      sendOne(SHOP_EMAIL, `New quote request — ${email}${newsletter ? ' (newsletter opt-in)' : ''}`, shopHtml, attachments),
+      subscribeIfOptedIn()
+    ]);
+
+    res.json({ ok: true, emailed: true, subscribed: subRes.subscribed });
+  } catch (e) {
+    console.error('[QUOTE-LEAD] failed:', e);
+    res.status(500).json({ error: e.message || 'Failed to send quote' });
+  }
+});
+
+function escapeHtml(s) {
+  return String(s || '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+// SPA fallback
+app.get('*', (req, res) => {
+  res.sendFile(join(__dirname, 'public', 'index.html'));
+});
+
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+  console.log(`\n  Card Pricer running at http://localhost:${PORT}`);
+  console.log(`\n  API Status:`);
+  console.log(`    Claude Vision:    ${process.env.ANTHROPIC_API_KEY ? 'configured' : 'MISSING — add ANTHROPIC_API_KEY to .env'}`);
+  console.log(`    Cardmarket:       Direct links + API prices (Pokemon/MTG get EUR prices from API)`);
+  console.log(`    Scryfall (MTG):   Free (includes EUR/Cardmarket prices)`);
+  console.log(`    Pokemon TCG API:  Free (includes Cardmarket prices)`);
+  console.log(`    eBay API:         ${process.env.EBAY_APP_ID ? 'configured' : 'not configured'}\n`);
+  console.log('  Ready! No browser warmup needed — instant startup.\n');
+});
