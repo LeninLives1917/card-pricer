@@ -572,6 +572,48 @@ const PKM_SET_ALIASES = {
   'GEN':  'g1',         // Generations
 };
 
+// Human-readable set names — used for TCGGO/JustTCG search fallback
+// when pokemontcg.io doesn't have a set indexed.
+const PKM_SET_NAMES = {
+  'sv1':  'Scarlet & Violet',
+  'sv2':  'Paldea Evolved',
+  'sv3':  'Obsidian Flames',
+  'sv3pt5': 'Pokemon 151',
+  'sv4':  'Paradox Rift',
+  'sv4pt5': 'Paldean Fates',
+  'sv5':  'Temporal Forces',
+  'sv6':  'Twilight Masquerade',
+  'sv6pt5': 'Shrouded Fable',
+  'sv7':  'Stellar Crown',
+  'sv8':  'Surging Sparks',
+  'sv8pt5': 'Prismatic Evolutions',
+  'sv9':  'Journey Together',
+  'sv10': 'Destined Rivals',
+  'bbt':  'Black Bolt',
+  'wht':  'White Flare',
+  'me1':  'Mega Evolution',
+  'me2':  'Phantasmal Flames',
+  'me2pt5': 'Ascended Heroes',
+  'me3':  'Perfect Order',
+  'svp':  'SV Black Star Promos',
+  'mep':  'Mega Evolution Promos',
+  'swshp': 'Sword & Shield Promos',
+  'swsh12pt5': 'Crown Zenith',
+  'swsh12pt5gg': 'Crown Zenith Galarian Gallery',
+};
+
+// TCGdex set ID mapping — TCGdex uses different IDs than pokemontcg.io
+// for some sets. We map our internal set.id → TCGdex set ID.
+const TCGDEX_SET_MAP = {
+  'sv1':  'sv01', 'sv2':  'sv02', 'sv3':  'sv03', 'sv3pt5': 'sv03.5',
+  'sv4':  'sv04', 'sv4pt5': 'sv04.5', 'sv5':  'sv05', 'sv6':  'sv06',
+  'sv6pt5': 'sv06.5', 'sv7':  'sv07', 'sv8':  'sv08', 'sv8pt5': 'sv08.5',
+  'sv9':  'sv09', 'sv10': 'sv10',
+  'svp':  'svp',  'mep':  'svp',  // TCGdex may lump promos together
+  'me1':  'sv04.5', 'me2':  'sv05.5', // speculative — will 404 gracefully
+  'wht':  'sv10.5', 'bbt':  'sv10.5', // split expansion
+};
+
 // Resolve a user-typed set code to an API set.id
 function resolveSetCode(raw) {
   if (!raw) return { setId: null, ptcgoCode: null, aliased: false };
@@ -584,6 +626,157 @@ function resolveSetCode(raw) {
   }
   // No alias found — try as-is (might already be a valid set.id or ptcgoCode)
   return { setId: lower, ptcgoCode: upper, aliased: false };
+}
+
+// ============================================================
+// FALLBACK: TCGdex card lookup (free, open-source Pokemon TCG database)
+// ============================================================
+async function lookupTCGdex(setId, cardNumber) {
+  // Map our internal set.id to TCGdex's set ID format
+  const tcgdexSetId = TCGDEX_SET_MAP[setId] || setId;
+  const cleanNum = String(cardNumber).replace(/\/.*/, '').replace(/^0+/, '') || String(cardNumber);
+  const cardId = `${tcgdexSetId}-${cleanNum}`;
+  console.log(`[TCGdex] Looking up: ${cardId}`);
+  try {
+    const resp = await axios.get(`https://api.tcgdex.net/v2/en/cards/${cardId}`, { timeout: 8000 });
+    const d = resp.data;
+    if (!d || !d.name) return null;
+    console.log(`[TCGdex] Found: ${d.name} (${d.set?.name || '?'})`);
+    return {
+      game: 'pokemon',
+      name: d.name,
+      set_name: d.set?.name || null,
+      set_code: (d.set?.id || setId).toUpperCase(),
+      card_number: d.localId || cleanNum,
+      rarity: d.rarity || null,
+      hp: d.hp ? String(d.hp) : null,
+      reference_image: d.image ? `${d.image}/high.webp` : null,
+      verified: true,
+      db_source: 'tcgdex.net (fallback)',
+      _manual: true
+    };
+  } catch (e) {
+    console.log(`[TCGdex] ${cardId} failed: ${e.response?.status || e.message}`);
+    return null;
+  }
+}
+
+// FALLBACK: TCGGO search by set name + card number
+// Used when both pokemontcg.io and TCGdex don't have a set.
+async function lookupViaTCGGO(setId, cardNumber) {
+  const apiKey = process.env.RAPIDAPI_KEY;
+  if (!apiKey) return null;
+
+  const setName = PKM_SET_NAMES[setId];
+  if (!setName) {
+    console.log(`[TCGGO-FALLBACK] No set name for "${setId}" — skipping`);
+    return null;
+  }
+
+  const cleanNum = String(cardNumber).replace(/\/.*/, '').replace(/^0+/, '') || String(cardNumber);
+  const searchTerm = `${setName} ${cleanNum}`;
+  console.log(`[TCGGO-FALLBACK] Searching: "${searchTerm}"`);
+
+  try {
+    const resp = await axios.get('https://pokemon-tcg-api.p.rapidapi.com/cards/search', {
+      params: { search: searchTerm, per_page: 5 },
+      headers: {
+        'X-RapidAPI-Key': apiKey,
+        'X-RapidAPI-Host': 'pokemon-tcg-api.p.rapidapi.com',
+        'Accept': 'application/json'
+      },
+      timeout: 10000
+    });
+
+    const data = resp.data?.data;
+    if (!data || data.length === 0) {
+      console.log('[TCGGO-FALLBACK] No results');
+      return null;
+    }
+
+    // Score results to find best match by card number
+    let best = data[0];
+    let bestScore = 0;
+    for (const item of data) {
+      let score = 0;
+      const itemNum = String(item.card_number || '');
+      if (itemNum === cleanNum || itemNum === cardNumber) score += 60;
+      if (item.episode?.name?.toLowerCase().includes(setName.toLowerCase())) score += 40;
+      if (score > bestScore) { bestScore = score; best = item; }
+    }
+
+    console.log(`[TCGGO-FALLBACK] Found: ${best.name} (${best.episode?.name || '?'} #${best.card_number})`);
+    return {
+      game: 'pokemon',
+      name: best.name,
+      set_name: best.episode?.name || setName,
+      set_code: (best.episode?.code || setId).toUpperCase(),
+      card_number: String(best.card_number || cleanNum),
+      rarity: best.rarity || null,
+      reference_image: best.image || null,
+      verified: true,
+      db_source: 'tcggo.com (fallback)',
+      _manual: true
+    };
+  } catch (e) {
+    console.log(`[TCGGO-FALLBACK] Error: ${e.response?.status || e.message}`);
+    return null;
+  }
+}
+
+// FALLBACK: JustTCG search by set name + card number
+async function lookupViaJustTCG(setId, cardNumber) {
+  const apiKey = process.env.JUSTTCG_API_KEY;
+  if (!apiKey) return null;
+
+  const setName = PKM_SET_NAMES[setId];
+  if (!setName) return null;
+
+  const cleanNum = String(cardNumber).replace(/\/.*/, '').replace(/^0+/, '') || String(cardNumber);
+  const searchQuery = `${setName} ${cleanNum}`;
+  console.log(`[JustTCG-FALLBACK] Searching: "${searchQuery}"`);
+
+  try {
+    const resp = await axios.get('https://api.justtcg.com/v1/cards', {
+      params: { q: searchQuery, game: 'pokemon', limit: 5 },
+      headers: { 'x-api-key': apiKey, 'Accept': 'application/json' },
+      timeout: 10000
+    });
+
+    const data = resp.data?.data;
+    if (!data || data.length === 0) {
+      console.log('[JustTCG-FALLBACK] No results');
+      return null;
+    }
+
+    // Find best match by card number
+    let best = data[0];
+    let bestScore = 0;
+    for (const item of data) {
+      let score = 0;
+      const itemNum = (item.number || '').replace(/\/.*/, '');
+      if (itemNum === cleanNum) score += 60;
+      if (item.set_name?.toLowerCase().includes(setName.toLowerCase())) score += 40;
+      if (score > bestScore) { bestScore = score; best = item; }
+    }
+
+    console.log(`[JustTCG-FALLBACK] Found: ${best.name} (${best.set_name || '?'} #${best.number})`);
+    return {
+      game: 'pokemon',
+      name: best.name,
+      set_name: best.set_name || setName,
+      set_code: setId.toUpperCase(),
+      card_number: best.number || cleanNum,
+      rarity: best.rarity || null,
+      reference_image: best.image_url || null,
+      verified: true,
+      db_source: 'justtcg.com (fallback)',
+      _manual: true
+    };
+  } catch (e) {
+    console.log(`[JustTCG-FALLBACK] Error: ${e.response?.status || e.message}`);
+    return null;
+  }
 }
 
 // ============================================================
@@ -695,6 +888,30 @@ app.post('/api/identify-manual', async (req, res) => {
           } catch (e) {
             console.error(`[MANUAL-PKM] Query failed: ${e.message}`);
           }
+        }
+      }
+
+      // ── FALLBACK CHAIN when pokemontcg.io doesn't have the set ──
+      if (!card && resolved.setId) {
+        console.log(`[MANUAL-PKM] pokemontcg.io miss — trying fallback APIs for ${resolved.setId} #${cleanNum}`);
+
+        // Fallback 1: TCGdex (free card database)
+        card = await lookupTCGdex(resolved.setId, cleanNum);
+
+        // Fallback 2: TCGGO via RapidAPI (search by set name + number)
+        if (!card) {
+          card = await lookupViaTCGGO(resolved.setId, cleanNum);
+        }
+
+        // Fallback 3: JustTCG (search by set name + number)
+        if (!card) {
+          card = await lookupViaJustTCG(resolved.setId, cleanNum);
+        }
+
+        if (card) {
+          console.log(`[MANUAL-PKM] Fallback success: ${card.name} via ${card.db_source}`);
+        } else {
+          console.log(`[MANUAL-PKM] All fallbacks exhausted for ${set_code} #${cleanNum}`);
         }
       }
     } else if (game === 'magic') {
