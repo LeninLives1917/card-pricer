@@ -16,7 +16,7 @@
   <title>Card Pricer</title>
   <script>
     // Register service worker for PWA install + offline shell.
-    console.log('[APP] Card Pricer client v33 loaded');
+    console.log('[APP] Card Pricer client v34 loaded');
     if ('serviceWorker' in navigator) {
       window.addEventListener('load', () => {
         navigator.serviceWorker.register('/service-worker.js', { updateViaCache: 'none' })
@@ -4452,9 +4452,16 @@ function renderResultSheet() {
                    : card.game === 'lorcana' ? 'Lorcana'
                    : card.game === 'onepiece' ? 'OnePiece'
                    : card.game === 'starwars' ? 'StarWarsUnlimited' : '';
-    // Cardmarket search only matches against the product name — never
-    // include set name or card number here or we get "no matches".
-    const q = card.name || '';
+    // Cardmarket Pokémon product names include set code + number in parens,
+    // e.g. "Slaking ex (SSP 147)" — include them for an exact match.
+    const setCode = (card.set_code || '').toUpperCase();
+    const num = card.card_number ? card.card_number.replace(/\/.*/, '').replace(/^0+/, '') : '';
+    let q = card.name || '';
+    if (card.game === 'pokemon' && setCode && num) {
+      q = `${card.name} (${setCode} ${num})`;
+    } else if (num) {
+      q = `${card.name} ${num}`;
+    }
     cmUrl = gameSlug
       ? `https://www.cardmarket.com/en/${gameSlug}/Products/Search?searchString=${encodeURIComponent(q)}`
       : `https://www.cardmarket.com/en/Search?searchString=${encodeURIComponent(q)}`;

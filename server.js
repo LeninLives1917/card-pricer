@@ -2781,31 +2781,36 @@ function buildCardmarketUrl(card) {
   // URL 404s more often than it works. API-provided URLs (from pokemontcg.io
   // / Scryfall) still override this in the caller when available.
 
-  // Build a narrow, reliable search URL.
-  // IMPORTANT: Cardmarket's search treats the query as close to exact-match
-  // against the product *name* only — it does NOT search set name or card
-  // number. Including either returns "no matches for your query". So we send
-  // just the card name (Cardmarket lists every print of that name) and rely
-  // on the user to pick the right one from the results list.
-  const num = card.card_number ? card.card_number.replace(/\/.*/, '') : '';
-  const searchTerm = card.name || '';
+  // Build a search URL that targets the exact card.
+  // Cardmarket Pokémon product names include set code + number in parens,
+  // e.g. "Slaking ex (SSP 147)" — so including them in the search matches.
+  const num = card.card_number ? card.card_number.replace(/\/.*/, '').replace(/^0+/, '') : '';
+  const setCode = (card.set_code || card.setCode || '').toUpperCase();
+
+  // Primary: name + set code + number in parentheses (matches Cardmarket product name format)
+  let searchTerm = card.name || '';
+  if (card.game === 'pokemon' && setCode && num) {
+    searchTerm = `${card.name} (${setCode} ${num})`;
+  } else if (num) {
+    searchTerm = `${card.name} ${num}`;
+  }
 
   const searchUrl = gameSlug
     ? `https://www.cardmarket.com/en/${gameSlug}/Products/Search?searchString=${encodeURIComponent(searchTerm)}`
     : `https://www.cardmarket.com/en/Search?searchString=${encodeURIComponent(searchTerm)}`;
 
-  // Narrower fallback if the above returns nothing — just name + number
-  const narrowTerm = card.name + (num ? ` ${num}` : '');
-  const narrowUrl = gameSlug
-    ? `https://www.cardmarket.com/en/${gameSlug}/Products/Search?searchString=${encodeURIComponent(narrowTerm)}`
-    : `https://www.cardmarket.com/en/Search?searchString=${encodeURIComponent(narrowTerm)}`;
+  // Narrower fallback — just name (in case parens format doesn't match)
+  const fallbackTerm = card.name || '';
+  const fallbackUrl = gameSlug
+    ? `https://www.cardmarket.com/en/${gameSlug}/Products/Search?searchString=${encodeURIComponent(fallbackTerm)}`
+    : `https://www.cardmarket.com/en/Search?searchString=${encodeURIComponent(fallbackTerm)}`;
 
   return {
     product_url: null,
     product_url_filtered: null,
     search_url: searchUrl,
     filtered_search_url: `${searchUrl}&language=1&minCondition=${condCode}`,
-    narrow_search_url: narrowUrl,
+    narrow_search_url: fallbackUrl,
     source: 'cardmarket_link'
   };
 }
@@ -4015,97 +4020,4 @@ app.post('/api/quote-lead', async (req, res) => {
     // Best-effort send via Brevo. If no API key, just log + return ok so the
     // tool still works during setup — you'll still see the lead server-side.
     if (!process.env.BREVO_API_KEY) {
-      console.log('[QUOTE-LEAD] (no BREVO_API_KEY set) would email to', email, 'and', SHOP_EMAIL);
-      console.log('[QUOTE-LEAD] payload:', { email, name, newsletter, cardCount: trimmed.length, totals });
-      return res.json({ ok: true, emailed: false, note: 'Logged server-side. Set BREVO_API_KEY to enable email.' });
-    }
-
-    const sendOne = (toEmail, subject, htmlContent, attachmentsList) => {
-      const payload = {
-        sender: { name: SHOP_NAME, email: SENDER_EMAIL },
-        to: [{ email: toEmail }],
-        subject,
-        htmlContent
-      };
-      if (attachmentsList && attachmentsList.length) payload.attachment = attachmentsList;
-      return fetch('https://api.brevo.com/v3/smtp/email', {
-        method: 'POST',
-        headers: {
-          'api-key': process.env.BREVO_API_KEY,
-          'Content-Type': 'application/json',
-          'Accept': 'application/json'
-        },
-        body: JSON.stringify(payload)
-      }).then(r => r.ok ? r.json() : r.text().then(t => { throw new Error('Brevo ' + r.status + ': ' + t); }));
-    };
-
-    // If the customer opted in, add them to your Brevo newsletter list.
-    // Set BREVO_NEWSLETTER_LIST_ID in Render env vars (it's the numeric list ID from Brevo).
-    const subscribeIfOptedIn = async () => {
-      if (!newsletter) return { subscribed: false };
-      const listId = parseInt(process.env.BREVO_NEWSLETTER_LIST_ID || '0', 10);
-      if (!listId) {
-        console.log('[QUOTE-LEAD] newsletter opt-in but no BREVO_NEWSLETTER_LIST_ID set');
-        return { subscribed: false, reason: 'no list configured' };
-      }
-      try {
-        // createContact will add OR update. updateEnabled: true lets us upsert without a 400 if they already exist.
-        const res = await fetch('https://api.brevo.com/v3/contacts', {
-          method: 'POST',
-          headers: {
-            'api-key': process.env.BREVO_API_KEY,
-            'Content-Type': 'application/json',
-            'Accept': 'application/json'
-          },
-          body: JSON.stringify({
-            email,
-            attributes: name ? { FIRSTNAME: name } : {},
-            listIds: [listId],
-            updateEnabled: true
-          })
-        });
-        if (!res.ok) {
-          const text = await res.text();
-          console.warn('[QUOTE-LEAD] newsletter subscribe failed:', res.status, text);
-          return { subscribed: false, reason: text };
-        }
-        return { subscribed: true };
-      } catch (e) {
-        console.warn('[QUOTE-LEAD] newsletter subscribe error:', e.message);
-        return { subscribed: false, reason: e.message };
-      }
-    };
-
-    const [,, subRes] = await Promise.all([
-      sendOne(email, `Your ${SHOP_NAME} card quote`, customerHtml),
-      sendOne(SHOP_EMAIL, `New quote request — ${email}${newsletter ? ' (newsletter opt-in)' : ''}`, shopHtml, attachments),
-      subscribeIfOptedIn()
-    ]);
-
-    res.json({ ok: true, emailed: true, subscribed: subRes.subscribed });
-  } catch (e) {
-    console.error('[QUOTE-LEAD] failed:', e);
-    res.status(500).json({ error: e.message || 'Failed to send quote' });
-  }
-});
-
-function escapeHtml(s) {
-  return String(s || '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-}
-
-// SPA fallback
-app.get('*', (req, res) => {
-  res.sendFile(join(__dirname, 'public', 'index.html'));
-});
-
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  console.log(`\n  Card Pricer running at http://localhost:${PORT}`);
-  console.log(`\n  API Status:`);
-  console.log(`    Claude Vision:    ${process.env.ANTHROPIC_API_KEY ? 'configured' : 'MISSING — add ANTHROPIC_API_KEY to .env'}`);
-  console.log(`    Cardmarket:       Direct links + API prices (Pokemon/MTG get EUR prices from API)`);
-  console.log(`    Scryfall (MTG):   Free (includes EUR/Cardmarket prices)`);
-  console.log(`    Pokemon TCG API:  Free (includes Cardmarket prices)`);
-  console.log(`    eBay API:         ${process.env.EBAY_APP_ID ? 'configured' : 'not configured'}\n`);
-  console.log('  Ready! No browser warmup needed — instant startup.\n');
-});
+      console.log('[QUOTE-LEAD] (no BREVO_API_KEY set) would email to', email, 'and', SHOP_EMAI
