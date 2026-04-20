@@ -16,7 +16,7 @@
   <title>Card Pricer</title>
   <script>
     // Register service worker for PWA install + offline shell.
-    console.log('[APP] Card Pricer client v18 loaded');
+    console.log('[APP] Card Pricer client v19 loaded');
     if ('serviceWorker' in navigator) {
       window.addEventListener('load', () => {
         navigator.serviceWorker.register('/service-worker.js', { updateViaCache: 'none' })
@@ -2619,12 +2619,17 @@ async function processBulkItem(item) {
   // dataUrl is already resized to 1100px in handleBulkFiles.
   let uploadImage = item.dataUrl;
 
-  // Identify (streams ident + verified events; we only need the final cards).
-  const idResult = await fetchIdentifyStream({
-    image: uploadImage,
-    batch: false,
-    hint: ''
-  });
+  // Try the set-code reader first (cheaper + more accurate than full AI)
+  let idResult = await tryOcrIdentify(uploadImage);
+
+  // Fall back to full AI identify if set-code reader didn't get a hit
+  if (!idResult) {
+    idResult = await fetchIdentifyStream({
+      image: uploadImage,
+      batch: false,
+      hint: ''
+    });
+  }
   const cards = idResult.cards || [];
   if (!cards.length) throw new Error('No card detected');
 
