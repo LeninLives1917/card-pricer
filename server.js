@@ -653,6 +653,12 @@ let cardDbDirty = false;   // true if we have new entries not yet saved
 
 function addCardToDb(setId, number, data) {
   const key = `${setId}-${number}`;
+  // Don't overwrite trusted sources (tcggo/fallback/manual) with sheet data
+  const existing = CARD_DB.get(key);
+  if (existing && data.source === 'sheet' &&
+      (existing.source === 'fallback' || existing.source === 'tcggo' || existing.source === 'manual')) {
+    return;
+  }
   CARD_DB.set(key, data);
 }
 
@@ -661,7 +667,16 @@ function lookupLocalDb(setId, cardNumber) {
   const key = `${setId}-${cleanNum}`;
   const entry = CARD_DB.get(key);
   if (entry) {
-    console.log(`[LOCAL-DB] HIT: ${key} → ${entry.name}`);
+    // For UNRELIABLE sets, only trust tcggo/fallback/manual entries — sheet
+    // and pokemontcg data has wrong card names for these sets.
+    if (POKEMONTCG_UNRELIABLE.has(setId)) {
+      const trusted = entry.source === 'tcggo' || entry.source === 'fallback' || entry.source === 'manual';
+      if (!trusted) {
+        console.log(`[LOCAL-DB] SKIP untrusted entry: ${key} → ${entry.name} (source: ${entry.source || 'none'})`);
+        return null;
+      }
+    }
+    console.log(`[LOCAL-DB] HIT: ${key} → ${entry.name} (source: ${entry.source || 'unknown'})`);
     return {
       game: 'pokemon',
       name: entry.name,
@@ -803,6 +818,7 @@ function processPageData(cards) {
       image: c.images?.large || c.images?.small || '',
       cardmarketUrl: c.cardmarket?.url || null,
       tcgplayerUrl: c.tcgplayer?.url || null,
+      source: 'pokemontcg',
     });
   }
 }
@@ -820,6 +836,7 @@ function cacheCardResult(setId, cardNumber, cardData) {
     image: cardData.reference_image || '',
     cardmarketUrl: cardData.cardmarket_url || null,
     tcgplayerUrl: cardData.tcgplayer_url || null,
+    source: 'fallback',
   });
   cardDbDirty = true;
   console.log(`[LOCAL-DB] Cached: ${setId}-${cleanNum} → ${cardData.name}`);
@@ -878,12 +895,18 @@ async function loadCardDbFromSheet() {
       const name = (cols[2] || '').trim();
       if (!setId || !num || !name) continue;
 
+      // Check for "verified" column (col 7) — if present and truthy,
+      // trust this entry even for UNRELIABLE sets (Dave manually fixed it)
+      const verified = (cols[7] || '').trim().toLowerCase();
+      const isVerified = verified === 'yes' || verified === 'true' || verified === '1';
+
       addCardToDb(setId, num, {
         name: name,
         setName: (cols[3] || '').trim(),
         setCode: (cols[4] || setId).trim().toUpperCase(),
         rarity: (cols[5] || '').trim(),
         hp: (cols[6] || '').trim(),
+        source: isVerified ? 'manual' : 'sheet',
       });
       loaded++;
     }
@@ -947,18 +970,143 @@ app.post('/api/card-db-rebuild', (req, res) => {
   res.json({ status: 'rebuild started' });
 });
 
-// ── STARTUP: try Google Sheet → JSON file → API download ──
+// ── BULK IMPORT: fetch all cards for UNRELIABLE sets from TCGGO ──
+// Runs once after main DB loads. Replaces bad pokemontcg.io data with correct
+// TCGGO data so scanning is instant local lookups with zero per-scan API calls.
+let unreliableImportDone = false;
+async function importUnreliableSetsFromTCGGO() {
+  const apiKey = process.env.RAPIDAPI_KEY;
+  if (!apiKey) {
+    console.log('[TCGGO-IMPORT] No RAPIDAPI_KEY — skipping unreliable set import');
+    return;
+  }
+  if (unreliableImportDone) return;
+
+  const setsToImport = [...POKEMONTCG_UNRELIABLE]
+    .filter(s => PKM_SET_NAMES[s]); // only sets we have names for
+
+  console.log(`[TCGGO-IMPORT] Importing ${setsToImport.length} unreliable sets: ${setsToImport.join(', ')}`);
+  let totalImported = 0;
+
+  for (const setId of setsToImport) {
+    const setName = PKM_SET_NAMES[setId];
+    let page = 1;
+    let setCount = 0;
+    let hasMore = true;
+
+    while (hasMore) {
+      try {
+        const resp = await axios.get('https://pokemon-tcg-api.p.rapidapi.com/cards/search', {
+          params: { search: setName, per_page: 50, page },
+          headers: {
+            'X-RapidAPI-Key': apiKey,
+            'X-RapidAPI-Host': 'pokemon-tcg-api.p.rapidapi.com',
+            'Accept': 'application/json'
+          },
+          timeout: 15000
+        });
+
+        const data = resp.data?.data;
+        if (!data || data.length === 0) {
+          hasMore = false;
+          break;
+        }
+
+        for (const card of data) {
+          // Only keep cards whose episode/set name matches what we searched for
+          const epName = (card.episode?.name || '').toLowerCase();
+          const epCode = (card.episode?.code || '').toUpperCase();
+          if (!epName.includes(setName.toLowerCase()) && epCode !== setId.toUpperCase()) continue;
+
+          const num = String(card.card_number || '').replace(/^0+/, '');
+          if (!num) continue;
+
+          addCardToDb(setId, num, {
+            name: card.name,
+            setName: card.episode?.name || setName,
+            setCode: (card.episode?.code || setId).toUpperCase(),
+            rarity: card.rarity || '',
+            hp: '',
+            image: card.image || '',
+            source: 'tcggo',  // trusted — won't be skipped for UNRELIABLE sets
+          });
+          setCount++;
+        }
+
+        // If fewer results than per_page, we've hit the last page
+        if (data.length < 50) {
+          hasMore = false;
+        } else {
+          page++;
+          // Small delay to avoid rate limiting
+          await new Promise(r => setTimeout(r, 300));
+        }
+      } catch (e) {
+        if (e.response?.status === 429) {
+          console.log(`[TCGGO-IMPORT] Rate limited on ${setName} page ${page} — pausing 5s`);
+          await new Promise(r => setTimeout(r, 5000));
+          continue; // retry same page
+        }
+        console.log(`[TCGGO-IMPORT] Error on ${setName} page ${page}: ${e.response?.status || e.message}`);
+        hasMore = false;
+      }
+    }
+
+    console.log(`[TCGGO-IMPORT] ${setName} (${setId}): ${setCount} cards imported`);
+    totalImported += setCount;
+
+    // Small delay between sets
+    await new Promise(r => setTimeout(r, 500));
+  }
+
+  if (totalImported > 0) {
+    cardDbDirty = true;
+    cardDbCount = CARD_DB.size;
+    console.log(`[TCGGO-IMPORT] Done — imported ${totalImported} cards across ${setsToImport.length} sets (DB total: ${CARD_DB.size})`);
+    saveCardDbToFile();
+  }
+  unreliableImportDone = true;
+}
+
+// Manual trigger endpoint
+app.post('/api/card-db-import-unreliable', (req, res) => {
+  unreliableImportDone = false; // allow re-run
+  importUnreliableSetsFromTCGGO();
+  res.json({ status: 'import started', sets: [...POKEMONTCG_UNRELIABLE].filter(s => PKM_SET_NAMES[s]) });
+});
+
+// ── STARTUP: JSON file → Google Sheet → API download → TCGGO fix ──
 async function initCardDb() {
-  // 1. Google Sheet (editable source of truth)
-  const fromSheet = await loadCardDbFromSheet();
-  if (fromSheet) return;
-
-  // 2. Local JSON file (fast backup)
+  // 1. Local JSON file (fastest — already has TCGGO-corrected data after first run)
   const fromFile = loadCardDbFromFile();
-  if (fromFile) return;
+  if (fromFile) {
+    // JSON exists and is good. Check if TCGGO import has already run
+    // by looking for any tcggo-sourced entries. If not, run it to fix the data.
+    let hasTcggoData = false;
+    for (const [, val] of CARD_DB) {
+      if (val.source === 'tcggo') { hasTcggoData = true; break; }
+    }
+    if (!hasTcggoData) {
+      console.log('[CARD-DB] JSON loaded but no TCGGO data — importing unreliable sets');
+      importUnreliableSetsFromTCGGO();
+    } else {
+      console.log('[CARD-DB] JSON already has TCGGO-corrected data — ready');
+      unreliableImportDone = true;
+    }
+    return;
+  }
 
-  // 3. Download from pokemontcg.io (slow but self-healing)
-  downloadCardDatabase();
+  // 2. Google Sheet (first-time bootstrap)
+  const fromSheet = await loadCardDbFromSheet();
+  if (!fromSheet) {
+    // 3. Download from pokemontcg.io (slow but self-healing)
+    await downloadCardDatabase();
+  }
+
+  // 4. First run: import correct data for UNRELIABLE sets from TCGGO,
+  //    permanently overwriting the bad pokemontcg.io entries. Saved to JSON
+  //    so this only needs to happen once.
+  importUnreliableSetsFromTCGGO();
 }
 initCardDb();
 
