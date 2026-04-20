@@ -672,65 +672,94 @@ async function lookupTCGdex(setId, cardNumber) {
 
 // FALLBACK: TCGGO search by set name + card number
 // Used when both pokemontcg.io and TCGdex don't have a set.
-async function lookupViaTCGGO(setId, cardNumber) {
+// Tries multiple search strategies for best results.
+async function lookupViaTCGGO(setId, cardNumber, rawSetCode) {
   const apiKey = process.env.RAPIDAPI_KEY;
   if (!apiKey) return null;
 
   const setName = PKM_SET_NAMES[setId];
-  if (!setName) {
-    console.log(`[TCGGO-FALLBACK] No set name for "${setId}" — skipping`);
-    return null;
-  }
-
   const cleanNum = String(cardNumber).replace(/\/.*/, '').replace(/^0+/, '') || String(cardNumber);
-  const searchTerm = `${setName} ${cleanNum}`;
-  console.log(`[TCGGO-FALLBACK] Searching: "${searchTerm}"`);
+  const paddedNum = cleanNum.padStart(3, '0');
 
-  try {
-    const resp = await axios.get('https://pokemon-tcg-api.p.rapidapi.com/cards/search', {
-      params: { search: searchTerm, per_page: 5 },
-      headers: {
-        'X-RapidAPI-Key': apiKey,
-        'X-RapidAPI-Host': 'pokemon-tcg-api.p.rapidapi.com',
-        'Accept': 'application/json'
-      },
-      timeout: 10000
-    });
+  // Try multiple search terms — promo sets need different strategies
+  const searchTerms = [];
+  // 1. Raw set code + padded number (e.g. "MEP 026") — how it appears on the card
+  if (rawSetCode) searchTerms.push(`${rawSetCode} ${paddedNum}`);
+  // 2. Set name + number (e.g. "Mega Evolution Promos 26")
+  if (setName) searchTerms.push(`${setName} ${cleanNum}`);
+  // 3. Set name + padded number
+  if (setName) searchTerms.push(`${setName} ${paddedNum}`);
+  // 4. Raw code without number, broader search
+  if (rawSetCode) searchTerms.push(`${rawSetCode} promo ${cleanNum}`);
 
-    const data = resp.data?.data;
-    if (!data || data.length === 0) {
-      console.log('[TCGGO-FALLBACK] No results');
-      return null;
-    }
-
-    // Score results to find best match by card number
-    let best = data[0];
-    let bestScore = 0;
-    for (const item of data) {
-      let score = 0;
-      const itemNum = String(item.card_number || '');
-      if (itemNum === cleanNum || itemNum === cardNumber) score += 60;
-      if (item.episode?.name?.toLowerCase().includes(setName.toLowerCase())) score += 40;
-      if (score > bestScore) { bestScore = score; best = item; }
-    }
-
-    console.log(`[TCGGO-FALLBACK] Found: ${best.name} (${best.episode?.name || '?'} #${best.card_number})`);
-    return {
-      game: 'pokemon',
-      name: best.name,
-      set_name: best.episode?.name || setName,
-      set_code: (best.episode?.code || setId).toUpperCase(),
-      card_number: String(best.card_number || cleanNum),
-      rarity: best.rarity || null,
-      reference_image: best.image || null,
-      verified: true,
-      db_source: 'tcggo.com (fallback)',
-      _manual: true
-    };
-  } catch (e) {
-    console.log(`[TCGGO-FALLBACK] Error: ${e.response?.status || e.message}`);
+  if (!searchTerms.length) {
+    console.log(`[TCGGO-FALLBACK] No search terms for "${setId}" — skipping`);
     return null;
   }
+
+  for (const searchTerm of searchTerms) {
+    console.log(`[TCGGO-FALLBACK] Searching: "${searchTerm}"`);
+    try {
+      const resp = await axios.get('https://pokemon-tcg-api.p.rapidapi.com/cards/search', {
+        params: { search: searchTerm, per_page: 10 },
+        headers: {
+          'X-RapidAPI-Key': apiKey,
+          'X-RapidAPI-Host': 'pokemon-tcg-api.p.rapidapi.com',
+          'Accept': 'application/json'
+        },
+        timeout: 10000
+      });
+
+      const data = resp.data?.data;
+      if (!data || data.length === 0) continue;
+
+      // Score results — card number match is REQUIRED, set match is bonus
+      let best = null;
+      let bestScore = 0;
+      for (const item of data) {
+        const itemNum = String(item.card_number || '');
+        // Card number MUST match — skip items that don't
+        if (itemNum !== cleanNum && itemNum !== paddedNum && itemNum !== cardNumber) continue;
+
+        let score = 60; // base score for number match
+        const epName = (item.episode?.name || '').toLowerCase();
+        const epCode = (item.episode?.code || '').toUpperCase();
+        // Set name/code match
+        if (setName && epName.includes(setName.toLowerCase())) score += 40;
+        if (rawSetCode && epCode === rawSetCode.toUpperCase()) score += 50;
+        // Prefer promo matches for promo sets
+        if (setId.endsWith('p') || setId === 'mep') {
+          if (epName.includes('promo')) score += 20;
+        }
+        if (score > bestScore) { bestScore = score; best = item; }
+      }
+
+      if (best) {
+        console.log(`[TCGGO-FALLBACK] Found: ${best.name} (${best.episode?.name || '?'} #${best.card_number}) [score ${bestScore}]`);
+        return {
+          game: 'pokemon',
+          name: best.name,
+          set_name: best.episode?.name || setName || rawSetCode,
+          set_code: (best.episode?.code || rawSetCode || setId).toUpperCase(),
+          card_number: String(best.card_number || cleanNum),
+          rarity: best.rarity || null,
+          reference_image: best.image || null,
+          verified: true,
+          db_source: 'tcggo.com (fallback)',
+          _manual: true
+        };
+      }
+    } catch (e) {
+      if (e.response?.status === 429) {
+        console.log('[TCGGO-FALLBACK] Rate limited — stopping');
+        return null;
+      }
+      console.log(`[TCGGO-FALLBACK] Error: ${e.response?.status || e.message}`);
+    }
+  }
+
+  console.log(`[TCGGO-FALLBACK] No match after all search strategies for ${rawSetCode || setId} #${cleanNum}`);
+  return null;
 }
 
 // FALLBACK: JustTCG search by set name + card number
@@ -916,7 +945,7 @@ app.post('/api/identify-manual', async (req, res) => {
 
         // Fallback 2: TCGGO via RapidAPI (search by set name + number)
         if (!card) {
-          card = await lookupViaTCGGO(resolved.setId, cleanNum);
+          card = await lookupViaTCGGO(resolved.setId, cleanNum, set_code);
         }
 
         // Fallback 3: JustTCG (search by set name + number)
@@ -1157,12 +1186,22 @@ app.post('/api/report-bad-id', express.json({ limit: '15mb' }), async (req, res)
 // Returns: { cards: [verifiedCard] } on match, or 404 on no-match/ambiguous.
 app.post('/api/lookup-by-number', express.json(), async (req, res) => {
   try {
-    const { number, setCode, game } = req.body || {};
+    const { number, set_code: setCode, game, reg_mark } = req.body || {};
     if (!number || typeof number !== 'string') {
       return res.status(400).json({ error: 'number required' });
     }
 
     const raw = number.trim();
+
+    // Regulation mark → era mapping (helps disambiguate when multiple sets match)
+    const REG_MARK_ERAS = {
+      'D': { minYear: 2019, maxYear: 2021, prefix: 'swsh' },
+      'E': { minYear: 2021, maxYear: 2023, prefix: 'swsh' },
+      'F': { minYear: 2022, maxYear: 2024, prefix: 'swsh' },
+      'G': { minYear: 2023, maxYear: 2025, prefix: 'sv' },
+      'H': { minYear: 2024, maxYear: 2026, prefix: 'sv' },
+      'J': { minYear: 2025, maxYear: 2027, prefix: '' },  // ME era
+    };
 
     // Try Scryfall first if we have an explicit setCode (Magic).
     if (setCode && (game === 'magic' || !game)) {
@@ -1212,14 +1251,13 @@ app.post('/api/lookup-by-number', express.json(), async (req, res) => {
         queries.push(`number:"${numPart}" set.printedTotal:${totalPart}`);
         queries.push(`number:"${numPart}" set.total:${totalPart}`);
       } else if (numPart) {
-        // Promo-style (e.g. SM211, SWSH066, SVP076) — exact match
         queries.push(`number:"${numPart}"`);
       }
 
       for (const q of queries) {
         try {
           const resp = await axios.get('https://api.pokemontcg.io/v2/cards', {
-            params: { q, pageSize: 5 },
+            params: { q, pageSize: 10 },
             timeout: 6000
           });
           const results = resp.data?.data || [];
@@ -1240,6 +1278,39 @@ app.post('/api/lookup-by-number', express.json(), async (req, res) => {
             };
             console.log(`[OCR-LOOKUP] PokemonTCG HIT: ${card.name} ${card.set_code} #${card.card_number}`);
             return res.json({ cards: [card] });
+          } else if (results.length > 1 && reg_mark) {
+            // Multiple matches — use regulation mark to pick the right era
+            const era = REG_MARK_ERAS[reg_mark];
+            if (era) {
+              console.log(`[OCR-LOOKUP] Ambiguous: ${results.length} matches for ${q}, using reg mark ${reg_mark} to filter (${era.prefix} era)`);
+              const filtered = results.filter(d => {
+                const setId = (d.set?.id || '').toLowerCase();
+                const releaseYear = d.set?.releaseDate ? parseInt(d.set.releaseDate.substring(0, 4)) : 0;
+                const eraMatch = era.prefix ? setId.startsWith(era.prefix) : true;
+                const yearMatch = releaseYear >= era.minYear && releaseYear <= era.maxYear;
+                return eraMatch || yearMatch;
+              });
+              if (filtered.length === 1) {
+                const d = filtered[0];
+                const card = {
+                  game: 'pokemon',
+                  name: d.name,
+                  set_name: d.set?.name,
+                  set_code: (d.set?.id || '').toUpperCase(),
+                  card_number: d.number,
+                  rarity: d.rarity,
+                  hp: d.hp,
+                  image_url: d.images?.large || d.images?.small,
+                  cardmarket_url: d.cardmarket?.url || null,
+                  tcgplayer_url: d.tcgplayer?.url,
+                  source: `pokemontcg.io (ocr-direct, reg:${reg_mark})`
+                };
+                console.log(`[OCR-LOOKUP] Reg-mark filtered HIT: ${card.name} ${card.set_code} #${card.card_number}`);
+                return res.json({ cards: [card] });
+              } else {
+                console.log(`[OCR-LOOKUP] Reg-mark filter left ${filtered.length} matches (from ${results.length})`);
+              }
+            }
           } else if (results.length > 1) {
             console.log(`[OCR-LOOKUP] Ambiguous: ${results.length} matches for ${q}`);
           }

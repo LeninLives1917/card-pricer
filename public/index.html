@@ -16,7 +16,7 @@
   <title>Card Pricer</title>
   <script>
     // Register service worker for PWA install + offline shell.
-    console.log('[APP] Card Pricer client v24 loaded');
+    console.log('[APP] Card Pricer client v25 loaded');
     if ('serviceWorker' in navigator) {
       window.addEventListener('load', () => {
         navigator.serviceWorker.register('/service-worker.js', { updateViaCache: 'none' })
@@ -2289,6 +2289,15 @@ function extractCardNumber(text) {
   const setSlash = cleaned.match(/\b([A-Z]{2,5})\s+(\d{1,4})\s*\/\s*(\d{1,4})\b/);
   if (setSlash) {
     return { set_code: setSlash[1], number: setSlash[2], game: 'pokemon' };
+  }
+
+  // Priority 2c: "REG NNN/NNN" — regulation mark + number, no set code
+  // e.g. "F 160/159", "E 005/025", "D 123/189"
+  // Regulation marks: D (SWSH early), E (SWSH mid-late), F (SWSH late / early SV),
+  // G (SV mid), H (SV late), J (ME era)
+  const regSlash = cleaned.match(/\b([D-J])\s+(\d{1,4})\s*\/\s*(\d{1,4})\b/);
+  if (regSlash) {
+    return { reg_mark: regSlash[1], number: `${regSlash[2]}/${regSlash[3]}`, game: 'pokemon' };
   }
 
   // Priority 3: "NNN/NNN" — Pokemon/Magic standard without set code
