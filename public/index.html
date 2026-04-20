@@ -16,7 +16,7 @@
   <title>Card Pricer</title>
   <script>
     // Register service worker for PWA install + offline shell.
-    console.log('[APP] Card Pricer client v32 loaded');
+    console.log('[APP] Card Pricer client v33 loaded');
     if ('serviceWorker' in navigator) {
       window.addEventListener('load', () => {
         navigator.serviceWorker.register('/service-worker.js', { updateViaCache: 'none' })
@@ -1197,8 +1197,10 @@
     }
     .sheet-card-name {
       font-size: 16px; font-weight: 700; line-height: 1.2;
-      word-break: break-word;
+      word-break: break-word; cursor: pointer; position: relative;
     }
+    .sheet-card-name:active { opacity: 0.6; }
+    .correct-hint { font-size: 12px; margin-left: 6px; opacity: 0.4; }
     .sheet-card-meta { font-size: 11px; color: var(--text-dim); margin-top: 2px; }
 
     /* Price row — the money shot */
@@ -4469,7 +4471,7 @@ function renderResultSheet() {
     <div class="sheet-card-head">
       <div class="sheet-card-thumb" style="${thumb ? `background-image:url('${thumb}')` : ''}"></div>
       <div style="flex:1; min-width:0;">
-        <div class="sheet-card-name">${card.name || 'Unknown'}${gradedBadge}</div>
+        <div class="sheet-card-name" onclick="correctCardName()" title="Tap to correct">${card.name || 'Unknown'}${gradedBadge}<span class="correct-hint">✏️</span></div>
         <div class="sheet-card-meta">${card.set_name || ''}${card.card_number ? ' · #' + card.card_number : ''}${card.rarity ? ' · ' + card.rarity : ''}</div>
       </div>
     </div>
@@ -4523,6 +4525,45 @@ function renderResultSheet() {
     </div>
   `;
 }
+
+// ---- Tap-to-correct card name ------------------------------------
+async function correctCardName() {
+  const entry = (_sheetCurrentIdx === 0 && state.currentResults && state.currentResults[0])
+    ? state.currentResults[0]
+    : state.sessionLog[_sheetCurrentIdx];
+  if (!entry || !entry.card) return;
+
+  const card = entry.card;
+  const oldName = card.name || 'Unknown';
+  const newName = prompt('Correct card name:', oldName);
+  if (!newName || newName.trim() === oldName) return;
+
+  try {
+    const res = await fetch('/api/correct-card', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        set_code: card.set_code || card.setCode || '',
+        card_number: card.card_number || card.number || '',
+        correct_name: newName.trim()
+      })
+    });
+    const data = await res.json();
+    if (data.ok) {
+      // Update the in-memory card name everywhere
+      card.name = newName.trim();
+      renderResultSheet();
+      renderSessionLog();
+      console.log(`[CORRECT] ${data.key}: "${data.oldName}" → "${data.newName}"`);
+    } else {
+      alert('Failed to save correction');
+    }
+  } catch (err) {
+    console.error('[CORRECT] Error:', err);
+    alert('Failed to save correction: ' + err.message);
+  }
+}
+
 // Open external URL reliably — PWA standalone mode can swallow target=_blank
 // links, so we try window.open first, then fall back to location assign on a
 // synthetic anchor click. exposed as onclick=openCardmarket(url).

@@ -1795,6 +1795,48 @@ app.post('/api/report-bad-id', express.json({ limit: '15mb' }), async (req, res)
 });
 
 // ============================================================
+// CORRECT CARD: /api/correct-card
+// ============================================================
+// User taps a wrong card name and types the correct one.
+// Overwrites the entry in the local DB with source 'manual' (highest trust).
+// Persists through restarts via the JSON file.
+app.post('/api/correct-card', express.json(), (req, res) => {
+  try {
+    const { set_code, card_number, correct_name } = req.body || {};
+    if (!set_code || !card_number || !correct_name) {
+      return res.status(400).json({ error: 'set_code, card_number, and correct_name required' });
+    }
+
+    const resolved = resolveSetCode(set_code);
+    const setId = resolved.setId || set_code.toLowerCase();
+    const cleanNum = String(card_number).replace(/\/.*/, '').replace(/^0+/, '') || String(card_number);
+
+    // Get existing entry to preserve metadata, or create fresh
+    const key = `${setId}-${cleanNum}`;
+    const existing = CARD_DB.get(key) || {};
+
+    // Overwrite with manual correction — force source to 'manual'
+    CARD_DB.set(key, {
+      ...existing,
+      name: correct_name.trim(),
+      setName: existing.setName || PKM_SET_NAMES[setId] || set_code,
+      setCode: (existing.setCode || set_code).toUpperCase(),
+      source: 'manual',  // highest trust, never overwritten
+    });
+
+    cardDbDirty = true;
+    cardDbCount = CARD_DB.size;
+    saveCardDbToFile();
+
+    console.log(`[CORRECT] ${key}: "${existing.name || '?'}" → "${correct_name.trim()}" (manual override)`);
+    res.json({ ok: true, key, oldName: existing.name || null, newName: correct_name.trim() });
+  } catch (err) {
+    console.error('[CORRECT] error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ============================================================
 // OCR-FIRST LOOKUP: /api/lookup-by-number
 // ============================================================
 // The client runs Tesseract.js locally, parses the card number, and hits
