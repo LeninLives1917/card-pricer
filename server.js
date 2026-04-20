@@ -1629,17 +1629,25 @@ app.post('/api/read-set-code', async (req, res) => {
       return res.status(400).json({ error: 'Invalid image data URL' });
     }
 
-    // Send full image — card may not be perfectly framed.
-    // High res + sharpen for best OCR on small set-code text.
+    // Pass image through with minimal processing — no quality loss.
+    // Only downscale if over 5MB (Claude's limit), otherwise send as-is.
     const rawBuffer = Buffer.from(match[2], 'base64');
-    const resized = await sharp(rawBuffer)
-      .resize({ width: 3200, withoutEnlargement: true })
-      .sharpen({ sigma: 1.0 })
-      .jpeg({ quality: 95 })
-      .toBuffer();
-    const imageBase64 = resized.toString('base64');
-    const mediaType = 'image/jpeg';
-    console.log(`[READ-SET-CODE] Resized: ${(rawBuffer.length/1024).toFixed(0)}KB → ${(resized.length/1024).toFixed(0)}KB`);
+    let imageBase64, mediaType;
+    if (rawBuffer.length > 4 * 1024 * 1024) {
+      // Over 4MB — resize to fit Claude's limit, keep PNG quality
+      const resized = await sharp(rawBuffer)
+        .resize({ width: 3200, withoutEnlargement: true })
+        .png()
+        .toBuffer();
+      imageBase64 = resized.toString('base64');
+      mediaType = 'image/png';
+      console.log(`[READ-SET-CODE] Resized (too large): ${(rawBuffer.length/1024).toFixed(0)}KB → ${(resized.length/1024).toFixed(0)}KB`);
+    } else {
+      // Under limit — send exactly what the client captured, zero degradation
+      imageBase64 = match[2];
+      mediaType = match[1];
+      console.log(`[READ-SET-CODE] Passthrough: ${(rawBuffer.length/1024).toFixed(0)}KB (${mediaType})`);
+    }
 
     console.log('[READ-SET-CODE] Sending to Claude Haiku...');
     const t0 = Date.now();
