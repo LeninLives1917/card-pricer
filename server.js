@@ -10,6 +10,7 @@ import { dirname, join } from 'path';
 import crypto from 'crypto';
 import https from 'https';
 import http from 'http';
+import fs from 'fs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -628,16 +629,27 @@ const POKEMONTCG_UNRELIABLE = new Set([
 ]);
 
 // ============================================================
-// LOCAL CARD DATABASE — in-memory cache of all Pokemon cards
+// LOCAL CARD DATABASE — Google Sheet + JSON file + in-memory Map
 // ============================================================
-// On startup, downloads the full pokemontcg.io card list in the background.
-// Lookups check this DB first (instant) before hitting any external API.
+// On startup:
+//   1. Try loading from Google Sheet CSV (if CARD_DB_SHEET_URL is set)
+//   2. If no sheet or sheet fails, try data/card-db.json
+//   3. If neither, download from pokemontcg.io in background
+//   4. After any successful load, save to data/card-db.json as backup
+//
+// Google Sheet columns: set_id, number, name, set_name, set_code, rarity, hp
+// Publish the sheet: File → Share → Publish to web → CSV
+// Set env var: CARD_DB_SHEET_URL=https://docs.google.com/spreadsheets/d/.../export?format=csv
+//
+// The sheet is the editable source of truth — fix card names there.
 // Key format: "{setId}-{number}" e.g. "sv8-247", "me2-101"
 
-const CARD_DB = new Map();       // setId-number → { name, setName, setCode, rarity, hp, ... }
+const CARD_DB_FILE = join(__dirname, 'data', 'card-db.json');
+const CARD_DB = new Map();
 let cardDbReady = false;
 let cardDbCount = 0;
 let cardDbLoading = false;
+let cardDbDirty = false;   // true if we have new entries not yet saved
 
 function addCardToDb(setId, number, data) {
   const key = `${setId}-${number}`;
@@ -669,15 +681,57 @@ function lookupLocalDb(setId, cardNumber) {
   return null;
 }
 
-// Background loader — downloads all cards from pokemontcg.io on startup
-async function loadCardDatabase() {
+// ── SAVE to JSON file ──
+function saveCardDbToFile() {
+  try {
+    const dataDir = join(__dirname, 'data');
+    if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
+
+    // Convert Map to plain object for JSON
+    const obj = {};
+    for (const [key, val] of CARD_DB) {
+      obj[key] = val;
+    }
+    fs.writeFileSync(CARD_DB_FILE, JSON.stringify(obj));
+    const sizeMB = (fs.statSync(CARD_DB_FILE).size / 1024 / 1024).toFixed(1);
+    console.log(`[CARD-DB] Saved ${CARD_DB.size} cards to ${CARD_DB_FILE} (${sizeMB} MB)`);
+    cardDbDirty = false;
+  } catch (e) {
+    console.error(`[CARD-DB] Failed to save: ${e.message}`);
+  }
+}
+
+// ── LOAD from JSON file ──
+function loadCardDbFromFile() {
+  try {
+    if (!fs.existsSync(CARD_DB_FILE)) return false;
+    const raw = fs.readFileSync(CARD_DB_FILE, 'utf8');
+    const obj = JSON.parse(raw);
+    const keys = Object.keys(obj);
+    if (keys.length === 0) return false;
+
+    for (const key of keys) {
+      CARD_DB.set(key, obj[key]);
+    }
+    cardDbCount = CARD_DB.size;
+    cardDbReady = true;
+    const sizeMB = (fs.statSync(CARD_DB_FILE).size / 1024 / 1024).toFixed(1);
+    console.log(`[CARD-DB] Loaded ${cardDbCount} cards from file (${sizeMB} MB)`);
+    return true;
+  } catch (e) {
+    console.error(`[CARD-DB] Failed to load file: ${e.message}`);
+    return false;
+  }
+}
+
+// ── DOWNLOAD from pokemontcg.io (only if no local file) ──
+async function downloadCardDatabase() {
   if (cardDbLoading) return;
   cardDbLoading = true;
   const PAGE_SIZE = 250;
 
   try {
-    // Get total count first
-    console.log('[CARD-DB] Starting background download from pokemontcg.io...');
+    console.log('[CARD-DB] No local file — downloading from pokemontcg.io...');
     const firstResp = await axios.get('https://api.pokemontcg.io/v2/cards', {
       params: { pageSize: PAGE_SIZE, page: 1, select: 'id,name,number,rarity,set,hp,supertype,subtypes,cardmarket,tcgplayer,images' },
       timeout: 30000
@@ -686,11 +740,9 @@ async function loadCardDatabase() {
     const totalPages = Math.ceil(totalCount / PAGE_SIZE);
     console.log(`[CARD-DB] Total: ${totalCount} cards across ${totalPages} pages`);
 
-    // Process first page
     processPageData(firstResp.data?.data || []);
-    console.log(`[CARD-DB] Page 1/${totalPages} loaded (${CARD_DB.size} cards)`);
+    console.log(`[CARD-DB] Page 1/${totalPages} (${CARD_DB.size} cards)`);
 
-    // Fetch remaining pages — 3 at a time to stay polite
     const BATCH = 3;
     for (let start = 2; start <= totalPages; start += BATCH) {
       const pages = [];
@@ -717,14 +769,17 @@ async function loadCardDatabase() {
 
     cardDbCount = CARD_DB.size;
     cardDbReady = true;
-    console.log(`[CARD-DB] ✓ Complete! ${cardDbCount} cards loaded into memory.`);
+    console.log(`[CARD-DB] Download complete! ${cardDbCount} cards.`);
+
+    // Save to file so next restart is instant
+    saveCardDbToFile();
   } catch (e) {
-    console.error(`[CARD-DB] Failed to load: ${e.message}`);
-    // Even if partial, mark as ready — we'll use what we got
+    console.error(`[CARD-DB] Download failed: ${e.message}`);
     if (CARD_DB.size > 0) {
       cardDbCount = CARD_DB.size;
       cardDbReady = true;
-      console.log(`[CARD-DB] Partial load: ${cardDbCount} cards available`);
+      console.log(`[CARD-DB] Partial: ${cardDbCount} cards available`);
+      saveCardDbToFile();
     }
   }
   cardDbLoading = false;
@@ -735,8 +790,6 @@ function processPageData(cards) {
     const setId = c.set?.id || '';
     const num = c.number || '';
     if (!setId || !num) continue;
-
-    // Skip unreliable sets — we don't want their bad data in our DB
     if (POKEMONTCG_UNRELIABLE.has(setId)) continue;
 
     addCardToDb(setId, num, {
@@ -754,8 +807,7 @@ function processPageData(cards) {
   }
 }
 
-// Also cache cards from successful fallback lookups (TCGGO, JustTCG, etc.)
-// so repeat scans of the same card are instant.
+// Cache cards from successful fallback lookups so repeat scans are instant
 function cacheCardResult(setId, cardNumber, cardData) {
   if (!setId || !cardNumber) return;
   const cleanNum = String(cardNumber).replace(/^0+/, '') || String(cardNumber);
@@ -769,20 +821,146 @@ function cacheCardResult(setId, cardNumber, cardData) {
     cardmarketUrl: cardData.cardmarket_url || null,
     tcgplayerUrl: cardData.tcgplayer_url || null,
   });
+  cardDbDirty = true;
   console.log(`[LOCAL-DB] Cached: ${setId}-${cleanNum} → ${cardData.name}`);
 }
 
-// Status endpoint so we can see DB state
+// Periodically save dirty cache (every 5 min if new entries were added)
+setInterval(() => {
+  if (cardDbDirty && CARD_DB.size > 0) {
+    saveCardDbToFile();
+  }
+}, 5 * 60 * 1000);
+
+// Status endpoint
 app.get('/api/card-db-status', (req, res) => {
   res.json({
     ready: cardDbReady,
     loading: cardDbLoading,
     count: CARD_DB.size,
+    fileExists: fs.existsSync(CARD_DB_FILE),
   });
 });
 
-// Kick off the background download
-loadCardDatabase();
+// ── LOAD from Google Sheet CSV ──
+async function loadCardDbFromSheet() {
+  const sheetUrl = process.env.CARD_DB_SHEET_URL;
+  if (!sheetUrl) return false;
+
+  try {
+    console.log('[CARD-DB] Fetching Google Sheet CSV...');
+    const resp = await axios.get(sheetUrl, { timeout: 30000, responseType: 'text' });
+    const csv = resp.data;
+    if (!csv || csv.length < 50) {
+      console.log('[CARD-DB] Sheet is empty or too small');
+      return false;
+    }
+
+    // Parse CSV — columns: set_id, number, name, set_name, set_code, rarity, hp
+    const lines = csv.split('\n');
+    const header = lines[0].toLowerCase();
+    if (!header.includes('set_id') && !header.includes('name')) {
+      console.log('[CARD-DB] Sheet missing expected headers');
+      return false;
+    }
+
+    let loaded = 0;
+    for (let i = 1; i < lines.length; i++) {
+      const line = lines[i].trim();
+      if (!line) continue;
+
+      // Simple CSV parse (handles quoted fields with commas)
+      const cols = parseCSVLine(line);
+      if (cols.length < 3) continue;
+
+      const setId = (cols[0] || '').trim();
+      const num = (cols[1] || '').trim();
+      const name = (cols[2] || '').trim();
+      if (!setId || !num || !name) continue;
+
+      addCardToDb(setId, num, {
+        name: name,
+        setName: (cols[3] || '').trim(),
+        setCode: (cols[4] || setId).trim().toUpperCase(),
+        rarity: (cols[5] || '').trim(),
+        hp: (cols[6] || '').trim(),
+      });
+      loaded++;
+    }
+
+    if (loaded > 0) {
+      cardDbCount = CARD_DB.size;
+      cardDbReady = true;
+      console.log(`[CARD-DB] Loaded ${loaded} cards from Google Sheet`);
+      // Save to JSON file as backup
+      saveCardDbToFile();
+      return true;
+    }
+    return false;
+  } catch (e) {
+    console.error(`[CARD-DB] Google Sheet fetch failed: ${e.message}`);
+    return false;
+  }
+}
+
+// Simple CSV line parser that handles quoted fields
+function parseCSVLine(line) {
+  const result = [];
+  let current = '';
+  let inQuotes = false;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (ch === '"') {
+      if (inQuotes && line[i + 1] === '"') { current += '"'; i++; }
+      else inQuotes = !inQuotes;
+    } else if (ch === ',' && !inQuotes) {
+      result.push(current);
+      current = '';
+    } else {
+      current += ch;
+    }
+  }
+  result.push(current);
+  return result;
+}
+
+// Export current DB as CSV — use this to populate the Google Sheet
+app.get('/api/card-db-export', (req, res) => {
+  res.setHeader('Content-Type', 'text/csv');
+  res.setHeader('Content-Disposition', 'attachment; filename="card-db.csv"');
+
+  let csv = 'set_id,number,name,set_name,set_code,rarity,hp\n';
+  for (const [key, val] of CARD_DB) {
+    const esc = (s) => `"${String(s || '').replace(/"/g, '""')}"`;
+    const [setId, num] = key.split('-');
+    csv += `${esc(setId)},${esc(num)},${esc(val.name)},${esc(val.setName)},${esc(val.setCode)},${esc(val.rarity)},${esc(val.hp)}\n`;
+  }
+  res.send(csv);
+});
+
+// Manual rebuild endpoint — re-download from pokemontcg.io
+app.post('/api/card-db-rebuild', (req, res) => {
+  if (cardDbLoading) return res.json({ status: 'already loading', count: CARD_DB.size });
+  CARD_DB.clear();
+  cardDbReady = false;
+  downloadCardDatabase();
+  res.json({ status: 'rebuild started' });
+});
+
+// ── STARTUP: try Google Sheet → JSON file → API download ──
+async function initCardDb() {
+  // 1. Google Sheet (editable source of truth)
+  const fromSheet = await loadCardDbFromSheet();
+  if (fromSheet) return;
+
+  // 2. Local JSON file (fast backup)
+  const fromFile = loadCardDbFromFile();
+  if (fromFile) return;
+
+  // 3. Download from pokemontcg.io (slow but self-healing)
+  downloadCardDatabase();
+}
+initCardDb();
 
 // Resolve a user-typed set code to an API set.id
 function resolveSetCode(raw) {
