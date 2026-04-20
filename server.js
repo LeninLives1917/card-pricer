@@ -506,7 +506,10 @@ const PKM_SET_ALIASES = {
   'DRI':  'sv10',       // Destined Rivals
   // Black Bolt & White Flare (SV10.5 split expansion)
   'BBT':  'bbt',        // Black Bolt
+  'BLK':  'bbt',        // Black Bolt (pokemontcg.io ptcgoCode)
+  'ZSV10PT5': 'bbt',    // Black Bolt (pokemontcg.io set.id)
   'WHT':  'wht',        // White Flare
+  'RSV10PT5': 'wht',    // White Flare (pokemontcg.io set.id)
   // Mega Evolution sub-sets (ME01/ME02/ME03)
   'MEG':  'me1',        // Mega Evolution (ME01)
   'ME1':  'me1',        // Mega Evolution (ME01 alternate)
