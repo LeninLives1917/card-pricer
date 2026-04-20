@@ -614,6 +614,15 @@ const TCGDEX_SET_MAP = {
   'wht':  'sv10.5', 'bbt':  'sv10.5', // split expansion
 };
 
+// Sets where pokemontcg.io data is unreliable or missing.
+// For these, skip pokemontcg.io entirely and go straight to TCGGO/JustTCG.
+const POKEMONTCG_UNRELIABLE = new Set([
+  'mep',   // Mega Evolution Promos — pokemontcg.io has wrong card names
+  'wht',   // White Flare — not indexed or incorrect
+  'bbt',   // Black Bolt — not indexed or incorrect
+  'me2pt5', // Ascended Heroes — very new
+]);
+
 // Resolve a user-typed set code to an API set.id
 function resolveSetCode(raw) {
   if (!raw) return { setId: null, ptcgoCode: null, aliased: false };
@@ -822,9 +831,16 @@ app.post('/api/identify-manual', async (req, res) => {
       // random matches like Primal Groudon #151 when user meant MEW 151).
       if (name) queries.push(`number:${cleanNum} name:"${name}"`);
 
+      // Skip pokemontcg.io entirely for sets with known bad data.
+      // Go straight to TCGGO/JustTCG fallback chain instead.
+      const skipPokemonTCG = resolved.setId && POKEMONTCG_UNRELIABLE.has(resolved.setId);
+      if (skipPokemonTCG) {
+        console.log(`[MANUAL-PKM] Skipping pokemontcg.io for unreliable set "${resolved.setId}" — going to fallbacks`);
+      }
+
       // Also try direct card ID lookup: pokemontcg.io stores cards as {setId}-{number}
       // e.g. sv3pt5-151. This is the fastest and most reliable approach.
-      if (resolved.setId) {
+      if (resolved.setId && !skipPokemonTCG) {
         const directId = `${resolved.setId}-${cleanNum}`;
         console.log(`[MANUAL-PKM] Direct lookup: ${directId}`);
         try {
@@ -854,7 +870,7 @@ app.post('/api/identify-manual', async (req, res) => {
       }
 
       // If direct lookup didn't work, fall back to search queries.
-      if (!card) {
+      if (!card && !skipPokemonTCG) {
         for (const q of queries) {
           console.log(`[MANUAL-PKM] Trying: ${q}`);
           try {
@@ -1004,11 +1020,11 @@ app.post('/api/read-set-code', async (req, res) => {
     }
 
     // Resize to stay under Claude's 5MB base64 limit.
-    // We only need to read small text — 800px wide is plenty.
+    // Higher res = better OCR for small set-code text at card bottom.
     const rawBuffer = Buffer.from(match[2], 'base64');
     const resized = await sharp(rawBuffer)
-      .resize({ width: 2400, withoutEnlargement: true })
-      .jpeg({ quality: 92 })
+      .resize({ width: 3200, withoutEnlargement: true })
+      .jpeg({ quality: 95 })
       .toBuffer();
     const imageBase64 = resized.toString('base64');
     const mediaType = 'image/jpeg';

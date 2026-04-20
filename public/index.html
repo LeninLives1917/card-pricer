@@ -16,7 +16,7 @@
   <title>Card Pricer</title>
   <script>
     // Register service worker for PWA install + offline shell.
-    console.log('[APP] Card Pricer client v23 loaded');
+    console.log('[APP] Card Pricer client v24 loaded');
     if ('serviceWorker' in navigator) {
       window.addEventListener('load', () => {
         navigator.serviceWorker.register('/service-worker.js', { updateViaCache: 'none' })
@@ -2485,8 +2485,8 @@ async function handleBulkFiles(event) {
     const rawUrl = await readFileAsDataURL(f);
     // Resize for upload/OCR (2400px high quality) and thumbnail (120px)
     let uploadUrl, thumbUrl;
-    try { uploadUrl = await resizeDataUrl(rawUrl, 2400, 0.92); } catch { uploadUrl = rawUrl; }
-    try { thumbUrl = await resizeDataUrl(rawUrl, 250, 0.7); } catch { thumbUrl = uploadUrl; }
+    try { uploadUrl = await resizeDataUrl(rawUrl, 3200, 0.95); } catch { uploadUrl = rawUrl; }
+    try { thumbUrl = await resizeDataUrl(rawUrl, 300, 0.7); } catch { thumbUrl = uploadUrl; }
     state.bulkQueue.push({
       id: ++state._bulkSeq,
       name: f.name || `card-${state._bulkSeq}`,
@@ -2705,7 +2705,7 @@ async function processImage(imageData) {
     let uploadImage = imageData;
     if (state.mode !== 'batch') {
       try {
-        uploadImage = await resizeDataUrl(imageData, 1100, 0.88);
+        uploadImage = await resizeDataUrl(imageData, 3200, 0.95);
       } catch (e) {
         console.warn('Client resize failed, sending original:', e);
       }
