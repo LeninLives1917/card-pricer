@@ -16,7 +16,7 @@
   <title>Card Pricer</title>
   <script>
     // Register service worker for PWA install + offline shell.
-    console.log('[APP] Card Pricer client v19 loaded');
+    console.log('[APP] Card Pricer client v20 loaded');
     if ('serviceWorker' in navigator) {
       window.addEventListener('load', () => {
         navigator.serviceWorker.register('/service-worker.js', { updateViaCache: 'none' })
@@ -2303,8 +2303,20 @@ function extractCardNumber(text) {
     return { set_code: setNum[1], number: setNum[2], game: 'pokemon' };
   }
 
-  // Priority 5: Pokemon promos — SWSH066, SM211, SVP 076, XY99, BW100
-  const promo = cleaned.match(/\b(SWSH|SVP|SV|SM|XY|BW|HGSS|DP)[\s-]?(\d{1,4})\b/);
+  // Priority 5a: Crown Zenith Galarian Gallery — GG31/GG70
+  const gg = cleaned.match(/\b(GG\d{1,3})\s*\/\s*(GG\d{1,3})\b/);
+  if (gg) {
+    return { set_code: 'CRZ', number: gg[1], game: 'pokemon' };
+  }
+
+  // Priority 5b: SWSH promos — SWSH020, SWSH066, etc.
+  const swshPromo = cleaned.match(/\b(SWSH)[\s-]?(\d{1,4})\b/);
+  if (swshPromo) {
+    return { set_code: 'SWP', number: `SWSH${swshPromo[2].padStart(3, '0')}`, game: 'pokemon' };
+  }
+
+  // Priority 5c: Other promos — SVP 076, SM211, XY99, BW100
+  const promo = cleaned.match(/\b(SVP|SV|SM|XY|BW|HGSS|DP)[\s-]?(\d{1,4})\b/);
   if (promo) {
     return { number: `${promo[1]}${promo[2]}`, game: 'pokemon' };
   }

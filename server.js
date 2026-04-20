@@ -503,11 +503,15 @@ const PKM_SET_ALIASES = {
   'JTG':  'sv9',        // Journey Together
   'JT':   'sv9',        // Journey Together (short)
   'DRI':  'sv10',       // Destined Rivals
+  // Black Bolt & White Flare (SV10.5 split expansion)
+  'BBT':  'bbt',        // Black Bolt
+  'WHT':  'wht',        // White Flare
   // Mega Evolution sub-sets (ME01/ME02/ME03)
   'MEG':  'me1',        // Mega Evolution (ME01)
   'ME1':  'me1',        // Mega Evolution (ME01 alternate)
   'PFL':  'me2',        // Phantasmal Flames (ME02)
   'ME2':  'me2',        // Phantasmal Flames (ME02 alternate)
+  'ASH':  'me2pt5',     // Ascended Heroes (ME02.5)
   'POR':  'me3',        // Perfect Order (ME03)
   'ME3':  'me3',        // Perfect Order (ME03 alternate)
   // SV promo
@@ -531,6 +535,8 @@ const PKM_SET_ALIASES = {
   'CRZ':  'swsh12pt5',  // Crown Zenith
   'CPA':  'swsh35',     // Champion's Path
   'SHF':  'swsh45',     // Shining Fates
+  'SWP':  'swshp',      // Sword & Shield promos (SWSH001-SWSH300)
+  'SWSH': 'swshp',      // Sword & Shield promos (alternate)
 
   // ---- Sun & Moon era ----
   'SUM':  'sm1',        // Sun & Moon
@@ -805,20 +811,32 @@ app.post('/api/read-set-code', async (req, res) => {
           },
           {
             type: 'text',
-            text: `Read the set code and card number printed at the bottom of this Pokemon card. The set code and number are in a small line near the bottom edge, formatted as: [regulation letter] [SET CODE] [LANG] [NUMBER]
+            text: `Read the set code and card number printed at the bottom of this Pokemon card.
 
-The set code is 2-4 uppercase letters. Valid set codes include:
-SVI, PAL, OBF, MEW, PAR, PAF, TEF, TWM, SFA, SCR, SSP, PRE, JTG, DRI, MEG, PFL, POR, SVP, MEP, SSH, RCL, DAA, CPA, VIV, BST, CRE, EVS, FST, BRS, ASR, LOR, SIT, CRZ, SWP
+FORMATS to look for (check all):
 
-The number is 1-4 digits, sometimes with /NNN after it (e.g. 204/182).
+1. MODERN (most common): [reg mark] [SET CODE] [LANG] [NUMBER]
+   The set code is 2-4 uppercase letters in a small box. Examples:
+   MEP EN 066 → return "MEP 066"
+   DRI EN 204/182 → return "DRI 204/182"
+   SVP EN 153 → return "SVP 153"
+   WHT EN 131/086 → return "WHT 131/086"
 
-Return ONLY the set code and number, nothing else. Examples:
-MEP 066
-DRI 204/182
-SVP 153
-MEW 173/165
+2. SWSH PROMOS: SWSH followed by 3 digits, e.g. SWSH020, SWSH066
+   Return as-is: "SWSH020"
 
-If you cannot read a set code, respond: NONE`
+3. GALARIAN GALLERY: GG + number / GG + number, e.g. GG31/GG70
+   Return as-is: "GG31/GG70"
+
+4. OLDER CARDS: Just a regulation mark (D, E, F) + number, no set code box.
+   Return: "NONE"
+
+Valid modern set codes:
+SVI, PAL, OBF, MEW, PAR, PAF, TEF, TWM, SFA, SCR, SSP, PRE, JTG, DRI,
+MEG, PFL, POR, SVP, MEP, WHT, BBT, ASH,
+SSH, RCL, DAA, CPA, VIV, BST, CRE, EVS, FST, BRS, ASR, LOR, SIT, CRZ, SWP
+
+Return ONLY the set code and number. If you cannot read any set code, respond: NONE`
           }
         ]
       }]
