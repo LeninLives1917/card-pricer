@@ -3054,6 +3054,59 @@ app.post('/api/price', async (req, res) => {
       };
     }
 
+    // ── HOTNESS SCORE ──
+    // Combines price trend (7d vs 30d) + eBay sales volume into a
+    // 0–100 score with a label: "hot" / "warm" / "steady" / "slow".
+    // Helps Dave prioritise which cards to buy for quick resale.
+    const hotness = { score: 50, label: 'steady', trend: null, volume: null, reasons: [] };
+
+    // 1. PRICE TREND — compare 7-day avg to 30-day avg (from TCGGO)
+    const rcm = pricing.rapidapi_cm || {};
+    if (rcm.avg7 && rcm.avg30 && rcm.avg30 > 0) {
+      const trendPct = ((rcm.avg7 - rcm.avg30) / rcm.avg30) * 100;
+      hotness.trend = Math.round(trendPct * 10) / 10; // e.g. +12.3%
+      // Trend scoring: +15% or more = very hot, +5% = warm, -5% = cooling
+      if (trendPct >= 15)       { hotness.score += 30; hotness.reasons.push(`Price up ${hotness.trend}% (7d vs 30d)`); }
+      else if (trendPct >= 5)   { hotness.score += 15; hotness.reasons.push(`Price up ${hotness.trend}%`); }
+      else if (trendPct >= 0)   { hotness.score += 5;  hotness.reasons.push(`Price stable (+${hotness.trend}%)`); }
+      else if (trendPct >= -5)  { hotness.score -= 5;  hotness.reasons.push(`Price dipping ${hotness.trend}%`); }
+      else                      { hotness.score -= 15; hotness.reasons.push(`Price falling ${hotness.trend}%`); }
+    }
+    // Fallback: JustTCG 30d price change
+    else if (pricing.justtcg?.price_change_30d) {
+      const chg = pricing.justtcg.price_change_30d;
+      hotness.trend = Math.round(chg * 10) / 10;
+      if (chg >= 10)      { hotness.score += 20; hotness.reasons.push(`Price up ${hotness.trend}% (30d)`); }
+      else if (chg >= 0)  { hotness.score += 5; }
+      else                { hotness.score -= 10; hotness.reasons.push(`Price down ${hotness.trend}% (30d)`); }
+    }
+
+    // 2. SALES VOLUME — eBay sold listing count
+    const ebayCount = pricing.ebay?.sample_size || 0;
+    hotness.volume = ebayCount;
+    if (ebayCount >= 12)      { hotness.score += 20; hotness.reasons.push(`${ebayCount} recent eBay sales`); }
+    else if (ebayCount >= 6)  { hotness.score += 10; hotness.reasons.push(`${ebayCount} eBay sales`); }
+    else if (ebayCount >= 3)  { hotness.score += 5; }
+    else if (ebayCount === 0) { hotness.score -= 10; hotness.reasons.push('No recent eBay sales'); }
+
+    // 3. VALUE BONUS — high-value cards (€5+) with good trend are better inventory
+    if (bestPrice && bestPrice >= 10 && hotness.trend && hotness.trend > 0) {
+      hotness.score += 10;
+      hotness.reasons.push(`High-value card (${bestPrice.toFixed(2)}€)`);
+    } else if (bestPrice && bestPrice < 1) {
+      hotness.score -= 10; // bulk-bin cards are slow movers
+    }
+
+    // Clamp and label
+    hotness.score = Math.max(0, Math.min(100, hotness.score));
+    if (hotness.score >= 75)      hotness.label = 'hot';
+    else if (hotness.score >= 60) hotness.label = 'warm';
+    else if (hotness.score >= 40) hotness.label = 'steady';
+    else                          hotness.label = 'slow';
+
+    pricing.hotness = hotness;
+    console.log(`[HOTNESS] ${card.name}: ${hotness.score}/100 (${hotness.label}) — ${hotness.reasons.join('; ') || 'default'}`);
+
     res.json(pricing);
   } catch (err) {
     console.error('Pricing error:', err.message);
