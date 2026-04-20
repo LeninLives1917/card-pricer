@@ -16,7 +16,7 @@
   <title>Card Pricer</title>
   <script>
     // Register service worker for PWA install + offline shell.
-    console.log('[APP] Card Pricer client v20 loaded');
+    console.log('[APP] Card Pricer client v21 loaded');
     if ('serviceWorker' in navigator) {
       window.addEventListener('load', () => {
         navigator.serviceWorker.register('/service-worker.js', { updateViaCache: 'none' })
@@ -2304,9 +2304,10 @@ function extractCardNumber(text) {
   }
 
   // Priority 5a: Crown Zenith Galarian Gallery — GG31/GG70
+  // pokemontcg.io uses set id "swsh12pt5gg" for GG cards
   const gg = cleaned.match(/\b(GG\d{1,3})\s*\/\s*(GG\d{1,3})\b/);
   if (gg) {
-    return { set_code: 'CRZ', number: gg[1], game: 'pokemon' };
+    return { set_code: 'CZGG', number: gg[1], game: 'pokemon' };
   }
 
   // Priority 5b: SWSH promos — SWSH020, SWSH066, etc.
@@ -2477,13 +2478,14 @@ async function handleBulkFiles(event) {
   if (!files.length) return;
 
   // Process files one at a time to avoid holding 29 full-res photos in memory.
-  // Each file is read, immediately resized to a medium upload version (1100px)
-  // and a tiny thumbnail (120px), then the full-res original is discarded.
+  // Each file is read, resized to a high-res version (2400px — enough for OCR
+  // to read small set-code text) and a tiny thumbnail (120px), then the
+  // full-res original is discarded.
   for (const f of files) {
     const rawUrl = await readFileAsDataURL(f);
-    // Resize for upload (1100px) and thumbnail (120px) — drop raw immediately
+    // Resize for upload/OCR (2400px high quality) and thumbnail (120px)
     let uploadUrl, thumbUrl;
-    try { uploadUrl = await resizeDataUrl(rawUrl, 1100, 0.88); } catch { uploadUrl = rawUrl; }
+    try { uploadUrl = await resizeDataUrl(rawUrl, 2400, 0.92); } catch { uploadUrl = rawUrl; }
     try { thumbUrl = await resizeDataUrl(rawUrl, 120, 0.6); } catch { thumbUrl = uploadUrl; }
     state.bulkQueue.push({
       id: ++state._bulkSeq,

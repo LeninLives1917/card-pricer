@@ -533,6 +533,7 @@ const PKM_SET_ALIASES = {
   'LOR':  'swsh11',     // Lost Origin
   'SIT':  'swsh12',     // Silver Tempest
   'CRZ':  'swsh12pt5',  // Crown Zenith
+  'CZGG': 'swsh12pt5gg', // Crown Zenith Galarian Gallery (GG01-GG70)
   'CPA':  'swsh35',     // Champion's Path
   'SHF':  'swsh45',     // Shining Fates
   'SWP':  'swshp',      // Sword & Shield promos (SWSH001-SWSH300)
@@ -801,7 +802,7 @@ app.post('/api/read-set-code', async (req, res) => {
 
     const response = await anthropic.messages.create({
       model: 'claude-haiku-4-5-20251001',
-      max_tokens: 60,
+      max_tokens: 20,
       messages: [{
         role: 'user',
         content: [
@@ -842,9 +843,29 @@ Return ONLY the set code and number. If you cannot read any set code, respond: N
       }]
     });
 
-    const raw = (response.content?.[0]?.text || '').trim();
+    let raw = (response.content?.[0]?.text || '').trim();
     const elapsed = Date.now() - t0;
-    console.log(`[READ-SET-CODE] ${elapsed}ms → "${raw}"`);
+    console.log(`[READ-SET-CODE] ${elapsed}ms → raw "${raw}"`);
+
+    // Post-process: strip markdown bold, extract code from verbose response
+    raw = raw.replace(/\*\*/g, '').replace(/^#+\s*/, '');
+    // If Haiku gave a verbose response, try to extract a code from it
+    if (raw.length > 30) {
+      // Look for patterns like "DRI 244/182" or "SWSH020" or "GG31/GG70" in the text
+      const codeMatch = raw.match(/\b([A-Z]{2,5})\s+(?:EN\s+)?(\d{1,4}(?:\s*\/\s*\d{1,4})?)\b/)
+        || raw.match(/\bSWSH\d{3,4}\b/)
+        || raw.match(/\bGG\d{1,3}\s*\/\s*GG\d{1,3}\b/);
+      if (codeMatch) {
+        raw = codeMatch[0].replace(/\s*EN\s+/, ' ');
+        console.log(`[READ-SET-CODE] Extracted from verbose: "${raw}"`);
+      } else {
+        raw = 'NONE';
+      }
+    }
+    // Fix common Haiku merge: "PFLEN" → "PFL", "DRIEN" → "DRI"
+    raw = raw.replace(/^([A-Z]{2,4})(EN)\s/, '$1 ');
+
+    console.log(`[READ-SET-CODE] ${elapsed}ms → clean "${raw}"`);
 
     if (!raw || raw === 'NONE') {
       return res.status(404).json({ error: 'Could not read set code from image' });
