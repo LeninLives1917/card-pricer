@@ -1629,11 +1629,12 @@ app.post('/api/read-set-code', async (req, res) => {
       return res.status(400).json({ error: 'Invalid image data URL' });
     }
 
-    // Resize to stay under Claude's 5MB base64 limit.
-    // Higher res = better OCR for small set-code text at card bottom.
+    // Send full image — card may not be perfectly framed.
+    // High res + sharpen for best OCR on small set-code text.
     const rawBuffer = Buffer.from(match[2], 'base64');
     const resized = await sharp(rawBuffer)
       .resize({ width: 3200, withoutEnlargement: true })
+      .sharpen({ sigma: 1.0 })
       .jpeg({ quality: 95 })
       .toBuffer();
     const imageBase64 = resized.toString('base64');
@@ -1655,12 +1656,12 @@ app.post('/api/read-set-code', async (req, res) => {
           },
           {
             type: 'text',
-            text: `Read the set code and card number printed at the bottom of this Pokemon card.
+            text: `Read the set code and card number printed on this Pokemon card. Look near the bottom of the card for small text.
 
 FORMATS to look for (check all):
 
 1. MODERN (most common): [reg mark] [SET CODE] [LANG] [NUMBER]
-   The set code is 2-4 uppercase letters in a small box. Examples:
+   The set code is 2-4 uppercase letters, often in a small box. Examples:
    MEP EN 066 → return "MEP 066"
    DRI EN 204/182 → return "DRI 204/182"
    SVP EN 153 → return "SVP 153"
@@ -1675,10 +1676,15 @@ FORMATS to look for (check all):
 4. OLDER CARDS: Just a regulation mark (D, E, F) + number, no set code box.
    Return: "NONE"
 
-Valid modern set codes:
+VALID SET CODES (read the letters VERY carefully — M vs W, E vs F, G vs C matter):
 SVI, PAL, OBF, MEW, PAR, PAF, TEF, TWM, SFA, SCR, SSP, PRE, JTG, DRI,
-MEG, PFL, POR, SVP, MEP, WHT, BBT, ASH,
+MEG, PFL, POR, SVP, MEP, WHT, BBT, ASH, DIA,
 SSH, RCL, DAA, CPA, VIV, BST, CRE, EVS, FST, BRS, ASR, LOR, SIT, CRZ, SWP
+
+SET TOTAL HINTS (use the number after "/" to verify you read the set code correctly):
+MEG = /132, PFL = /094, POR = /088, MEP has no total, WHT = /086, BBT = /086,
+DRI = /182, SSP = /191, SVI = /198, MEW = /165, SVP has no total, DIA = /182
+If the total doesn't match the set code, re-read the set code letters more carefully.
 
 Return ONLY the set code and number. If you cannot read any set code, respond: NONE`
           }
@@ -1708,7 +1714,34 @@ Return ONLY the set code and number. If you cannot read any set code, respond: N
     // Fix common Haiku merge: "PFLEN" → "PFL", "DRIEN" → "DRI"
     raw = raw.replace(/^([A-Z]{2,4})(EN)\s/, '$1 ');
 
-    console.log(`[READ-SET-CODE] ${elapsed}ms → clean "${raw}"`);
+    // ── SET TOTAL VALIDATION ──
+    // If Haiku read "MEP 151/132" but MEP has no /132, the set code is wrong.
+    // Use the total to correct misreads like MEP→MEG, WHT→POR, etc.
+    const SET_TOTALS = {
+      'MEG':'132','PFL':'094','POR':'088','WHT':'086','BBT':'086',
+      'DRI':'182','SSP':'191','SVI':'198','MEW':'165','DIA':'182',
+      'PAL':'198','OBF':'197','PAR':'182','PAF':'091','TEF':'162',
+      'TWM':'167','SFA':'064','SCR':'156','PRE':'175','JTG':'182',
+      'SSH':'202','RCL':'192','DAA':'189','VIV':'185','BST':'163',
+      'CRE':'198','EVS':'203','FST':'264','BRS':'172','ASR':'189',
+      'LOR':'196','SIT':'195','CRZ':'230',
+    };
+    const totalMatch = raw.match(/^([A-Z]{2,4})\s+(\d+)\s*\/\s*(\d+)$/);
+    if (totalMatch) {
+      const [, readCode, cardNum, total] = totalMatch;
+      const expectedTotal = SET_TOTALS[readCode];
+      if (expectedTotal && expectedTotal !== total) {
+        // Total doesn't match — find which set DOES have this total
+        const correctCode = Object.entries(SET_TOTALS).find(([, t]) => t === total)?.[0];
+        if (correctCode) {
+          const corrected = `${correctCode} ${cardNum}/${total}`;
+          console.log(`[READ-SET-CODE] CORRECTED: "${raw}" → "${corrected}" (total /${total} matches ${correctCode}, not ${readCode})`);
+          raw = corrected;
+        }
+      }
+    }
+
+    console.log(`[READ-SET-CODE] ${elapsed}ms → final "${raw}"`);
 
     if (!raw || raw === 'NONE') {
       return res.status(404).json({ error: 'Could not read set code from image' });
