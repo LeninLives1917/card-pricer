@@ -1629,21 +1629,19 @@ app.post('/api/read-set-code', async (req, res) => {
       return res.status(400).json({ error: 'Invalid image data URL' });
     }
 
-    // Pass image through with minimal processing — no quality loss.
-    // Only downscale if over 5MB (Claude's limit), otherwise send as-is.
+    // Pass image through with minimal processing — JPEG 0.98 from client.
+    // Only downscale if over 4MB (Claude's limit), otherwise send as-is.
     const rawBuffer = Buffer.from(match[2], 'base64');
     let imageBase64, mediaType;
     if (rawBuffer.length > 4 * 1024 * 1024) {
-      // Over 4MB — resize to fit Claude's limit, keep PNG quality
       const resized = await sharp(rawBuffer)
         .resize({ width: 3200, withoutEnlargement: true })
-        .png()
+        .jpeg({ quality: 98 })
         .toBuffer();
       imageBase64 = resized.toString('base64');
-      mediaType = 'image/png';
+      mediaType = 'image/jpeg';
       console.log(`[READ-SET-CODE] Resized (too large): ${(rawBuffer.length/1024).toFixed(0)}KB → ${(resized.length/1024).toFixed(0)}KB`);
     } else {
-      // Under limit — send exactly what the client captured, zero degradation
       imageBase64 = match[2];
       mediaType = match[1];
       console.log(`[READ-SET-CODE] Passthrough: ${(rawBuffer.length/1024).toFixed(0)}KB (${mediaType})`);
