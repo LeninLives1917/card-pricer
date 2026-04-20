@@ -610,18 +610,179 @@ const TCGDEX_SET_MAP = {
   'sv6pt5': 'sv06.5', 'sv7':  'sv07', 'sv8':  'sv08', 'sv8pt5': 'sv08.5',
   'sv9':  'sv09', 'sv10': 'sv10',
   'svp':  'svp',  'mep':  'svp',  // TCGdex may lump promos together
-  'me1':  'sv04.5', 'me2':  'sv05.5', // speculative — will 404 gracefully
+  'me1':  'sv04.5', 'me2':  'sv05.5', 'me3': 'sv06.5', // speculative — will 404 gracefully
   'wht':  'sv10.5', 'bbt':  'sv10.5', // split expansion
 };
 
 // Sets where pokemontcg.io data is unreliable or missing.
 // For these, skip pokemontcg.io entirely and go straight to TCGGO/JustTCG.
 const POKEMONTCG_UNRELIABLE = new Set([
-  'mep',   // Mega Evolution Promos — pokemontcg.io has wrong card names
-  'wht',   // White Flare — not indexed or incorrect
-  'bbt',   // Black Bolt — not indexed or incorrect
+  'mep',    // Mega Evolution Promos — pokemontcg.io has wrong card names
+  'me1',    // Mega Evolution — pokemontcg.io returns wrong cards
+  'me2',    // Phantasmal Flames — pokemontcg.io returns wrong cards (Flygon, Mega Gengar)
+  'me3',    // Perfect Order — pokemontcg.io returns wrong cards (Meowth ex)
   'me2pt5', // Ascended Heroes — very new
+  'wht',    // White Flare — not indexed or incorrect
+  'bbt',    // Black Bolt — not indexed or incorrect
+  'sv10',   // Destined Rivals — very new, may have issues
 ]);
+
+// ============================================================
+// LOCAL CARD DATABASE — in-memory cache of all Pokemon cards
+// ============================================================
+// On startup, downloads the full pokemontcg.io card list in the background.
+// Lookups check this DB first (instant) before hitting any external API.
+// Key format: "{setId}-{number}" e.g. "sv8-247", "me2-101"
+
+const CARD_DB = new Map();       // setId-number → { name, setName, setCode, rarity, hp, ... }
+let cardDbReady = false;
+let cardDbCount = 0;
+let cardDbLoading = false;
+
+function addCardToDb(setId, number, data) {
+  const key = `${setId}-${number}`;
+  CARD_DB.set(key, data);
+}
+
+function lookupLocalDb(setId, cardNumber) {
+  const cleanNum = String(cardNumber).replace(/^0+/, '') || String(cardNumber);
+  const key = `${setId}-${cleanNum}`;
+  const entry = CARD_DB.get(key);
+  if (entry) {
+    console.log(`[LOCAL-DB] HIT: ${key} → ${entry.name}`);
+    return {
+      game: 'pokemon',
+      name: entry.name,
+      set_name: entry.setName,
+      set_code: (entry.setCode || setId).toUpperCase(),
+      card_number: cleanNum,
+      rarity: entry.rarity || '',
+      hp: entry.hp || '',
+      reference_image: entry.image || null,
+      cardmarket_url: entry.cardmarketUrl || null,
+      tcgplayer_url: entry.tcgplayerUrl || null,
+      verified: true,
+      db_source: 'local-db',
+      _manual: true
+    };
+  }
+  return null;
+}
+
+// Background loader — downloads all cards from pokemontcg.io on startup
+async function loadCardDatabase() {
+  if (cardDbLoading) return;
+  cardDbLoading = true;
+  const PAGE_SIZE = 250;
+
+  try {
+    // Get total count first
+    console.log('[CARD-DB] Starting background download from pokemontcg.io...');
+    const firstResp = await axios.get('https://api.pokemontcg.io/v2/cards', {
+      params: { pageSize: PAGE_SIZE, page: 1, select: 'id,name,number,rarity,set,hp,supertype,subtypes,cardmarket,tcgplayer,images' },
+      timeout: 30000
+    });
+    const totalCount = firstResp.data?.totalCount || 0;
+    const totalPages = Math.ceil(totalCount / PAGE_SIZE);
+    console.log(`[CARD-DB] Total: ${totalCount} cards across ${totalPages} pages`);
+
+    // Process first page
+    processPageData(firstResp.data?.data || []);
+    console.log(`[CARD-DB] Page 1/${totalPages} loaded (${CARD_DB.size} cards)`);
+
+    // Fetch remaining pages — 3 at a time to stay polite
+    const BATCH = 3;
+    for (let start = 2; start <= totalPages; start += BATCH) {
+      const pages = [];
+      for (let p = start; p < start + BATCH && p <= totalPages; p++) {
+        pages.push(
+          axios.get('https://api.pokemontcg.io/v2/cards', {
+            params: { pageSize: PAGE_SIZE, page: p, select: 'id,name,number,rarity,set,hp,supertype,subtypes,cardmarket,tcgplayer,images' },
+            timeout: 30000
+          }).then(r => {
+            processPageData(r.data?.data || []);
+            return p;
+          }).catch(e => {
+            console.log(`[CARD-DB] Page ${p} failed: ${e.message}`);
+            return null;
+          })
+        );
+      }
+      const done = await Promise.all(pages);
+      const maxPage = Math.max(...done.filter(Boolean));
+      if (maxPage % 10 === 0 || maxPage === totalPages) {
+        console.log(`[CARD-DB] Progress: page ${maxPage}/${totalPages} (${CARD_DB.size} cards)`);
+      }
+    }
+
+    cardDbCount = CARD_DB.size;
+    cardDbReady = true;
+    console.log(`[CARD-DB] ✓ Complete! ${cardDbCount} cards loaded into memory.`);
+  } catch (e) {
+    console.error(`[CARD-DB] Failed to load: ${e.message}`);
+    // Even if partial, mark as ready — we'll use what we got
+    if (CARD_DB.size > 0) {
+      cardDbCount = CARD_DB.size;
+      cardDbReady = true;
+      console.log(`[CARD-DB] Partial load: ${cardDbCount} cards available`);
+    }
+  }
+  cardDbLoading = false;
+}
+
+function processPageData(cards) {
+  for (const c of cards) {
+    const setId = c.set?.id || '';
+    const num = c.number || '';
+    if (!setId || !num) continue;
+
+    // Skip unreliable sets — we don't want their bad data in our DB
+    if (POKEMONTCG_UNRELIABLE.has(setId)) continue;
+
+    addCardToDb(setId, num, {
+      name: c.name,
+      setName: c.set?.name || '',
+      setCode: (c.set?.ptcgoCode || setId).toUpperCase(),
+      rarity: c.rarity || '',
+      hp: c.hp || '',
+      supertype: c.supertype || '',
+      subtypes: c.subtypes || [],
+      image: c.images?.large || c.images?.small || '',
+      cardmarketUrl: c.cardmarket?.url || null,
+      tcgplayerUrl: c.tcgplayer?.url || null,
+    });
+  }
+}
+
+// Also cache cards from successful fallback lookups (TCGGO, JustTCG, etc.)
+// so repeat scans of the same card are instant.
+function cacheCardResult(setId, cardNumber, cardData) {
+  if (!setId || !cardNumber) return;
+  const cleanNum = String(cardNumber).replace(/^0+/, '') || String(cardNumber);
+  addCardToDb(setId, cleanNum, {
+    name: cardData.name,
+    setName: cardData.set_name || '',
+    setCode: cardData.set_code || setId.toUpperCase(),
+    rarity: cardData.rarity || '',
+    hp: cardData.hp || '',
+    image: cardData.reference_image || '',
+    cardmarketUrl: cardData.cardmarket_url || null,
+    tcgplayerUrl: cardData.tcgplayer_url || null,
+  });
+  console.log(`[LOCAL-DB] Cached: ${setId}-${cleanNum} → ${cardData.name}`);
+}
+
+// Status endpoint so we can see DB state
+app.get('/api/card-db-status', (req, res) => {
+  res.json({
+    ready: cardDbReady,
+    loading: cardDbLoading,
+    count: CARD_DB.size,
+  });
+});
+
+// Kick off the background download
+loadCardDatabase();
 
 // Resolve a user-typed set code to an API set.id
 function resolveSetCode(raw) {
@@ -839,6 +1000,15 @@ app.post('/api/identify-manual', async (req, res) => {
       // Resolve aliases first (e.g. PAL -> sv2, OBF -> sv3, MEW -> sv3pt5)
       const resolved = set_code ? resolveSetCode(set_code) : { setId: null, ptcgoCode: null };
 
+      // ── LOCAL DB CHECK (instant, no API call) ──
+      if (resolved.setId) {
+        card = lookupLocalDb(resolved.setId, cleanNum);
+        if (card) {
+          console.log(`[MANUAL-PKM] Local DB hit: ${card.name} (${resolved.setId}-${cleanNum})`);
+          return res.json({ cards: [card] });
+        }
+      }
+
       // Try set-code-scoped search first, then fall back to number-only.
       const queries = [];
       if (resolved.setId) {
@@ -1020,6 +1190,14 @@ app.post('/api/identify-manual', async (req, res) => {
 
     if (!card) {
       return res.status(404).json({ error: 'No card found for that set/number combination. Double-check the set code and number.' });
+    }
+
+    // Cache successful lookups in local DB for instant future hits
+    if (card.game === 'pokemon' && set_code) {
+      const resolved2 = resolveSetCode(set_code);
+      if (resolved2.setId) {
+        cacheCardResult(resolved2.setId, cleanNum, card);
+      }
     }
 
     res.json({ cards: [card] });
