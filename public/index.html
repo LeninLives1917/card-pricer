@@ -16,7 +16,7 @@
   <title>Card Pricer</title>
   <script>
     // Register service worker for PWA install + offline shell.
-    console.log('[APP] Card Pricer client v47 loaded');
+    console.log('[APP] Card Pricer client v48 loaded');
     if ('serviceWorker' in navigator) {
       window.addEventListener('load', () => {
         navigator.serviceWorker.register('/service-worker.js', { updateViaCache: 'none' })
@@ -3290,7 +3290,10 @@ function renderSessionLog() {
             &middot; ${entry.card?.condition_estimate || '?'}
             &middot; <span class="status-pill status-${status}">${status}</span>
           </div>
-          <div class="log-detail" style="color:var(--text-dim);">MV: ${formatCurrency(marketValue)} · Margin: ${formatCurrency(margin.margin)} (${margin.pct.toFixed(0)}%)</div>
+          <div class="log-detail" style="color:var(--text-dim);">
+            MV: ${formatCurrency(marketValue)} · Margin: ${formatCurrency(margin.margin)} (${margin.pct.toFixed(0)}%)
+            ${(entry.cardmarket?.url || entry.cardmarket?.filtered_url) ? ` · <a href="${entry.cardmarket.filtered_url || entry.cardmarket.url}" target="_blank" rel="noopener" onclick="event.stopPropagation()" style="color:var(--accent-light); text-decoration:none; font-weight:600;">🛒 Cardmarket</a>` : ''}
+          </div>
           ${customer ? '' : `<div class="log-detail" style="font-size:11px;"><span style="color:#f59e0b;">Cash: ${formatCurrency(liveCashPrice)}</span> · <span style="color:#22c55e;">Credit: ${formatCurrency(liveCreditPrice)}</span></div>`}
         </div>
         <div class="log-prices">
