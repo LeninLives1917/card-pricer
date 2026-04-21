@@ -12,11 +12,15 @@
   <link rel="preconnect" href="https://api.scryfall.com" crossorigin>
   <link rel="preconnect" href="https://api.qrserver.com" crossorigin>
   <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
+  <link rel="preconnect" href="https://vecbaewlxodqnevduoiy.supabase.co" crossorigin>
   <link rel="dns-prefetch" href="https://unpkg.com">
   <title>Card Pricer</title>
+  <!-- Supabase JS SDK — auth + user data (Phase B). Loaded synchronously so
+       window.supabase is available before the main inline script runs. -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script>
     // Register service worker for PWA install + offline shell.
-    console.log('[APP] Card Pricer client v50 loaded');
+    console.log('[APP] Card Pricer client v51 loaded');
     if ('serviceWorker' in navigator) {
       window.addEventListener('load', () => {
         navigator.serviceWorker.register('/service-worker.js', { updateViaCache: 'none' })
@@ -29,6 +33,143 @@
             console.warn('SW registration failed:', err);
           });
       });
+    }
+  </script>
+  <script>
+    // ============================================================
+    // SUPABASE AUTH (Phase B)
+    // ============================================================
+    // Initialise the browser-side Supabase client and wrap window.fetch to
+    // inject the user's JWT into every /api/* call. Done in the <head> so
+    // the wrapper is in place before any app-level fetches fire.
+    const SUPABASE_URL = 'https://vecbaewlxodqnevduoiy.supabase.co';
+    // anon key is public by design (RLS + server-side service role key are
+    // what actually protect the data). Safe to ship in client HTML.
+    const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZlY2JhZXdseG9kcW5ldmR1b2l5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzY3OTMyMjYsImV4cCI6MjA5MjM2OTIyNn0.FM78XIaiTzjb8MRAsFuf63Gu4gbKAlTMYrxPijkE544';
+    window.sb = (window.supabase && window.supabase.createClient)
+      ? window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+          auth: { persistSession: true, autoRefreshToken: true }
+        })
+      : null;
+
+    // Wrap window.fetch so every /api/* call carries the Authorization
+    // header automatically. Cross-origin + non-/api/ calls are untouched.
+    (function patchFetch() {
+      const orig = window.fetch.bind(window);
+      window.fetch = async function(input, init) {
+        init = init || {};
+        const url = typeof input === 'string' ? input : (input && input.url) || '';
+        if (url.startsWith('/api/') && window.sb) {
+          try {
+            const { data } = await window.sb.auth.getSession();
+            const token = data?.session?.access_token;
+            if (token) {
+              const headers = new Headers(init.headers || (typeof input !== 'string' ? input.headers : undefined));
+              headers.set('Authorization', 'Bearer ' + token);
+              init.headers = headers;
+            }
+          } catch (e) { /* no session — proceed unauthenticated */ }
+        }
+        const resp = await orig(input, init);
+        // Auto-surface expired sessions: re-show the auth modal on 401.
+        if (resp.status === 401 && url.startsWith('/api/') && !document.body.classList.contains('scanner-mode')) {
+          if (typeof showAuthOverlay === 'function') showAuthOverlay();
+        }
+        return resp;
+      };
+    })();
+
+    let _authMode = 'login';
+    function setAuthMode(mode) {
+      _authMode = mode;
+      document.querySelectorAll('.auth-tab').forEach(t => {
+        t.classList.toggle('active', t.dataset.mode === mode);
+      });
+      const submit = document.getElementById('authSubmitBtn');
+      if (submit) submit.textContent = mode === 'login' ? 'Log in' : 'Create account';
+      const pwd = document.getElementById('authPassword');
+      if (pwd) pwd.autocomplete = mode === 'login' ? 'current-password' : 'new-password';
+      const err = document.getElementById('authError');
+      if (err) err.textContent = '';
+    }
+
+    function showAuthOverlay() {
+      const o = document.getElementById('authOverlay');
+      if (o) o.classList.remove('hidden');
+    }
+    function hideAuthOverlay() {
+      const o = document.getElementById('authOverlay');
+      if (o) o.classList.add('hidden');
+    }
+
+    async function submitAuth() {
+      if (!window.sb) return;
+      const email = document.getElementById('authEmail').value.trim();
+      const password = document.getElementById('authPassword').value;
+      const errEl = document.getElementById('authError');
+      const okEl = document.getElementById('authOk');
+      const btn = document.getElementById('authSubmitBtn');
+      errEl.textContent = '';
+      okEl.style.display = 'none';
+      if (!email || !password) { errEl.textContent = 'Email and password required.'; return; }
+      if (password.length < 6)  { errEl.textContent = 'Password must be at least 6 characters.'; return; }
+      btn.disabled = true;
+      btn.textContent = _authMode === 'login' ? 'Logging in…' : 'Creating account…';
+      try {
+        let result;
+        if (_authMode === 'login') {
+          result = await window.sb.auth.signInWithPassword({ email, password });
+        } else {
+          result = await window.sb.auth.signUp({ email, password });
+        }
+        if (result.error) {
+          errEl.textContent = result.error.message || 'Auth failed.';
+          return;
+        }
+        // Sign-up may return no session if email confirmation is required.
+        if (!result.data.session) {
+          okEl.style.display = 'block';
+          okEl.textContent = 'Check your email for a confirmation link.';
+          return;
+        }
+        hideAuthOverlay();
+        location.reload();
+      } catch (e) {
+        errEl.textContent = e?.message || 'Unexpected error.';
+      } finally {
+        btn.disabled = false;
+        btn.textContent = _authMode === 'login' ? 'Log in' : 'Create account';
+      }
+    }
+
+    async function signOut() {
+      if (!window.sb) return;
+      await window.sb.auth.signOut();
+      location.reload();
+    }
+
+    // Session check on load — if not scanner-mode and no session, show modal.
+    // Runs as soon as the script evaluates; DOM may not be ready yet, so we
+    // wait for DOMContentLoaded to actually touch the overlay.
+    async function _initAuthGate() {
+      if (!window.sb) { console.warn('[AUTH] Supabase client missing'); return; }
+      const isScanner = new URLSearchParams(location.search).has('pair');
+      if (isScanner) return; // scanner-mode bypasses auth entirely
+      try {
+        const { data } = await window.sb.auth.getSession();
+        if (!data?.session) { showAuthOverlay(); return; }
+        // Populate the account row in settings
+        const label = document.getElementById('authAccountLabel');
+        if (label) label.textContent = data.session.user?.email || '(logged in)';
+      } catch (e) {
+        console.error('[AUTH] session check failed:', e);
+        showAuthOverlay();
+      }
+    }
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', _initAuthGate);
+    } else {
+      _initAuthGate();
     }
   </script>
   <style>
@@ -728,6 +869,105 @@
       cursor: pointer;
     }
     .corr-btn:active { background: var(--accent); color: white; border-color: var(--accent); }
+
+    /* ---- AUTH MODAL (Phase B) ---- */
+    /* Blocks the laptop app until the user signs in. Scanner-mode phones
+       bypass auth entirely — they inherit the paired laptop's account
+       via the room token. */
+    .auth-overlay {
+      position: fixed; inset: 0;
+      background: rgba(6, 6, 10, 0.85);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      z-index: 10000;
+      display: flex; align-items: center; justify-content: center;
+      padding: 20px; box-sizing: border-box;
+    }
+    .auth-overlay.hidden { display: none; }
+    .auth-card {
+      width: 100%; max-width: 380px;
+      background: var(--surface);
+      border: 1px solid rgba(255,255,255,0.06);
+      border-radius: var(--radius-lg);
+      padding: 28px 24px;
+      box-shadow: var(--shadow-elevated);
+    }
+    .auth-card h2 {
+      font-size: 22px; font-weight: 800; letter-spacing: -0.5px;
+      margin-bottom: 4px;
+    }
+    .auth-card h2 span { color: var(--accent-light); }
+    .auth-sub {
+      font-size: 13px; color: var(--text-dim);
+      margin-bottom: 20px;
+    }
+    .auth-tabs {
+      display: flex; gap: 4px;
+      background: var(--surface2);
+      border-radius: 8px;
+      padding: 3px;
+      margin-bottom: 16px;
+    }
+    .auth-tab {
+      flex: 1; padding: 8px;
+      text-align: center;
+      font-size: 13px; font-weight: 600;
+      background: transparent;
+      color: var(--text-dim);
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+    }
+    .auth-tab.active { background: var(--surface); color: var(--text); }
+    .auth-field {
+      display: flex; flex-direction: column;
+      gap: 4px; margin-bottom: 12px;
+    }
+    .auth-field label {
+      font-size: 11px; color: var(--text-dim);
+      text-transform: uppercase; letter-spacing: 0.5px;
+      font-weight: 600;
+    }
+    .auth-field input {
+      padding: 11px 13px;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      color: var(--text);
+      font-size: 15px;
+      font-family: inherit;
+      -webkit-appearance: none;
+    }
+    .auth-field input:focus { outline: none; border-color: var(--accent); }
+    .auth-submit {
+      width: 100%;
+      padding: 12px;
+      background: var(--grad-accent);
+      color: white;
+      border: none;
+      border-radius: 10px;
+      font-size: 15px; font-weight: 700;
+      cursor: pointer;
+      margin-top: 6px;
+      box-shadow: 0 4px 16px rgba(108, 92, 231, 0.35);
+    }
+    .auth-submit:active { transform: scale(0.98); }
+    .auth-submit:disabled { opacity: 0.5; cursor: not-allowed; }
+    .auth-error {
+      font-size: 12px; color: var(--red);
+      margin-top: 10px; min-height: 16px;
+    }
+    .auth-ok {
+      font-size: 12px; color: var(--green);
+      margin-top: 10px; min-height: 16px;
+    }
+    .auth-footer {
+      font-size: 11px; color: var(--text-dim);
+      margin-top: 16px; text-align: center;
+      line-height: 1.5;
+    }
+    /* Scanner-mode phones never see the auth modal */
+    body.scanner-mode .auth-overlay { display: none !important; }
 
     /* ---- SCANNER MODE (phone paired as scanner) ---- */
     /* When the phone opens the QR-paired URL, everything except the camera
@@ -1455,6 +1695,32 @@
 </head>
 <body>
 
+<!-- ===== AUTH MODAL (Phase B) ===== -->
+<div id="authOverlay" class="auth-overlay hidden">
+  <div class="auth-card">
+    <h2><span>Card</span>Pricer</h2>
+    <div class="auth-sub">Sign in to your shop account.</div>
+    <div class="auth-tabs">
+      <button type="button" class="auth-tab active" data-mode="login" onclick="setAuthMode('login')">Log in</button>
+      <button type="button" class="auth-tab" data-mode="signup" onclick="setAuthMode('signup')">Sign up</button>
+    </div>
+    <div class="auth-field">
+      <label for="authEmail">Email</label>
+      <input type="email" id="authEmail" autocomplete="email" autocapitalize="off" spellcheck="false" />
+    </div>
+    <div class="auth-field">
+      <label for="authPassword">Password</label>
+      <input type="password" id="authPassword" autocomplete="current-password" minlength="6" />
+    </div>
+    <button type="button" id="authSubmitBtn" class="auth-submit" onclick="submitAuth()">Continue</button>
+    <div id="authError" class="auth-error"></div>
+    <div id="authOk" class="auth-ok" style="display:none;"></div>
+    <div class="auth-footer">
+      Closed beta — invited shops only. Your phone stays paired via QR; no separate login needed.
+    </div>
+  </div>
+</div>
+
 <div id="app">
   <!-- HEADER -->
   <div class="header">
@@ -1749,6 +2015,13 @@
   <!-- SETTINGS TAB -->
   <div class="main hidden" id="tab-settings">
     <div class="settings">
+      <div class="setting-group">
+        <h3>Account</h3>
+        <div class="setting-row">
+          <span class="setting-label" id="authAccountLabel">—</span>
+          <button class="header-btn" onclick="signOut()" style="background: var(--red); color: white; border-color: var(--red);">Sign out</button>
+        </div>
+      </div>
       <div class="setting-group">
         <h3>API Connections</h3>
         <div id="apiStatus">

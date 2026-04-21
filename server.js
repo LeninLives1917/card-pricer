@@ -6,6 +6,7 @@ import sharp from 'sharp';
 import Anthropic from '@anthropic-ai/sdk';
 import axios from 'axios';
 import rateLimit from 'express-rate-limit';
+import { createClient as createSupabaseClient } from '@supabase/supabase-js';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import crypto from 'crypto';
@@ -45,6 +46,57 @@ const quoteLeadLimiter = rateLimit({
   legacyHeaders: false,
   message: { error: 'Too many quote requests — please try again later.' }
 });
+
+// ============================================================
+// SUPABASE — auth + user data (Phase B)
+// ============================================================
+// Service-role client: used to verify user JWTs passed by the client and
+// to insert server-owned rows (scan_events). Bypasses RLS, so it MUST
+// stay server-only. Never exposed to the browser.
+const supabaseUrl = process.env.SUPABASE_URL;
+const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+const supabase = (supabaseUrl && supabaseServiceKey)
+  ? createSupabaseClient(supabaseUrl, supabaseServiceKey, {
+      auth: { autoRefreshToken: false, persistSession: false }
+    })
+  : null;
+if (!supabase) {
+  console.warn('[AUTH] SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY missing — auth is disabled. Protected routes will reject all requests.');
+}
+
+// requireAuth middleware: reads the client-sent JWT from Authorization
+// header, verifies via Supabase, attaches req.user. Used on every paid-
+// upstream endpoint so free/anonymous abuse isn't possible.
+async function requireAuth(req, res, next) {
+  if (!supabase) return res.status(503).json({ error: 'auth service unavailable' });
+  const authHeader = req.headers.authorization || '';
+  if (!authHeader.startsWith('Bearer ')) {
+    return res.status(401).json({ error: 'auth required' });
+  }
+  const token = authHeader.slice(7);
+  try {
+    const { data, error } = await supabase.auth.getUser(token);
+    if (error || !data?.user) {
+      return res.status(401).json({ error: 'invalid or expired session' });
+    }
+    req.user = data.user;
+    next();
+  } catch (e) {
+    console.error('[AUTH] getUser failed:', e.message);
+    res.status(401).json({ error: 'auth check failed' });
+  }
+}
+
+// Fire-and-forget scan logging. Phase C will use this to enforce monthly
+// quotas for the free plan; for now it's just data collection for the
+// beta period. Failure to log must NEVER block a scan.
+function logScanEvent(userId, endpoint) {
+  if (!supabase || !userId) return;
+  supabase.from('scan_events').insert({ user_id: userId, endpoint }).then(
+    () => {},
+    (e) => console.warn('[AUTH] scan_events insert failed:', e?.message || e)
+  );
+}
 
 // ============================================================
 // USD → EUR — refreshed daily from Frankfurter (ECB data, no auth needed).
@@ -463,7 +515,8 @@ async function doubleCheckAll(userImageBase64, cards) {
   return Promise.all(cards.map(c => maybeDoubleCheck(userImageBase64, c)));
 }
 
-app.post('/api/identify', identifyLimiter, upload.single('image'), async (req, res) => {
+app.post('/api/identify', identifyLimiter, requireAuth, upload.single('image'), async (req, res) => {
+  logScanEvent(req.user.id, '/api/identify');
   try {
     const buffer = extractImageBuffer(req);
     const isBatchMode = req.body.batch === 'true' || req.body.batch === true;
@@ -504,7 +557,8 @@ app.post('/api/identify', identifyLimiter, upload.single('image'), async (req, r
 //   {type:'done'}
 // This shaves 500-1000ms off perceived latency because pricing kicks off
 // before the (slow) pokemontcg.io / scryfall verification round-trip.
-app.post('/api/identify-stream', identifyLimiter, upload.single('image'), async (req, res) => {
+app.post('/api/identify-stream', identifyLimiter, requireAuth, upload.single('image'), async (req, res) => {
+  logScanEvent(req.user.id, '/api/identify-stream');
   res.setHeader('Content-Type', 'application/x-ndjson');
   res.setHeader('Cache-Control', 'no-cache, no-transform');
   res.setHeader('X-Accel-Buffering', 'no');
@@ -1500,7 +1554,8 @@ async function lookupViaJustTCG(setId, cardNumber) {
 //
 // Request body: { game: 'pokemon'|'magic'|..., set_code, card_number, name? }
 // Response: { cards: [<one card shaped like /api/identify output>] }
-app.post('/api/identify-manual', async (req, res) => {
+app.post('/api/identify-manual', requireAuth, async (req, res) => {
+  logScanEvent(req.user.id, '/api/identify-manual');
   try {
     const { game, set_code, card_number, name } = req.body || {};
     if (!game) return res.status(400).json({ error: 'game is required' });
@@ -1727,7 +1782,8 @@ app.post('/api/identify-manual', async (req, res) => {
 // from the bottom of a card image.  Much cheaper than full identify because
 // the prompt is tiny, the response is a few tokens, and we use Haiku.
 // Returns: { text: "MEP 066" } or { text: "DRI 204/182" } or { error }
-app.post('/api/read-set-code', identifyLimiter, async (req, res) => {
+app.post('/api/read-set-code', identifyLimiter, requireAuth, async (req, res) => {
+  logScanEvent(req.user.id, '/api/read-set-code');
   try {
     const dataUrl = req.body?.image;
     if (!dataUrl) {
@@ -1961,7 +2017,8 @@ app.post('/api/correct-card', express.json(), (req, res) => {
 //
 // Body: { number: "123/456", setCode?: "swsh9", game?: "pokemon"|"magic" }
 // Returns: { cards: [verifiedCard] } on match, or 404 on no-match/ambiguous.
-app.post('/api/lookup-by-number', express.json(), async (req, res) => {
+app.post('/api/lookup-by-number', requireAuth, express.json(), async (req, res) => {
+  logScanEvent(req.user.id, '/api/lookup-by-number');
   try {
     const { number, set_code: setCode, game, reg_mark } = req.body || {};
     if (!number || typeof number !== 'string') {
@@ -3708,7 +3765,7 @@ function priceCacheSet(key, data) {
   priceCache.set(key, { ts: Date.now(), data });
 }
 
-app.post('/api/price', async (req, res) => {
+app.post('/api/price', requireAuth, async (req, res) => {
   try {
     const { card } = req.body;
     if (!card || !card.name) {
