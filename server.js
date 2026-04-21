@@ -283,120 +283,116 @@ function cacheSet(key, val) {
   }
 }
 
+// Pull a raw image buffer out of the request, accepting either multer's
+// file upload or a base64 data URL in the JSON body. Throws with a
+// 400-appropriate message if neither is present / parseable.
+function extractImageBuffer(req) {
+  if (req.file) return req.file.buffer;
+  if (req.body.image) {
+    const m = req.body.image.match(/^data:(image\/\w+);base64,(.+)$/);
+    if (m) return Buffer.from(m[2], 'base64');
+    const err = new Error('Invalid image data');
+    err.status = 400;
+    throw err;
+  }
+  const err = new Error('No image provided');
+  err.status = 400;
+  throw err;
+}
+
+// Resize the image, check the identification cache, call Claude if needed,
+// and apply the suffix fixer. Returns either a cache hit or unverified
+// parsed cards + the cache key the caller should save to.
+//
+// Returns:
+//   { cached: true, result }                 — full cached response
+//   { cached: false, parsed, cacheKey|null } — caller verifies + caches
+async function identifyCore({ buffer, isBatchMode, hint }) {
+  // Batch (binder) keeps higher resolution — many small cards to read.
+  // Single-card gets a tighter resize to cut payload (quadratic savings).
+  const targetSize = isBatchMode ? 1500 : 1100;
+  const jpegQuality = isBatchMode ? 90 : 88;
+
+  const optimized = await sharp(buffer)
+    .resize(targetSize, targetSize, { fit: 'inside', withoutEnlargement: true })
+    .jpeg({ quality: jpegQuality })
+    .toBuffer();
+  const imageData = optimized.toString('base64');
+
+  // Cache only single-card, no-hint scans: a hint changes the expected output.
+  let cacheKey = null;
+  if (!isBatchMode && !hint) {
+    cacheKey = crypto.createHash('sha1').update(optimized).digest('hex');
+    const hit = cacheGet(cacheKey);
+    if (hit) return { cached: true, result: hit, cacheKey };
+  }
+
+  let userMessage = isBatchMode
+    ? 'This is a photo of a binder page with MULTIPLE trading cards. Identify EVERY visible card individually. Return all cards in the JSON array.'
+    : 'Identify this trading card. FIRST read the card number at the bottom of the card — this is the most critical field. If it has no slash (like SM211, SWSH066) it is a PROMO card. Be extremely precise with the set code and card number.';
+  if (hint) userMessage += `\n\nUser hint: ${hint}`;
+
+  // Sonnet for both single-card and batch — Haiku was misreading card
+  // numbers (e.g. 223 → 225) even at higher resolutions. Accuracy > speed.
+  // Prompt caching (ephemeral) reuses the ~1500-token system prompt across
+  // calls, trimming 30-50% off TTFT for free.
+  const response = await anthropic.messages.create({
+    model: 'claude-sonnet-4-20250514',
+    max_tokens: isBatchMode ? 4096 : 1024,
+    system: [{ type: 'text', text: CARD_ID_SYSTEM_PROMPT, cache_control: { type: 'ephemeral' } }],
+    messages: [{
+      role: 'user',
+      content: [
+        { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: imageData } },
+        { type: 'text', text: userMessage }
+      ]
+    }]
+  });
+
+  const text = response.content[0].text;
+  let parsed;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    const m = text.match(/\{[\s\S]*\}/);
+    if (m) parsed = JSON.parse(m[0]);
+    else throw new Error('Could not parse card identification response');
+  }
+
+  if (parsed.cards?.length > 0) {
+    parsed.cards = parsed.cards.map(card => fixPokemonSuffix(card));
+  }
+  return { cached: false, parsed, cacheKey };
+}
+
+// Verify each card against the real game databases in parallel.
+async function verifyIdentified(cards) {
+  if (!cards?.length) return cards || [];
+  return Promise.all(cards.map(card => verifyCard(card)));
+}
+
 app.post('/api/identify', identifyLimiter, upload.single('image'), async (req, res) => {
   try {
+    const buffer = extractImageBuffer(req);
     const isBatchMode = req.body.batch === 'true' || req.body.batch === true;
+    const hint = req.body.hint || '';
 
-    // Batch (binder page) keeps full resolution + Sonnet — accuracy critical.
-    // Single-card mode gets aggressive resize + Haiku — speed critical.
-    // 700px is enough for Haiku to read card numbers cleanly while cutting
-    // payload by ~40% vs 900px (quadratic in dimension).
-    const targetSize = isBatchMode ? 1500 : 1100;
-    const jpegQuality = isBatchMode ? 90 : 88;
-
-    let imageData;
-    let mediaType;
-    let rawBuffer;
-
-    if (req.file) {
-      rawBuffer = req.file.buffer;
-    } else if (req.body.image) {
-      const base64Match = req.body.image.match(/^data:(image\/\w+);base64,(.+)$/);
-      if (base64Match) {
-        rawBuffer = Buffer.from(base64Match[2], 'base64');
-      } else {
-        return res.status(400).json({ error: 'Invalid image data' });
-      }
-    } else {
-      return res.status(400).json({ error: 'No image provided' });
+    const out = await identifyCore({ buffer, isBatchMode, hint });
+    if (out.cached) {
+      console.log(`[IDENT-CACHE] HIT ${out.cacheKey.slice(0, 8)}`);
+      return res.json(out.result);
     }
 
-    const optimized = await sharp(rawBuffer)
-      .resize(targetSize, targetSize, { fit: 'inside', withoutEnlargement: true })
-      .jpeg({ quality: jpegQuality })
-      .toBuffer();
-    imageData = optimized.toString('base64');
-    mediaType = 'image/jpeg';
-
-    // Cache lookup — only for single-card mode, and only when no user hint
-    // (a hint changes the expected output).
-    const userHint = req.body.hint || '';
-    let cacheKey = null;
-    if (!isBatchMode && !userHint) {
-      cacheKey = crypto.createHash('sha1').update(optimized).digest('hex');
-      const hit = cacheGet(cacheKey);
-      if (hit) {
-        console.log(`[IDENT-CACHE] HIT ${cacheKey.slice(0, 8)}`);
-        return res.json(hit);
-      }
+    if (out.parsed.cards?.length > 0) {
+      console.log(`[VERIFY] Verifying ${out.parsed.cards.length} card(s) against databases...`);
+      out.parsed.cards = await verifyIdentified(out.parsed.cards);
     }
 
-    let userMessage = isBatchMode
-      ? 'This is a photo of a binder page with MULTIPLE trading cards. Identify EVERY visible card individually. Return all cards in the JSON array.'
-      : 'Identify this trading card. FIRST read the card number at the bottom of the card — this is the most critical field. If it has no slash (like SM211, SWSH066) it is a PROMO card. Be extremely precise with the set code and card number.';
-
-    if (userHint) {
-      userMessage += `\n\nUser hint: ${userHint}`;
-    }
-
-    // Haiku 4.5 for single-card ID (fast + cheap, plenty accurate for reading
-    // a card number + name). Sonnet 4 for batch binder pages (needs to see
-    // many small cards accurately).
-    // Sonnet for both single-card and batch — Haiku was misreading card
-    // numbers (e.g. 223 → 225) even at higher resolutions. Accuracy > speed.
-    const model = 'claude-sonnet-4-20250514';
-
-    const response = await anthropic.messages.create({
-      model,
-      max_tokens: isBatchMode ? 4096 : 1024,
-      // Prompt caching: system prompt is ~1500 tokens and identical on every
-      // call. Marking it ephemeral lets Anthropic reuse the cached KV compute
-      // for 5 min, shaving 30-50% off TTFT with zero accuracy risk.
-      system: [{
-        type: 'text',
-        text: CARD_ID_SYSTEM_PROMPT,
-        cache_control: { type: 'ephemeral' }
-      }],
-      messages: [{
-        role: 'user',
-        content: [
-          {
-            type: 'image',
-            source: { type: 'base64', media_type: mediaType, data: imageData }
-          },
-          { type: 'text', text: userMessage }
-        ]
-      }]
-    });
-
-    const text = response.content[0].text;
-    let parsed;
-    try {
-      parsed = JSON.parse(text);
-    } catch {
-      const jsonMatch = text.match(/\{[\s\S]*\}/);
-      if (jsonMatch) {
-        parsed = JSON.parse(jsonMatch[0]);
-      } else {
-        throw new Error('Could not parse card identification response');
-      }
-    }
-
-    // PRE-VERIFY: Fix obvious AI mistakes before database lookup
-    if (parsed.cards && parsed.cards.length > 0) {
-      parsed.cards = parsed.cards.map(card => fixPokemonSuffix(card));
-    }
-
-    // VERIFY each card against real databases to correct set info
-    if (parsed.cards && parsed.cards.length > 0) {
-      console.log(`[VERIFY] Verifying ${parsed.cards.length} card(s) against databases...`);
-      parsed.cards = await Promise.all(parsed.cards.map(card => verifyCard(card)));
-    }
-
-    const anyRejected = (parsed.cards || []).some(c => c?.verify_rejected);
-    if (cacheKey && !anyRejected) cacheSet(cacheKey, parsed);
-    res.json(parsed);
+    const anyRejected = (out.parsed.cards || []).some(c => c?.verify_rejected);
+    if (out.cacheKey && !anyRejected) cacheSet(out.cacheKey, out.parsed);
+    res.json(out.parsed);
   } catch (err) {
+    if (err.status === 400) return res.status(400).json({ error: err.message });
     console.error('Identification error:', err.message);
     res.status(500).json({ error: 'Failed to identify card', details: err.message });
   }
@@ -418,105 +414,44 @@ app.post('/api/identify-stream', identifyLimiter, upload.single('image'), async 
   res.setHeader('Content-Type', 'application/x-ndjson');
   res.setHeader('Cache-Control', 'no-cache, no-transform');
   res.setHeader('X-Accel-Buffering', 'no');
-  const send = (obj) => {
-    try { res.write(JSON.stringify(obj) + '\n'); } catch {}
-  };
+  const send = (obj) => { try { res.write(JSON.stringify(obj) + '\n'); } catch {} };
 
   try {
+    let buffer;
+    try { buffer = extractImageBuffer(req); }
+    catch (e) { send({ type: 'error', error: e.message }); return res.end(); }
+
     const isBatchMode = req.body.batch === 'true' || req.body.batch === true;
-    const targetSize = isBatchMode ? 1500 : 1100;
-    const jpegQuality = isBatchMode ? 90 : 88;
+    const hint = req.body.hint || '';
 
-    let rawBuffer;
-    if (req.file) {
-      rawBuffer = req.file.buffer;
-    } else if (req.body.image) {
-      const base64Match = req.body.image.match(/^data:(image\/\w+);base64,(.+)$/);
-      if (base64Match) rawBuffer = Buffer.from(base64Match[2], 'base64');
-      else { send({ type: 'error', error: 'Invalid image data' }); return res.end(); }
-    } else {
-      send({ type: 'error', error: 'No image provided' }); return res.end();
+    const out = await identifyCore({ buffer, isBatchMode, hint });
+    if (out.cached) {
+      console.log(`[IDENT-STREAM-CACHE] HIT ${out.cacheKey.slice(0, 8)}`);
+      // Already verified in cache — emit both events so client logic works.
+      send({ type: 'ident', cards: out.result.cards || [] });
+      send({ type: 'verified', cards: out.result.cards || [] });
+      send({ type: 'done' });
+      return res.end();
     }
 
-    const optimized = await sharp(rawBuffer)
-      .resize(targetSize, targetSize, { fit: 'inside', withoutEnlargement: true })
-      .jpeg({ quality: jpegQuality })
-      .toBuffer();
-    const imageData = optimized.toString('base64');
-
-    const userHint = req.body.hint || '';
-    let cacheKey = null;
-    if (!isBatchMode && !userHint) {
-      cacheKey = crypto.createHash('sha1').update(optimized).digest('hex');
-      const hit = cacheGet(cacheKey);
-      if (hit) {
-        console.log(`[IDENT-STREAM-CACHE] HIT ${cacheKey.slice(0, 8)}`);
-        // Already verified in cache — emit both events so client logic works.
-        send({ type: 'ident', cards: hit.cards || [] });
-        send({ type: 'verified', cards: hit.cards || [] });
-        send({ type: 'done' });
-        return res.end();
-      }
-    }
-
-    let userMessage = isBatchMode
-      ? 'This is a photo of a binder page with MULTIPLE trading cards. Identify EVERY visible card individually. Return all cards in the JSON array.'
-      : 'Identify this trading card. FIRST read the card number at the bottom of the card — this is the most critical field. If it has no slash (like SM211, SWSH066) it is a PROMO card. Be extremely precise with the set code and card number.';
-    if (userHint) userMessage += `\n\nUser hint: ${userHint}`;
-
-    // Sonnet for both single-card and batch — Haiku was misreading card
-    // numbers (e.g. 223 → 225) even at higher resolutions. Accuracy > speed.
-    const model = 'claude-sonnet-4-20250514';
-
-    const response = await anthropic.messages.create({
-      model,
-      max_tokens: isBatchMode ? 4096 : 1024,
-      system: [{
-        type: 'text',
-        text: CARD_ID_SYSTEM_PROMPT,
-        cache_control: { type: 'ephemeral' }
-      }],
-      messages: [{
-        role: 'user',
-        content: [
-          { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: imageData } },
-          { type: 'text', text: userMessage }
-        ]
-      }]
-    });
-
-    const text = response.content[0].text;
-    let parsed;
-    try {
-      parsed = JSON.parse(text);
-    } catch {
-      const m = text.match(/\{[\s\S]*\}/);
-      if (m) parsed = JSON.parse(m[0]);
-      else throw new Error('Could not parse card identification response');
-    }
-
-    if (parsed.cards && parsed.cards.length > 0) {
-      parsed.cards = parsed.cards.map(card => fixPokemonSuffix(card));
-    }
-
-    // Emit ident NOW so client can start pricing in parallel with verification.
-    send({ type: 'ident', cards: parsed.cards || [] });
+    // Emit ident NOW so the client can start pricing in parallel with verify.
+    send({ type: 'ident', cards: out.parsed.cards || [] });
 
     // Verify against real databases — this is the slow step (500-1500ms).
-    if (parsed.cards && parsed.cards.length > 0) {
+    if (out.parsed.cards?.length > 0) {
       try {
-        parsed.cards = await Promise.all(parsed.cards.map(card => verifyCard(card)));
+        out.parsed.cards = await verifyIdentified(out.parsed.cards);
       } catch (e) {
         console.error('[IDENT-STREAM] verify error:', e.message);
       }
     }
-    send({ type: 'verified', cards: parsed.cards || [] });
-    // Only cache if every card was either confidently verified or at least didn't fail verification.
-    // Don't cache when verify rejected a card (e.g. HP mismatch unresolved) — re-scanning might
-    // give us a better image and a better answer.
-    const anyRejected = (parsed.cards || []).some(c => c?.verify_rejected);
-    if (cacheKey && !anyRejected) cacheSet(cacheKey, parsed);
-    else if (anyRejected) console.log(`[IDENT-STREAM-CACHE] SKIP — one or more cards had verify_rejected flag`);
+    send({ type: 'verified', cards: out.parsed.cards || [] });
+
+    // Skip caching when verify rejected a card — a better image on re-scan
+    // might yield a better answer, so don't lock in the bad result.
+    const anyRejected = (out.parsed.cards || []).some(c => c?.verify_rejected);
+    if (out.cacheKey && !anyRejected) cacheSet(out.cacheKey, out.parsed);
+    else if (anyRejected) console.log('[IDENT-STREAM-CACHE] SKIP — one or more cards had verify_rejected flag');
     send({ type: 'done' });
     res.end();
   } catch (err) {
