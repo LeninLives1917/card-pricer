@@ -16,7 +16,7 @@
   <title>Card Pricer</title>
   <script>
     // Register service worker for PWA install + offline shell.
-    console.log('[APP] Card Pricer client v39 loaded');
+    console.log('[APP] Card Pricer client v40 loaded');
     if ('serviceWorker' in navigator) {
       window.addEventListener('load', () => {
         navigator.serviceWorker.register('/service-worker.js', { updateViaCache: 'none' })
@@ -2498,7 +2498,10 @@ const BULK_CONCURRENCY = 4;
 const BULK_STORAGE_KEY = 'cardpricer_bulk_queue_v1';
 state.bulkQueue = [];
 state._bulkSeq = 0;
-let _bulkRunning = false;
+// Number of bulk workers currently running. Each call to startBulkProcess
+// may spawn additional workers up to BULK_CONCURRENCY, enabling processing
+// to kick off as soon as the first file lands (vs. waiting for all uploads).
+let _activeWorkers = 0;
 
 // Persist bulk queue across reloads. We throttle writes and cap size so a
 // fat batch of dataUrls can't blow the 5MB localStorage quota.
@@ -2578,6 +2581,10 @@ async function handleBulkFiles(event) {
       status: 'queued'
     });
     renderBulkQueue();
+    // Kick off processing immediately as each file becomes ready — no need
+    // for the user to press "Process". startBulkProcess is idempotent and
+    // will spawn additional workers if we're below BULK_CONCURRENCY.
+    startBulkProcess();
   }
   saveBulkQueue();
   haptic && haptic('light');
@@ -2621,22 +2628,24 @@ function updateBulkProgress() {
   const total = state.bulkQueue.length;
   const done = state.bulkQueue.filter(i => i.status === 'done' || i.status === 'error').length;
   const pct = total ? Math.round((done / total) * 100) : 0;
+  const running = _activeWorkers > 0;
   const bar = document.getElementById('bulkProgressBar');
   const lbl = document.getElementById('bulkProgressLabel');
   if (bar) bar.style.width = pct + '%';
   if (lbl) lbl.textContent = `${done} / ${total}`;
   const btn = document.getElementById('bulkStartBtn');
   if (btn) {
-    btn.disabled = _bulkRunning || total === 0 || done === total;
-    btn.textContent = _bulkRunning ? `Processing… (${done}/${total})`
+    btn.disabled = running || total === 0 || done === total;
+    btn.textContent = running ? `Processing… (${done}/${total})`
                     : done === total && total > 0 ? 'Done — add more'
-                    : `Process ${total} card${total !== 1 ? 's' : ''}`;
+                    : total > 0 ? `Process ${total} card${total !== 1 ? 's' : ''}`
+                    : '';
   }
   // Show retry only when there are failed items and not actively running.
   const retryBtn = document.getElementById('bulkRetryBtn');
   if (retryBtn) {
     const errCount = state.bulkQueue.filter(i => i.status === 'error').length;
-    retryBtn.style.display = (!_bulkRunning && errCount > 0) ? '' : 'none';
+    retryBtn.style.display = (!running && errCount > 0) ? '' : 'none';
     retryBtn.textContent = `Retry ${errCount} failed`;
   }
 }
@@ -2648,14 +2657,14 @@ function removeBulkItem(id) {
 }
 
 function clearBulkQueue() {
-  if (_bulkRunning) return;
+  if (_activeWorkers > 0) return;
   state.bulkQueue = [];
   renderBulkQueue();
   saveBulkQueue();
 }
 
 function retryBulkFailed() {
-  if (_bulkRunning) return;
+  if (_activeWorkers > 0) return;
   let retried = 0;
   for (const item of state.bulkQueue) {
     if (item.status === 'error') {
@@ -2670,45 +2679,55 @@ function retryBulkFailed() {
   startBulkProcess();
 }
 
-async function startBulkProcess() {
-  if (_bulkRunning) return;
-  const pending = state.bulkQueue.filter(i => i.status === 'queued');
-  if (!pending.length) return;
-  _bulkRunning = true;
-  updateBulkProgress();
-
-  // Simple worker-pool: N workers drain the queue.
-  const queue = [...pending];
-  const workers = Array.from({ length: Math.min(BULK_CONCURRENCY, queue.length) },
-    () => bulkWorker(queue));
-  await Promise.all(workers);
-
-  _bulkRunning = false;
-  renderBulkQueue();
-  haptic && haptic('success');
+// Idempotent — safe to call repeatedly. Each call spawns up to
+// (BULK_CONCURRENCY - _activeWorkers) additional workers to drain queued
+// items from state.bulkQueue. Workers read the live queue, so new items
+// pushed during processing are picked up automatically.
+function startBulkProcess() {
+  const pendingCount = state.bulkQueue.filter(i => i.status === 'queued').length;
+  if (!pendingCount) return;
+  const slots = Math.min(BULK_CONCURRENCY - _activeWorkers, pendingCount);
+  for (let i = 0; i < slots; i++) {
+    bulkWorker(); // fire-and-forget; each worker manages its own lifecycle
+  }
 }
 
-async function bulkWorker(queue) {
-  while (queue.length) {
-    const item = queue.shift();
-    if (!item) break;
-    item.status = 'processing';
-    renderBulkQueue();
-    try {
-      await processBulkItem(item);
-      item.status = 'done';
-    } catch (e) {
-      console.error('[BULK] failed:', item.name, e);
-      item.status = 'error';
-      item.name_short = 'Err';
-      item.error_message = e.message || String(e);
+async function bulkWorker() {
+  _activeWorkers++;
+  updateBulkProgress();
+  try {
+    while (true) {
+      // Claim the next queued item. JS's single-threaded execution means
+      // the find + status-flip is atomic from other workers' perspective
+      // (no other worker runs until this one awaits below).
+      const item = state.bulkQueue.find(i => i.status === 'queued');
+      if (!item) break;
+      item.status = 'processing';
+      renderBulkQueue();
+      try {
+        await processBulkItem(item);
+        item.status = 'done';
+      } catch (e) {
+        console.error('[BULK] failed:', item.name, e);
+        item.status = 'error';
+        item.name_short = 'Err';
+        item.error_message = e.message || String(e);
+      }
+      // Free the upload-size image after processing — only keep tiny thumbnail
+      if (item.status !== 'queued') {
+        item.dataUrl = item.thumbUrl || '';
+      }
+      renderBulkQueue();
+      saveBulkQueue();
     }
-    // Free the upload-size image after processing — only keep tiny thumbnail
-    if (item.status !== 'queued') {
-      item.dataUrl = item.thumbUrl || '';
+  } finally {
+    _activeWorkers--;
+    if (_activeWorkers === 0) {
+      renderBulkQueue();
+      haptic && haptic('success');
+    } else {
+      updateBulkProgress();
     }
-    renderBulkQueue();
-    saveBulkQueue();
   }
 }
 
