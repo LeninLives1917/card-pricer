@@ -45,6 +45,32 @@ const quoteLeadLimiter = rateLimit({
   legacyHeaders: false,
   message: { error: 'Too many quote requests — please try again later.' }
 });
+
+// ============================================================
+// USD → EUR — refreshed daily from Frankfurter (ECB data, no auth needed).
+// ============================================================
+// Used to convert TCGPlayer USD prices into EUR for buy-offer calculations.
+// Initial value is last-known reasonable; refresh updates it on boot + daily.
+let USD_TO_EUR = 0.92;
+async function refreshFxRate() {
+  try {
+    const resp = await axios.get('https://api.frankfurter.app/latest', {
+      params: { from: 'USD', to: 'EUR' },
+      timeout: 10000
+    });
+    const rate = resp.data?.rates?.EUR;
+    if (typeof rate === 'number' && rate > 0.5 && rate < 2.0) {
+      USD_TO_EUR = rate;
+      console.log(`[FX] USD→EUR refreshed: ${rate.toFixed(4)} (frankfurter.app, ${resp.data.date})`);
+    } else {
+      console.warn(`[FX] Unexpected rate shape — keeping ${USD_TO_EUR}`, rate);
+    }
+  } catch (e) {
+    console.warn(`[FX] Refresh failed — keeping ${USD_TO_EUR}: ${e.message}`);
+  }
+}
+refreshFxRate();
+setInterval(refreshFxRate, 24 * 60 * 60 * 1000);
 // Force no-cache on service-worker.js and index.html to bust PWA staleness
 app.get('/service-worker.js', (req, res) => {
   res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
@@ -3017,7 +3043,7 @@ function parseJustTCGResult(data, card, conditionFull, conditionShort) {
     printing: bestVariant?.printing || null,
     // JustTCG returns TCGPlayer USD prices
     price_usd: price,
-    price_eur: price ? Math.round(price * 0.92 * 100) / 100 : null, // Approximate EUR conversion
+    price_eur: price ? Math.round(price * USD_TO_EUR * 100) / 100 : null,
     currency: 'USD',
     last_updated: bestVariant?.lastUpdated ? new Date(bestVariant.lastUpdated * 1000).toISOString() : null,
     // Price analytics
@@ -3437,8 +3463,6 @@ async function priceEbaySold(card) {
 // ============================================================
 // COMBINED PRICING ENDPOINT
 // ============================================================
-// USD to EUR approximate conversion (updated periodically)
-const USD_TO_EUR = 0.92;
 
 app.post('/api/price', async (req, res) => {
   try {
