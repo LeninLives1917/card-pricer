@@ -818,13 +818,11 @@ function extractImageBuffer(req) {
 // Returns:
 //   { cached: true, result }                 — full cached response
 //   { cached: false, parsed, cacheKey|null } — caller verifies + caches
-async function identifyCore({ buffer, isBatchMode, hint }) {
-  // Batch (binder) keeps higher resolution — many small cards to read.
-  // Single-card was historically 1100px @ q88, but that throws away the
-  // detail Claude needs to read small card numbers reliably. Bumped to
-  // 1800px @ q92 to match what's actually useful for OCR. Claude SDK
-  // auto-handles payloads under 5MB; these sizes are well within that.
-  const targetSize = isBatchMode ? 2200 : 1800;
+async function identifyCore({ buffer, hint }) {
+  // Single-card resize: 1800px @ q92. Binder/batch mode was removed with
+  // the UI — every scan is now a single card (either from the scanner-
+  // mode phone or bulk-uploaded from the laptop, one at a time).
+  const targetSize = 1800;
   const jpegQuality = 92;
 
   const optimized = await sharp(buffer)
@@ -833,28 +831,24 @@ async function identifyCore({ buffer, isBatchMode, hint }) {
     .toBuffer();
   const imageData = optimized.toString('base64');
 
-  // Cache only single-card, no-hint scans: a hint changes the expected output.
+  // Cache only no-hint scans: a hint changes the expected output.
   let cacheKey = null;
-  if (!isBatchMode && !hint) {
+  if (!hint) {
     cacheKey = crypto.createHash('sha1').update(optimized).digest('hex');
     const hit = cacheGet(cacheKey);
     if (hit) return { cached: true, result: hit, cacheKey };
   }
 
-  let userMessage = isBatchMode
-    ? 'This is a photo of a binder page with MULTIPLE trading cards. Identify EVERY visible card individually. Return all cards in the JSON array.'
-    : 'Identify this trading card. FIRST read the card number at the bottom of the card — this is the most critical field. If it has no slash (like SM211, SWSH066) it is a PROMO card. Be extremely precise with the set code and card number.';
+  let userMessage = 'Identify this trading card. FIRST read the card number at the bottom of the card — this is the most critical field. If it has no slash (like SM211, SWSH066) it is a PROMO card. Be extremely precise with the set code and card number.';
   if (hint) userMessage += `\n\nUser hint: ${hint}`;
 
-  // Sonnet 4.6 for both single-card and batch — measurably better small-text
-  // OCR than Sonnet 4.0, which is exactly the pain point (glare/sleeves/small
-  // card numbers). Haiku kept misreading card numbers (223 → 225) even at
-  // higher resolutions. Accuracy > speed.
-  // Prompt caching (ephemeral) reuses the ~1500-token system prompt across
-  // calls, trimming 30-50% off TTFT for free.
+  // Sonnet 4.6 — measurably better small-text OCR than 4.0, exactly the
+  // pain point (glare/sleeves/small card numbers). Prompt caching
+  // (ephemeral) reuses the ~1500-token system prompt across calls,
+  // trimming 30-50% off TTFT.
   const response = await anthropic.messages.create({
     model: 'claude-sonnet-4-6',
-    max_tokens: isBatchMode ? 4096 : 1024,
+    max_tokens: 1024,
     system: [{ type: 'text', text: CARD_ID_SYSTEM_PROMPT, cache_control: { type: 'ephemeral' } }],
     messages: [{
       role: 'user',
@@ -972,10 +966,9 @@ app.post('/api/identify', identifyLimiter, requireAuth, enforceQuota, upload.sin
   logScanEvent(req.user.id, '/api/identify');
   try {
     const buffer = extractImageBuffer(req);
-    const isBatchMode = req.body.batch === 'true' || req.body.batch === true;
     const hint = req.body.hint || '';
 
-    const out = await identifyCore({ buffer, isBatchMode, hint });
+    const out = await identifyCore({ buffer, hint });
     if (out.cached) {
       console.log(`[IDENT-CACHE] HIT ${out.cacheKey.slice(0, 8)}`);
       return res.json(out.result);
@@ -1022,10 +1015,9 @@ app.post('/api/identify-stream', identifyLimiter, requireAuth, enforceQuota, upl
     try { buffer = extractImageBuffer(req); }
     catch (e) { send({ type: 'error', error: e.message }); return res.end(); }
 
-    const isBatchMode = req.body.batch === 'true' || req.body.batch === true;
     const hint = req.body.hint || '';
 
-    const out = await identifyCore({ buffer, isBatchMode, hint });
+    const out = await identifyCore({ buffer, hint });
     if (out.cached) {
       console.log(`[IDENT-STREAM-CACHE] HIT ${out.cacheKey.slice(0, 8)}`);
       // Already verified in cache — emit both events so client logic works.

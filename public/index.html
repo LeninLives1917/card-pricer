@@ -20,7 +20,7 @@
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script>
     // Register service worker for PWA install + offline shell.
-    console.log('[APP] Card Pricer client v56 loaded');
+    console.log('[APP] Card Pricer client v57 loaded');
     if ('serviceWorker' in navigator) {
       window.addEventListener('load', () => {
         navigator.serviceWorker.register('/service-worker.js', { updateViaCache: 'none' })
@@ -689,21 +689,7 @@
       /* Replaced by .frame-svg in single mode; keep zero-size so old JS still works */
       display: none;
     }
-    .batch-frame {
-      width: 90%;
-      height: 85%;
-      border: 2px dashed rgba(108, 92, 231, 0.6);
-      border-radius: 8px;
-      display: grid;
-      grid-template-columns: repeat(3, 1fr);
-      grid-template-rows: repeat(3, 1fr);
-      gap: 4px;
-      padding: 4px;
-    }
-    .batch-frame div {
-      border: 1px dashed rgba(108, 92, 231, 0.3);
-      border-radius: 4px;
-    }
+    /* .batch-frame CSS removed — binder mode dropped. */
 
     /* ---- BULK MODE ---- */
     .bulk-panel {
@@ -2233,11 +2219,11 @@
   <!-- SCAN TAB -->
   <div class="main" id="tab-scan">
     <div class="scan-area">
-      <!-- Mode Toggle -->
+      <!-- Mode Toggle — camera-based Single mode was removed; laptops
+           upload images in bulk or type set codes. The phone (via QR
+           pairing, ?pair=ROOMID) still runs the camera-based flow. -->
       <div class="mode-toggle">
-        <button class="mode-btn active" onclick="setMode('single')">Single</button>
-        <button class="mode-btn" onclick="setMode('batch')">Binder</button>
-        <button class="mode-btn" onclick="setMode('bulk')">Bulk</button>
+        <button class="mode-btn active" onclick="setMode('bulk')">Bulk</button>
         <button class="mode-btn" onclick="setMode('text')">Text</button>
       </div>
 
@@ -2523,11 +2509,11 @@
       <div class="setting-group">
         <h3>How It Works</h3>
         <p style="font-size: 13px; color: var(--text-dim); line-height: 1.5;">
-          1. Snap a photo of a card or binder page<br>
+          1. Snap a photo of a card<br>
           2. AI identifies the exact card, set, number &amp; condition<br>
           3. Prices pulled from Cardmarket (English, lowest) &amp; eBay sold<br>
           4. Buy price calculated at your chosen percentage<br><br>
-          <strong>Accuracy tips:</strong> Good lighting, capture the full card including edges for condition grading. For binder pages, hold the phone level and get all 9 pockets in frame.
+          <strong>Accuracy tips:</strong> Good lighting, capture the full card including edges for condition grading. Hold the phone level and make sure the card number at the bottom is in focus.
         </p>
       </div>
       <div class="setting-group">
@@ -2735,7 +2721,7 @@ function initializeSessions() {
 const sessionsData = initializeSessions();
 
 let state = {
-  mode: 'single', // single | batch
+  mode: 'bulk', // bulk (laptop upload) | text (laptop type set codes) | single (scanner-mode phone only)
   currentTab: 'scan',
   facingMode: 'environment',
   stream: null,
@@ -2875,8 +2861,12 @@ function retakePhoto() {
 }
 
 function setMode(mode) {
+  // Binder/batch + laptop camera Single mode were removed. 'single' is
+  // only reachable from the scanner-mode phone, which doesn't call
+  // setMode — so from the laptop UI, mode is always 'bulk' or 'text'.
+  if (mode === 'batch' || mode === 'single') mode = 'bulk';
   state.mode = mode;
-  const modes = ['single', 'batch', 'bulk', 'text'];
+  const modes = ['bulk', 'text'];
   const idx = modes.indexOf(mode);
   document.querySelectorAll('.mode-btn').forEach((btn, i) => {
     btn.classList.toggle('active', i === idx);
@@ -2912,7 +2902,7 @@ function setMode(mode) {
     return;
   }
 
-  // Leaving bulk/text: restore camera chrome.
+  // Single mode — restore full camera chrome.
   if (camera) camera.style.display = '';
   if (captureRow) captureRow.style.display = '';
   if (zoomRow) zoomRow.style.display = '';
@@ -2921,15 +2911,9 @@ function setMode(mode) {
   if (manualLink) manualLink.style.display = '';
   if (hintRow) hintRow.style.display = '';
 
-  if (mode === 'batch') {
-    frame.className = 'batch-frame';
-    frame.innerHTML = '<div></div>'.repeat(9);
-    if (svgFrame) svgFrame.style.display = 'none';
-  } else {
-    frame.className = 'card-frame';
-    frame.innerHTML = '';
-    if (svgFrame) svgFrame.style.display = '';
-  }
+  frame.className = 'card-frame';
+  frame.innerHTML = '';
+  if (svgFrame) svgFrame.style.display = '';
 }
 
 // ============================================================
@@ -3713,7 +3697,7 @@ async function processImage(imageData) {
     // misidentification. We'd rather upload a bigger frame that Claude
     // can read correctly. Put the crop behind a toggle later if we want.
     let uploadImage = imageData;
-    if (state.mode !== 'batch') {
+    if (true /* batch mode removed */) {
       try {
         // 2000px longer side at quality 0.95 — preserves small-text detail
         // (set code + card number at the bottom of the card) while keeping
@@ -3730,7 +3714,7 @@ async function processImage(imageData) {
     // 1a: OCR-first — if single-card mode and no user hint, try reading the
     // card number locally. On a clean scan this skips Claude entirely.
     let idResult = null;
-    if (state.mode !== 'batch' && !hint) {
+    if (true /* batch mode removed */ && !hint) {
       loadingText.textContent = 'Reading card number...';
       idResult = await tryOcrIdentify(imageData);
     }
@@ -3743,7 +3727,7 @@ async function processImage(imageData) {
       // "Verifying..." the moment ident arrives, so the user feels progress.
       idResult = await fetchIdentifyStream({
         image: uploadImage,
-        batch: state.mode === 'batch',
+        batch: false,
         hint: hint
       }, (ev) => {
         if (ev.type === 'ident') loadingText.textContent = 'Verifying set...';
@@ -3770,7 +3754,7 @@ async function processImage(imageData) {
 
     // In SINGLE mode: stay on scan, open the bottom sheet over live camera.
     // In BATCH mode: switch to results tab so user can see all cards.
-    const singleMode = state.mode !== 'batch';
+    const singleMode = true /* batch mode removed */;
     if (singleMode) {
       // Keep camera live — don't swap to captured img freeze.
       document.getElementById('capturedImage').classList.add('hidden');
@@ -5435,10 +5419,13 @@ document.addEventListener('DOMContentLoaded', () => {
   if (getSetting('amoled', 'true') !== false && getSetting('amoled', 'true') !== 'false') document.body.classList.add('amoled');
   updateSessionStrip();
   updateRecentRibbon();
+  // Non-scanner devices (laptops): default to Bulk mode so the camera
+  // chrome is hidden from the start. Scanner-mode phones skip this —
+  // they need the camera visible for their capture flow.
+  if (!document.body.classList.contains('scanner-mode')) {
+    setMode('bulk');
+  }
   // Pull any server-side state for this user (sessions + want list).
-  // Runs after local init so the pull overwrites a fully-initialised
-  // state object; scanner-mode phones skip this automatically because
-  // they don't have a Supabase session.
   if (typeof pullStateFromServer === 'function' && !document.body.classList.contains('scanner-mode')) {
     pullStateFromServer();
   }
@@ -6054,7 +6041,7 @@ async function submitManualEntry() {
     }));
     renderResults(state.currentResults);
 
-    const singleMode = state.mode !== 'batch';
+    const singleMode = true /* batch mode removed */;
     if (!singleMode) switchTab('results');
 
     const pricingJobs = cards.map((card, idx) =>
