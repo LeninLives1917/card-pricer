@@ -243,6 +243,7 @@ DISNEY LORCANA (game="lorcana"):
 - Check ink colour (Amber, Amethyst, Emerald, Ruby, Sapphire, Steel)
 
 === CRITICAL ACCURACY RULES ===
+- FIRST: read the PRINTED SET TOTAL (the number AFTER the "/") from the bottom of the card before you identify the Pokemon. The set total is a near-unique fingerprint: /182 = Destined Rivals, /198 = Paldea Evolved or Scarlet & Violet, /197 = Obsidian Flames, /088 = Perfect Order, /165 = Pokémon 151. Read this FIRST — everything else depends on it. If you can't read the total, say so and set confidence below 0.5.
 - READ the EXACT card name as printed — DO NOT guess or use a similar card name
 - READ the EXACT suffix: "ex" (lowercase) ≠ "GX" ≠ "EX" (uppercase) ≠ "V" ≠ "VMAX" ≠ "VSTAR". Getting this wrong gives completely wrong prices.
 - READ the HP number — this distinguishes card versions (e.g. 330HP vs 250HP Charizard)
@@ -2409,7 +2410,8 @@ async function verifyPokemon(card) {
       console.log(`[VERIFY-PKM] Detected PROMO card number: ${card.card_number}`);
     }
 
-    // Build search queries — try exact number match first, then name-based
+    // Build search queries — try high-specificity matches first, then fall
+    // back. All queries run in parallel so order is just for scoring priority.
     const queries = [];
 
     // 0. For promo cards, search by the exact promo number first (most reliable)
@@ -2418,6 +2420,31 @@ async function verifyPokemon(card) {
       queries.push(`number:${promoNum}`);
       // Also try with the name
       queries.push(`name:"${card.name}" number:${promoNum}`);
+    }
+
+    // 0.5 ATTACK-NAME PRIMACY. Attack names are nearly unique per card —
+    // harder to hallucinate than card names and much harder to collide.
+    // If Claude returned an attack, name+attack narrows to one or two cards
+    // regardless of which set Claude mis-guessed. pokemontcg.io supports
+    // `attacks.name:` as a Lucene filter.
+    if (card.attacks?.length) {
+      const atk = card.attacks
+        .map(a => typeof a === 'string' ? a : (a?.name || ''))
+        .find(s => s && s.length > 2); // skip short/empty attack names
+      if (atk) {
+        queries.push(`name:"${card.name}" attacks.name:"${atk.replace(/"/g, '')}"`);
+      }
+    }
+
+    // 0.75 SET-TOTAL PRIMACY. The printed total (e.g. "133/182") is a
+    // near-unique set fingerprint. Querying by that total first anchors us
+    // to the right set even when Claude's set_code was slightly wrong.
+    if (card.card_number?.includes('/')) {
+      const total = card.card_number.split('/')[1]?.replace(/^0+/, '');
+      const num = card.card_number.split('/')[0].replace(/^0+/, '');
+      if (total && num) {
+        queries.push(`name:"${card.name}" set.printedTotal:${total} number:${num}`);
+      }
     }
 
     // 1. If we have a card number, try exact set+number match by set code
@@ -2816,16 +2843,18 @@ function buildCardmarketUrl(card) {
   // URL 404s more often than it works. API-provided URLs (from pokemontcg.io
   // / Scryfall) still override this in the caller when available.
 
-  // Build a search URL that targets the exact card.
-  // Cardmarket Pokémon product names include set code + number in parens,
-  // e.g. "Slaking ex (SSP 147)" — so including them in the search matches.
+  // Build a search URL that targets the exact card. Cardmarket's search
+  // tokenises the string, so space-separated name + set code + number
+  // reliably narrows to the right product — much more robust than the
+  // parens format we previously used ("Charizard ex (OBF 125)"), which
+  // Cardmarket's tokeniser treated inconsistently and often missed.
   const num = card.card_number ? card.card_number.replace(/\/.*/, '').replace(/^0+/, '') : '';
   const setCode = (card.set_code || card.setCode || '').toUpperCase();
 
-  // Primary: name + set code + number in parentheses (matches Cardmarket product name format)
   let searchTerm = card.name || '';
   if (card.game === 'pokemon' && setCode && num) {
-    searchTerm = `${card.name} (${setCode} ${num})`;
+    // "Charizard ex OBF 125" — Cardmarket resolves this to the right product.
+    searchTerm = `${card.name} ${setCode} ${num}`;
   } else if (num) {
     searchTerm = `${card.name} ${num}`;
   }
@@ -2834,7 +2863,7 @@ function buildCardmarketUrl(card) {
     ? `https://www.cardmarket.com/en/${gameSlug}/Products/Search?searchString=${encodeURIComponent(searchTerm)}`
     : `https://www.cardmarket.com/en/Search?searchString=${encodeURIComponent(searchTerm)}`;
 
-  // Narrower fallback — just name (in case parens format doesn't match)
+  // Narrower fallback — just name (last resort if the full search 0-hits).
   const fallbackTerm = card.name || '';
   const fallbackUrl = gameSlug
     ? `https://www.cardmarket.com/en/${gameSlug}/Products/Search?searchString=${encodeURIComponent(fallbackTerm)}`
