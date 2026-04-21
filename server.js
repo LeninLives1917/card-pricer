@@ -373,13 +373,94 @@ async function identifyCore({ buffer, isBatchMode, hint }) {
   if (parsed.cards?.length > 0) {
     parsed.cards = parsed.cards.map(card => fixPokemonSuffix(card));
   }
-  return { cached: false, parsed, cacheKey };
+  // imageBase64 is returned so the caller can feed it into the two-pass
+  // double-check (compare scan vs DB reference image).
+  return { cached: false, parsed, cacheKey, imageBase64: imageData };
 }
 
 // Verify each card against the real game databases in parallel.
 async function verifyIdentified(cards) {
   if (!cards?.length) return cards || [];
   return Promise.all(cards.map(card => verifyCard(card)));
+}
+
+// ============================================================
+// TWO-PASS VERIFICATION — compare user scan vs reference image
+// ============================================================
+// After verifyPokemon picks a candidate from pokemontcg.io (which has a
+// reference image URL), we can ask Sonnet 4.6 to look at BOTH the user's
+// scan and that reference image and confirm they're the same printing.
+// This catches the cases where verifyPokemon's scoring thinks it found a
+// match but the card is actually an alt-art, reverse holo, or wrong era
+// that happens to share name+number with the matched candidate.
+//
+// Gated by confidence_score — if verifyPokemon scored the match >= 200
+// we skip the double-check (high-confidence matches don't need it).
+async function maybeDoubleCheck(userImageBase64, card) {
+  if (!userImageBase64) return card;
+  if (card.game !== 'pokemon') return card;
+  if (!card.verified || !card.reference_image) return card;
+  if (card.verify_rejected) return card; // already flagged — no point double-checking
+  if (card.confidence_score && card.confidence_score >= 200) return card;
+
+  try {
+    const refResp = await axios.get(card.reference_image, {
+      responseType: 'arraybuffer',
+      timeout: 8000
+    });
+    const refBase64 = Buffer.from(refResp.data).toString('base64');
+    const mediaType = /\.png($|\?)/i.test(card.reference_image) ? 'image/png'
+                    : /\.jpe?g($|\?)/i.test(card.reference_image) ? 'image/jpeg'
+                    : /\.webp($|\?)/i.test(card.reference_image) ? 'image/webp'
+                    : 'image/png';
+
+    const resp = await anthropic.messages.create({
+      model: 'claude-sonnet-4-6',
+      max_tokens: 150,
+      system: [{ type: 'text', text:
+        'You compare two trading-card images and decide if they show the SAME printing. ' +
+        'Respond with ONLY JSON: {"match": true|false, "reason": "short phrase"}. ' +
+        'A match means same card name, same set, and same art/foil/border variant. ' +
+        'Different printings of the same Pokemon (base vs reverse holo vs secret rare vs ' +
+        'alt art vs wrong era) are NOT matches — look at art, border, foil pattern, ' +
+        'set symbol, card number. If unsure, return match:true (we only reject confident mismatches).'
+      }],
+      messages: [{
+        role: 'user',
+        content: [
+          { type: 'text', text: `Image 1 is the user's scan. Image 2 is the candidate (${card.name} from ${card.set_name || '?'} #${card.card_number || '?'}). Same card printing?` },
+          { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: userImageBase64 } },
+          { type: 'image', source: { type: 'base64', media_type: mediaType, data: refBase64 } }
+        ]
+      }]
+    });
+
+    const text = resp.content?.[0]?.text || '';
+    let result = null;
+    try { result = JSON.parse(text); }
+    catch {
+      const m = text.match(/\{[\s\S]*\}/);
+      if (m) { try { result = JSON.parse(m[0]); } catch {} }
+    }
+    if (!result || typeof result.match !== 'boolean') {
+      console.warn(`[DOUBLE-CHECK] unparseable response for "${card.name}":`, text.slice(0, 120));
+      return card;
+    }
+    if (result.match === false) {
+      console.log(`[DOUBLE-CHECK] REJECTED "${card.name}" — ${result.reason || '(no reason)'}`);
+      return { ...card, verified: false, verify_rejected: 'double_check_mismatch', double_check_reason: result.reason || null };
+    }
+    console.log(`[DOUBLE-CHECK] CONFIRMED "${card.name}"`);
+    return card;
+  } catch (e) {
+    console.warn(`[DOUBLE-CHECK] failed for "${card.name}": ${e.message}`);
+    return card; // graceful: don't reject on double-check failure
+  }
+}
+
+async function doubleCheckAll(userImageBase64, cards) {
+  if (!cards?.length) return cards || [];
+  return Promise.all(cards.map(c => maybeDoubleCheck(userImageBase64, c)));
 }
 
 app.post('/api/identify', identifyLimiter, upload.single('image'), async (req, res) => {
@@ -397,6 +478,8 @@ app.post('/api/identify', identifyLimiter, upload.single('image'), async (req, r
     if (out.parsed.cards?.length > 0) {
       console.log(`[VERIFY] Verifying ${out.parsed.cards.length} card(s) against databases...`);
       out.parsed.cards = await verifyIdentified(out.parsed.cards);
+      // Two-pass double-check for moderate-confidence Pokemon matches.
+      out.parsed.cards = await doubleCheckAll(out.imageBase64, out.parsed.cards);
     }
 
     const anyRejected = (out.parsed.cards || []).some(c => c?.verify_rejected);
@@ -452,6 +535,8 @@ app.post('/api/identify-stream', identifyLimiter, upload.single('image'), async 
     if (out.parsed.cards?.length > 0) {
       try {
         out.parsed.cards = await verifyIdentified(out.parsed.cards);
+        // Two-pass double-check for moderate-confidence Pokemon matches.
+        out.parsed.cards = await doubleCheckAll(out.imageBase64, out.parsed.cards);
       } catch (e) {
         console.error('[IDENT-STREAM] verify error:', e.message);
       }
@@ -2182,7 +2267,9 @@ async function verifyCard(card) {
       }
 
       console.log(`[VERIFY] CORRECTED -> "${verified.name}" from ${verified.set_name} (${verified.set_code}) #${verified.card_number}`);
-      // Merge: keep AI's condition estimate but use DB's set info
+      // Merge: keep AI's condition estimate but use DB's set info.
+      // confidence_score propagates through so the double-check gate can
+      // skip high-confidence matches.
       return {
         ...card,
         name: verified.name || card.name,
@@ -2191,11 +2278,11 @@ async function verifyCard(card) {
         card_number: verified.card_number || card.card_number,
         rarity: verified.rarity || card.rarity,
         reference_image: verified.image || null,
-        // Direct product URLs — the whole reason for this verify pass.
         cardmarket_url: verified.cardmarket_url || null,
         tcgplayer_url: verified.tcgplayer_url || null,
         verified: true,
-        db_source: verified.source
+        db_source: verified.source,
+        confidence_score: verified.confidence_score || null
       };
     } else {
       console.log(`[VERIFY] Could not verify — using AI identification as-is`);
