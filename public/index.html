@@ -16,7 +16,7 @@
   <title>Card Pricer</title>
   <script>
     // Register service worker for PWA install + offline shell.
-    console.log('[APP] Card Pricer client v49 loaded');
+    console.log('[APP] Card Pricer client v50 loaded');
     if ('serviceWorker' in navigator) {
       window.addEventListener('load', () => {
         navigator.serviceWorker.register('/service-worker.js', { updateViaCache: 'none' })
@@ -728,6 +728,43 @@
       cursor: pointer;
     }
     .corr-btn:active { background: var(--accent); color: white; border-color: var(--accent); }
+
+    /* ---- SCANNER MODE (phone paired as scanner) ---- */
+    /* When the phone opens the QR-paired URL, everything except the camera
+       and capture button is hidden. The phone's only job is to capture and
+       upload raw images; all identify/price/chooser work happens on the
+       laptop host. This keeps mobile lean (no session UI, no processing,
+       no localStorage writes) and routes every decision to one screen. */
+    body.scanner-mode .tabs,
+    body.scanner-mode .header-actions,
+    body.scanner-mode #tab-results,
+    body.scanner-mode #tab-log,
+    body.scanner-mode #tab-settings,
+    body.scanner-mode .mode-toggle,
+    body.scanner-mode .zoom-row,
+    body.scanner-mode .manual-link,
+    body.scanner-mode #bulkPanel,
+    body.scanner-mode #textEntryPanel,
+    body.scanner-mode .hint-row,
+    body.scanner-mode #hintInput,
+    body.scanner-mode .result-card,
+    body.scanner-mode .session-pills,
+    body.scanner-mode .buy-pct-row { display: none !important; }
+    body.scanner-mode .main { padding: 0; padding-bottom: calc(24px + var(--safe-bottom)); }
+    body.scanner-mode .camera-container {
+      aspect-ratio: unset;
+      height: calc(100dvh - 140px);
+      border-radius: 0;
+      border: none;
+    }
+    body.scanner-mode .capture-row { padding: 16px 0 12px; }
+    body.scanner-mode .session-count { display: none !important; }
+    body.scanner-mode .header h1::after {
+      content: ' · Scanner';
+      color: var(--accent-light);
+      font-weight: 400;
+      font-size: 13px;
+    }
 
     /* ---- CANDIDATE CHOOSER ---- */
     /* Shown when verifyPokemon's top match didn't score confidently — the
@@ -2830,6 +2867,15 @@ async function processBulkItem(item) {
 }
 
 async function processImage(imageData) {
+  // ── Scanner-mode fork ────────────────────────────────────────────
+  // When this device is the paired phone scanner, we don't run identify/
+  // price/verify locally — that all happens on the laptop host. The phone
+  // just uploads the raw image to the room and the laptop's SSE picks it
+  // up, runs the full pipeline there, and updates the session.
+  if (state.pairRole === 'scanner' && state.pairRoomId) {
+    return uploadRawScanToRoom(imageData);
+  }
+
   state.isProcessing = true;
   const overlay = document.getElementById('loadingOverlay');
   const loadingText = document.getElementById('loadingText');
@@ -4408,7 +4454,27 @@ function stopPairing() {
 }
 
 function receiveRemoteScan(entry) {
-  // Avoid duplicates by id
+  // New flow (phone = dumb scanner): phone uploads a raw image, laptop runs
+  // the full identify/price/verify pipeline locally. This keeps mobile lean
+  // and routes all decisions (chooser, offers, session log) to one screen.
+  if (entry?.type === 'raw-image' && entry.imageData) {
+    console.log('[PAIR] Received raw scan from phone — processing locally');
+    hapticPulse(20);
+    showPairToast('📱 Scan received — identifying…');
+    // Show the image in the capture preview so the laptop operator sees
+    // what the phone just sent, matching the normal capture flow.
+    const img = document.getElementById('capturedImage');
+    const video = document.getElementById('cameraVideo');
+    if (img) { img.src = entry.imageData; img.classList.remove('hidden'); }
+    if (video) video.classList.add('hidden');
+    const retake = document.getElementById('retakeBtn');
+    if (retake) retake.style.display = 'flex';
+    processImage(entry.imageData);
+    return;
+  }
+
+  // Legacy flow: phone sent a fully-processed entry (pre-Phase-A clients).
+  // Kept so old paired devices still work during rollout.
   const log = state.sessions[state.currentSessionId].log;
   if (entry.id && log.some(e => e.id === entry.id)) return;
   log.unshift(entry);
@@ -4416,7 +4482,6 @@ function receiveRemoteScan(entry) {
   if (state.currentTab === 'log') renderSessionLog();
   document.getElementById('logCount').textContent = log.length;
   hapticPulse(30);
-  // Subtle toast
   showPairToast(`📱 ${entry.card?.name || 'Card'} added from phone`);
 }
 
@@ -4462,16 +4527,62 @@ async function pushScanToRoom(entry) {
   }
 }
 
+// Phone scanner: resize the raw image and push it to the laptop host. The
+// laptop's receiveRemoteScan branches on `type: 'raw-image'` and runs its
+// normal processImage() pipeline on the payload.
+async function uploadRawScanToRoom(imageData) {
+  const captureBtn = document.getElementById('captureBtn');
+  captureBtn?.classList.add('loading');
+  const t0 = performance.now();
+  let sentOk = false;
+  try {
+    // 2000px longer side @ q0.95 is plenty for laptop-side OCR and keeps
+    // cellular uploads fast. Same target we use in the main scan path.
+    const resized = await resizeDataUrl(imageData, { maxDimension: 2000, quality: 0.95 });
+    const resp = await fetch(`/api/room/${state.pairRoomId}/scan`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ type: 'raw-image', imageData: resized, ts: Date.now() })
+    });
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    sentOk = true;
+    haptic('scan');
+    showPairToast(`✓ Sent to laptop (${Math.round(performance.now() - t0)}ms)`);
+  } catch (e) {
+    console.error('[SCANNER] Upload failed:', e);
+    showPairToast('✗ Upload failed — retry');
+  } finally {
+    captureBtn?.classList.remove('loading');
+    // Hide the captured-image preview and return to the live video so the
+    // camera is instantly ready for the next card.
+    const captured = document.getElementById('capturedImage');
+    const video = document.getElementById('cameraVideo');
+    const retake = document.getElementById('retakeBtn');
+    if (captured) captured.classList.add('hidden');
+    if (video) video.classList.remove('hidden');
+    if (retake) retake.style.display = 'none';
+  }
+  return sentOk;
+}
+
 // ============================================================
 // INIT
 // ============================================================
 document.addEventListener('DOMContentLoaded', () => {
   applySettings();
-  // Auto-join as scanner if URL has ?pair=ROOMID
+  // Auto-join as scanner if URL has ?pair=ROOMID. Enter "scanner mode" —
+  // the phone becomes a dumb capture device, all other UI hidden. The
+  // laptop host processes everything via the SSE stream.
   const params = new URLSearchParams(location.search);
   const pairId = params.get('pair');
-  if (pairId) joinAsScanner(pairId);
-  else document.getElementById('pairStatus') && (document.getElementById('pairStatus').textContent = 'Not paired');
+  if (pairId) {
+    document.body.classList.add('scanner-mode');
+    joinAsScanner(pairId);
+    // Auto-start the camera so the phone is ready to scan immediately.
+    activateCamera && activateCamera();
+  } else {
+    document.getElementById('pairStatus') && (document.getElementById('pairStatus').textContent = 'Not paired');
+  }
   // Don't auto-start camera — show placeholder; user taps to activate
   showCameraPlaceholder();
   document.getElementById('logCount').textContent = state.sessionLog.length;
