@@ -16,7 +16,7 @@
   <title>Card Pricer</title>
   <script>
     // Register service worker for PWA install + offline shell.
-    console.log('[APP] Card Pricer client v35 loaded');
+    console.log('[APP] Card Pricer client v36 loaded');
     if ('serviceWorker' in navigator) {
       window.addEventListener('load', () => {
         navigator.serviceWorker.register('/service-worker.js', { updateViaCache: 'none' })
@@ -52,8 +52,9 @@
       --radius-lg: 20px;
       --safe-bottom: env(safe-area-inset-bottom, 0px);
       --shadow-elevated: 0 20px 60px rgba(0,0,0,0.6), 0 1px 0 rgba(255,255,255,0.04) inset;
-      --shadow-card: 0 6px 24px rgba(0,0,0,0.35);
-      --glass: rgba(26, 26, 36, 0.72);
+      --shadow-card: 0 6px 24px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,255,255,0.04);
+      --glass: rgba(17, 17, 24, 0.72);
+      --grad-accent: linear-gradient(135deg, #6c5ce7 0%, #00d4ff 100%);
     }
     body.amoled {
       --bg: #000000;
@@ -76,8 +77,10 @@
       align-items: center;
       justify-content: space-between;
       padding: 12px 16px;
-      background: var(--surface);
-      border-bottom: 1px solid var(--border);
+      background: var(--glass);
+      backdrop-filter: blur(18px) saturate(140%);
+      -webkit-backdrop-filter: blur(18px) saturate(140%);
+      border-bottom: 1px solid rgba(255,255,255,0.06);
       position: sticky;
       top: 0;
       z-index: 100;
@@ -99,20 +102,26 @@
     }
     .header-btn:active { background: var(--border); }
     .session-count {
-      background: var(--accent);
+      background: var(--grad-accent);
       color: white;
       border-radius: 10px;
       padding: 1px 7px;
       font-size: 11px;
       font-weight: 700;
+      box-shadow: 0 2px 8px rgba(108, 92, 231, 0.35);
     }
 
     /* ---- TAB NAV ---- */
     .tabs {
       display: flex;
-      background: var(--surface);
-      border-bottom: 1px solid var(--border);
+      background: var(--glass);
+      backdrop-filter: blur(18px) saturate(140%);
+      -webkit-backdrop-filter: blur(18px) saturate(140%);
+      border-bottom: 1px solid rgba(255,255,255,0.06);
       padding: 0 8px;
+      position: sticky;
+      top: 57px; /* below the header */
+      z-index: 99;
     }
     .tab {
       flex: 1;
@@ -311,16 +320,17 @@
       width: 72px;
       height: 72px;
       border-radius: 50%;
-      background: var(--accent);
-      border: 4px solid var(--accent-light);
+      background: var(--grad-accent);
+      border: 4px solid rgba(162, 155, 254, 0.9);
       cursor: pointer;
       display: flex;
       align-items: center;
       justify-content: center;
       transition: transform 0.1s;
       flex-shrink: 0;
+      box-shadow: 0 8px 24px rgba(108, 92, 231, 0.45), inset 0 1px 0 rgba(255,255,255,0.25);
     }
-    .capture-btn:active { transform: scale(0.92); }
+    .capture-btn:active { transform: scale(0.92); box-shadow: 0 4px 12px rgba(108, 92, 231, 0.45); }
     .capture-btn svg { width: 28px; height: 28px; fill: white; }
     .capture-btn.loading {
       background: var(--surface2);
@@ -522,12 +532,18 @@
     }
 
     /* ---- RESULTS CARD ---- */
+    @keyframes cardEnter {
+      from { opacity: 0; transform: translateY(12px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
     .result-card {
       background: var(--surface);
-      border: 1px solid var(--border);
+      border: 1px solid rgba(255,255,255,0.05);
       border-radius: var(--radius);
       overflow: hidden;
       margin-bottom: 12px;
+      box-shadow: var(--shadow-card);
+      animation: cardEnter 240ms cubic-bezier(.2,.7,.2,1);
     }
     .result-header {
       display: flex;
@@ -564,7 +580,11 @@
       font-size: 11px;
       font-weight: 700;
     }
-    .confidence-high { background: rgba(0, 230, 118, 0.15); color: var(--green); }
+    .confidence-high {
+      background: var(--grad-accent);
+      color: white;
+      box-shadow: 0 2px 8px rgba(108, 92, 231, 0.35);
+    }
     .confidence-mid { background: rgba(255, 215, 64, 0.15); color: var(--yellow); }
     .confidence-low { background: rgba(255, 82, 82, 0.15); color: var(--red); }
 
@@ -650,8 +670,15 @@
       background: rgba(0, 230, 118, 0.05);
     }
     .price-cell.buy-price .price-value {
-      font-size: 28px;
-      color: var(--green);
+      font-size: 44px;
+      font-weight: 900;
+      line-height: 1.1;
+      letter-spacing: -1px;
+      background: linear-gradient(180deg, #00ff88 0%, #00c853 100%);
+      -webkit-background-clip: text;
+      background-clip: text;
+      -webkit-text-fill-color: transparent;
+      color: var(--green); /* fallback for browsers without background-clip */
     }
 
     /* ---- CONDITION NOTES ---- */
@@ -710,7 +737,8 @@
       padding: 12px;
       background: var(--surface);
       border-radius: var(--radius);
-      border: 1px solid var(--border);
+      border: 1px solid rgba(255,255,255,0.05);
+      box-shadow: var(--shadow-card);
       margin-bottom: 12px;
     }
     .buy-pct-label { font-size: 13px; color: var(--text-dim); white-space: nowrap; }
@@ -747,10 +775,13 @@
       gap: 10px;
       padding: 10px 12px;
       background: var(--surface);
-      border: 1px solid var(--border);
+      border: 1px solid rgba(255,255,255,0.05);
       border-radius: 10px;
+      box-shadow: var(--shadow-card);
       cursor: pointer;
+      transition: transform 0.15s, box-shadow 0.15s;
     }
+    .log-item:hover { transform: translateY(-1px); box-shadow: 0 10px 28px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.05); }
     .log-item:active { background: var(--surface2); }
     .log-thumb {
       width: 40px;
@@ -799,7 +830,17 @@
       border-radius: var(--radius);
     }
     .session-total-label { font-size: 14px; font-weight: 600; }
-    .session-total-value { font-size: 24px; font-weight: 800; color: var(--green); }
+    .session-total-value {
+      font-size: 32px;
+      font-weight: 900;
+      letter-spacing: -0.5px;
+      font-variant-numeric: tabular-nums;
+      background: linear-gradient(180deg, #00ff88 0%, #00c853 100%);
+      -webkit-background-clip: text;
+      background-clip: text;
+      -webkit-text-fill-color: transparent;
+      color: var(--green);
+    }
 
     /* ---- DELETE MODE ---- */
     .log-checkbox {
@@ -827,9 +868,10 @@
     .settings { display: flex; flex-direction: column; gap: 12px; }
     .setting-group {
       background: var(--surface);
-      border: 1px solid var(--border);
+      border: 1px solid rgba(255,255,255,0.05);
       border-radius: var(--radius);
       padding: 14px;
+      box-shadow: var(--shadow-card);
     }
     .setting-group h3 { font-size: 14px; font-weight: 700; margin-bottom: 8px; }
     .setting-row {
@@ -959,11 +1001,8 @@
     .totals-row { display: flex; justify-content: space-around; padding: 8px 0; border-top: 1px solid var(--border); font-weight: bold; margin-top: 8px; }
     .totals-item { text-align: center; }
     
-    /* Confidence indicator */
-    .confidence-badge { padding: 2px 6px; border-radius: 3px; font-size: 0.75em; margin-left: 4px; }
-    .confidence-high { background: #4caf50; color: white; }
-    .confidence-medium { background: #ffc107; color: black; }
-    .confidence-low { background: #f44336; color: white; }
+    /* (.confidence-badge + .confidence-high/mid/low are defined earlier —
+       do not redefine here.) */
     
     /* Status indicators */
     .status-badge { padding: 2px 6px; border-radius: 3px; font-size: 0.75em; margin-left: 4px; }
