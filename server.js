@@ -144,6 +144,7 @@ For a SINGLE card:
     "language": "english|japanese|german|french|italian|spanish|other",
     "condition_estimate": "NM|LP|MP|HP|DMG",
     "condition_notes": "Brief notes on visible wear, whitening, scratches, etc.",
+    "regulation_mark": "For Pokemon cards only: the single letter D/E/F/G/H/J printed in a small circle next to the card number. Return exactly that letter, or null if not present/readable.",
     "graded": null,
     "confidence": 0.95
   }]
@@ -185,6 +186,8 @@ STAR WARS: UNLIMITED (game="starwars"):
 - The card type (Unit, Event, Upgrade, Base, Leader) is printed on the card
 
 POKEMON TCG (game="pokemon"):
+- REGULATION MARK: Modern Pokémon cards (2019+) show a single letter in a small circle next to the card number at the bottom. It tells us which era/rotation the card is from: D or E = Sword & Shield era, F = SWSH→SV transition, G = Scarlet & Violet mid, H = SV late, J = Mega Evolution era. Report this letter verbatim in the "regulation_mark" field, or null if you can't see it.
+
 - CRITICAL: Read the EXACT suffix on the card name — "ex", "GX", "V", "VMAX", "VSTAR", "EX" (caps), "LV.X" are ALL DIFFERENT card types. Do NOT confuse them.
   - Lowercase "ex" = Scarlet & Violet era (2023+). VISUAL CUES: name on card shows lowercase "ex" in stylized font, card has "Pokemon ex rule" text at bottom, modern card frame, usually has regulation mark G or H. HP ranges from 120-340+.
   - Uppercase "GX" = Sun & Moon era (2017-2020). VISUAL CUES: name shows uppercase "GX" in bold, card has "Pokemon-GX rule" text, has a special GX attack (used once per game), Sun & Moon era card frame with yellow/grey border. HP usually 170-270.
@@ -619,6 +622,35 @@ const POKEMONTCG_UNRELIABLE = new Set([
 ]);
 // Note: me2 (Phantasmal Flames) and me3 (Perfect Order) are CORRECT on pokemontcg.io.
 // sv10 (Destined Rivals) removed — may be indexed correctly now.
+
+// ── Regulation-mark era map ──
+// Modern Pokémon cards carry a single-letter regulation mark (D–J) next to
+// the card number. Each letter brackets a rotation window and era — when
+// Claude reads it, we can cheaply reject candidate matches whose set is
+// from the wrong era regardless of how well other signals scored.
+const REG_MARK_ERAS = {
+  'D': { minYear: 2019, maxYear: 2021, prefix: 'swsh' },
+  'E': { minYear: 2021, maxYear: 2023, prefix: 'swsh' },
+  'F': { minYear: 2022, maxYear: 2024, prefix: 'swsh' },
+  'G': { minYear: 2023, maxYear: 2025, prefix: 'sv' },
+  'H': { minYear: 2024, maxYear: 2026, prefix: 'sv' },
+  'J': { minYear: 2025, maxYear: 2027, prefix: '' },  // ME era
+};
+
+// Returns true if the pokemontcg.io card `d` plausibly belongs to the era
+// indicated by `regMark`. Used to reject cross-era matches where Claude
+// picked the Pokemon + number correctly but the set is from the wrong
+// rotation (e.g. a Pikachu match from 2018 when the card has a G reg mark).
+function regMarkMatchesEra(regMark, d) {
+  if (!regMark) return true;
+  const era = REG_MARK_ERAS[regMark];
+  if (!era) return true;
+  const setId = (d.set?.id || '').toLowerCase();
+  const releaseYear = d.set?.releaseDate ? parseInt(d.set.releaseDate.substring(0, 4)) : 0;
+  const prefixMatch = era.prefix ? setId.startsWith(era.prefix) : true;
+  const yearMatch = releaseYear && releaseYear >= era.minYear && releaseYear <= era.maxYear;
+  return prefixMatch || yearMatch;
+}
 
 // ── HARDCODED CORRECTIONS — verified against Pokellector.com ──
 // pokemontcg.io maps me1/mep to the wrong sets entirely. These are the correct
@@ -1853,16 +1885,6 @@ app.post('/api/lookup-by-number', express.json(), async (req, res) => {
 
     const raw = number.trim();
 
-    // Regulation mark → era mapping (helps disambiguate when multiple sets match)
-    const REG_MARK_ERAS = {
-      'D': { minYear: 2019, maxYear: 2021, prefix: 'swsh' },
-      'E': { minYear: 2021, maxYear: 2023, prefix: 'swsh' },
-      'F': { minYear: 2022, maxYear: 2024, prefix: 'swsh' },
-      'G': { minYear: 2023, maxYear: 2025, prefix: 'sv' },
-      'H': { minYear: 2024, maxYear: 2026, prefix: 'sv' },
-      'J': { minYear: 2025, maxYear: 2027, prefix: '' },  // ME era
-    };
-
     // Try Scryfall first if we have an explicit setCode (Magic).
     if (setCode && (game === 'magic' || !game)) {
       const numOnly = raw.split('/')[0].replace(/^0+/, '') || raw;
@@ -2588,6 +2610,14 @@ async function verifyPokemon(card) {
         const dbSuffix = extractPokemonSuffix(d.name);
         if (aiSuffix && dbSuffix && aiSuffix === dbSuffix) score += 35;
         else if (aiSuffix && dbSuffix && aiSuffix !== dbSuffix) score -= 50; // Penalise wrong type
+
+        // Regulation-mark era check — big penalty if Claude reported a reg
+        // mark but this candidate's set is from a different era. Catches
+        // cross-era name collisions (e.g. matching a 2018 Pikachu when the
+        // scan is clearly a 2023+ "G" reg-mark card).
+        if (card.regulation_mark && !regMarkMatchesEra(card.regulation_mark, d)) {
+          score -= 100;
+        }
 
         console.log(`[VERIFY-PKM]   "${d.name}" (${d.set?.name} [${d.set?.printedTotal} cards] #${d.number}, HP:${d.hp}) => score ${score}`);
 
