@@ -332,12 +332,14 @@ async function identifyCore({ buffer, isBatchMode, hint }) {
     : 'Identify this trading card. FIRST read the card number at the bottom of the card — this is the most critical field. If it has no slash (like SM211, SWSH066) it is a PROMO card. Be extremely precise with the set code and card number.';
   if (hint) userMessage += `\n\nUser hint: ${hint}`;
 
-  // Sonnet for both single-card and batch — Haiku was misreading card
-  // numbers (e.g. 223 → 225) even at higher resolutions. Accuracy > speed.
+  // Sonnet 4.6 for both single-card and batch — measurably better small-text
+  // OCR than Sonnet 4.0, which is exactly the pain point (glare/sleeves/small
+  // card numbers). Haiku kept misreading card numbers (223 → 225) even at
+  // higher resolutions. Accuracy > speed.
   // Prompt caching (ephemeral) reuses the ~1500-token system prompt across
   // calls, trimming 30-50% off TTFT for free.
   const response = await anthropic.messages.create({
-    model: 'claude-sonnet-4-20250514',
+    model: 'claude-sonnet-4-6',
     max_tokens: isBatchMode ? 4096 : 1024,
     system: [{ type: 'text', text: CARD_ID_SYSTEM_PROMPT, cache_control: { type: 'ephemeral' } }],
     messages: [{
@@ -2309,6 +2311,44 @@ async function verifyMagic(card) {
 // --- Pokemon via Pokemon TCG API ---
 async function verifyPokemon(card) {
   try {
+    // ── LOCAL DB SHORT-CIRCUIT ──
+    // If Claude returned an exact set+number match that the Google Sheet /
+    // Pokellector DB already has, skip the 4-query pokemontcg.io waterfall
+    // entirely. The Sheet is our source of truth, so a direct hit there is
+    // MORE authoritative than a fuzzy API match. We still require the local
+    // name to roughly match Claude's to avoid blindly trusting the DB on
+    // cards where Claude read the number correctly but misidentified the card.
+    if (card.set_code && card.card_number) {
+      const resolved = resolveSetCode(card.set_code);
+      if (resolved.setId) {
+        const cleanNum = String(card.card_number).replace(/\/.*/, '').replace(/^0+/, '') || String(card.card_number);
+        const local = lookupLocalDb(resolved.setId, cleanNum);
+        if (local) {
+          // Sanity-check name match (case-insensitive substring either way).
+          const aiName = (card.name || '').toLowerCase().trim();
+          const dbName = (local.name || '').toLowerCase().trim();
+          const nameMatches = aiName && dbName && (aiName === dbName || aiName.includes(dbName) || dbName.includes(aiName));
+          if (nameMatches) {
+            console.log(`[VERIFY-PKM] Local-DB HIT: ${resolved.setId}-${cleanNum} "${local.name}" — skipping pokemontcg.io`);
+            return {
+              name: local.name,
+              set_name: local.set_name,
+              set_code: local.set_code,
+              card_number: local.card_number,
+              rarity: local.rarity,
+              hp: local.hp,
+              image: local.reference_image || null,
+              cardmarket_url: local.cardmarket_url || null,
+              tcgplayer_url: local.tcgplayer_url || null,
+              source: `local-db (${local.db_source || 'sheet'})`
+            };
+          } else {
+            console.log(`[VERIFY-PKM] Local-DB entry ${resolved.setId}-${cleanNum} "${local.name}" didn't match AI name "${card.name}" — falling through to API`);
+          }
+        }
+      }
+    }
+
     // Detect if the AI identified this as a promo card (no slash in number, e.g. "SM211", "SWSH262")
     const isPromo = card.card_number && !card.card_number.includes('/') && /^[A-Z]{2,}P?\d+$/i.test(card.card_number.replace(/\s/g, ''));
     if (isPromo) {
@@ -2364,114 +2404,116 @@ async function verifyPokemon(card) {
     let globalBestScore = -1;
     const seenCardIds = new Set();  // Avoid scoring the same card twice
 
-    for (const query of queries) {
-      console.log(`[VERIFY-PKM] Trying query: ${query}`);
-      try {
-        const resp = await axios.get('https://api.pokemontcg.io/v2/cards', {
-          params: { q: query, pageSize: 20 },
-          timeout: 10000
-        });
+    // Fire all queries in parallel — the scoring aggregates across all results
+    // anyway, so there's no reason to wait between API calls. Drops worst-case
+    // verify latency from ~40s (4 × 10s timeouts) to ~10s (longest single call).
+    const queryResults = await Promise.all(queries.map(q =>
+      axios.get('https://api.pokemontcg.io/v2/cards', {
+        params: { q, pageSize: 20 },
+        timeout: 10000
+      })
+        .then(resp => ({ q, results: resp.data?.data || [] }))
+        .catch(err => {
+          console.error(`[VERIFY-PKM] Query failed "${q}": ${err.message}`);
+          return { q, results: [] };
+        })
+    ));
 
-        const results = resp.data?.data;
-        if (!results?.length) continue;
+    for (const { q, results } of queryResults) {
+      if (!results.length) continue;
+      console.log(`[VERIFY-PKM] "${q}" → ${results.length} results`);
+      for (const d of results) {
+        // Skip cards we've already scored from a previous query
+        if (seenCardIds.has(d.id)) continue;
+        seenCardIds.add(d.id);
 
-        for (const d of results) {
-          // Skip cards we've already scored from a previous query
-          if (seenCardIds.has(d.id)) continue;
-          seenCardIds.add(d.id);
+        let score = 0;
 
-          let score = 0;
+        // Name match (exact name is critical — "Charizard ex" ≠ "Charizard GX")
+        if (d.name?.toLowerCase() === card.name?.toLowerCase()) score += 50;
+        else if (d.name?.toLowerCase().includes(card.name?.toLowerCase())) score += 20;
 
-          // Name match (exact name is critical — "Charizard ex" ≠ "Charizard GX")
-          if (d.name?.toLowerCase() === card.name?.toLowerCase()) score += 50;
-          else if (d.name?.toLowerCase().includes(card.name?.toLowerCase())) score += 20;
+        // HP match — very strong signal
+        if (card.hp && d.hp === card.hp) score += 40;
+        else if (card.hp && d.hp) {
+          const diff = Math.abs(parseInt(d.hp) - parseInt(card.hp));
+          if (diff <= 10) score += 20;
+        }
 
-          // HP match — very strong signal
-          if (card.hp && d.hp === card.hp) score += 40;
-          else if (card.hp && d.hp) {
-            const diff = Math.abs(parseInt(d.hp) - parseInt(card.hp));
-            if (diff <= 10) score += 20;
-          }
-
-          // Card number match — HIGHEST priority since it distinguishes alt arts and promos
-          if (card.card_number) {
-            const rawAiNum = card.card_number.replace(/\s/g, '');
-            const aiNum = rawAiNum.replace(/\/.*/, '').replace(/^0+/, '');
-            const dbNum = (d.number || '').replace(/^0+/, '');
-            // For promo cards, also compare the full promo number directly
-            const aiNumNoSV = aiNum.replace(/^SV/, '');
-            if (aiNum === dbNum || rawAiNum === d.number) {
-              score += 80;  // Very high — exact card number is the definitive ID
-            } else if (aiNumNoSV === dbNum) {
-              score += 70;  // SV prefix stripped match
-            } else if (isPromo && aiNum.length > 0 && dbNum.length > 0) {
-              // For promos, a number MISMATCH is a very strong negative signal
-              score -= 40;
-            } else if (aiNum.length > 0 && dbNum.length > 0) {
-              score -= 10;  // Penalty for non-promo number mismatch
-            }
-          }
-
-          // Abilities match (Pokemon TCG API has separate abilities array)
-          if (card.attacks?.length && d.abilities?.length) {
-            const aiAbilities = card.attacks.map(a => (typeof a === 'string' ? a : '').toLowerCase());
-            const dbAbilities = d.abilities.map(a => (a.name || '').toLowerCase());
-            const abilityMatches = aiAbilities.filter(a => dbAbilities.some(da => da.includes(a) || a.includes(da)));
-            score += abilityMatches.length * 15;
-          }
-
-          // Set total match — if AI says "44/101", the set must have ~101 cards
-          // This is a strong disambiguator when same card appears across multiple sets.
-          // Mismatch penalty raised: if AI clearly read "133/132" and DB card is from
-          // a 165-card set, that is a near-certain wrong-set signal.
-          if (card.card_number && card.card_number.includes('/')) {
-            const aiSetTotal = parseInt(card.card_number.split('/')[1]?.replace(/^0+/, '') || '0');
-            const dbSetTotal = parseInt(d.set?.printedTotal || d.set?.total || '0');
-            if (aiSetTotal && dbSetTotal) {
-              if (aiSetTotal === dbSetTotal) {
-                score += 50;  // Set size matches exactly — strong confirmation
-              } else {
-                const diff = Math.abs(aiSetTotal - dbSetTotal);
-                if (diff <= 2) score += 20;         // Close enough (OCR ±1-2)
-                else if (diff <= 10) score -= 30;   // Different set probably
-                else score -= 80;                    // Totally different era of set
-              }
-            }
-          }
-
-          // Set code match
-          if (card.set_code && d.set?.id?.toUpperCase() === card.set_code.toUpperCase()) score += 25;
-          // Set name match (fuzzy — AI might say "Team Magma" instead of full name)
-          if (card.set_name && d.set?.name) {
-            const aiSet = card.set_name.toLowerCase().replace(/^ex\s+/i, '');
-            const dbSet = d.set.name.toLowerCase().replace(/^ex\s+/i, '');
-            if (aiSet === dbSet) score += 25;
-            else if (dbSet.includes(aiSet) || aiSet.includes(dbSet)) score += 15;
-          }
-
-          // Attack names match — very strong for disambiguation
-          if (card.attacks?.length && d.attacks?.length) {
-            const aiAttacks = card.attacks.map(a => (typeof a === 'string' ? a : a.name || '').toLowerCase());
-            const dbAttacks = d.attacks.map(a => (a.name || '').toLowerCase());
-            const matches = aiAttacks.filter(a => dbAttacks.some(da => da.includes(a) || a.includes(da)));
-            score += matches.length * 15;
-          }
-
-          // Suffix type match (ex vs GX vs V etc.)
-          const aiSuffix = extractPokemonSuffix(card.name);
-          const dbSuffix = extractPokemonSuffix(d.name);
-          if (aiSuffix && dbSuffix && aiSuffix === dbSuffix) score += 35;
-          else if (aiSuffix && dbSuffix && aiSuffix !== dbSuffix) score -= 50; // Penalise wrong type
-
-          console.log(`[VERIFY-PKM]   "${d.name}" (${d.set?.name} [${d.set?.printedTotal} cards] #${d.number}, HP:${d.hp}) => score ${score}`);
-
-          if (score > globalBestScore) {
-            globalBestScore = score;
-            globalBest = d;
+        // Card number match — HIGHEST priority since it distinguishes alt arts and promos
+        if (card.card_number) {
+          const rawAiNum = card.card_number.replace(/\s/g, '');
+          const aiNum = rawAiNum.replace(/\/.*/, '').replace(/^0+/, '');
+          const dbNum = (d.number || '').replace(/^0+/, '');
+          // For promo cards, also compare the full promo number directly
+          const aiNumNoSV = aiNum.replace(/^SV/, '');
+          if (aiNum === dbNum || rawAiNum === d.number) {
+            score += 80;  // Very high — exact card number is the definitive ID
+          } else if (aiNumNoSV === dbNum) {
+            score += 70;  // SV prefix stripped match
+          } else if (isPromo && aiNum.length > 0 && dbNum.length > 0) {
+            // For promos, a number MISMATCH is a very strong negative signal
+            score -= 40;
+          } else if (aiNum.length > 0 && dbNum.length > 0) {
+            score -= 10;  // Penalty for non-promo number mismatch
           }
         }
-      } catch (innerErr) {
-        console.error(`[VERIFY-PKM] Query failed: ${innerErr.message}`);
+
+        // Abilities match (Pokemon TCG API has separate abilities array)
+        if (card.attacks?.length && d.abilities?.length) {
+          const aiAbilities = card.attacks.map(a => (typeof a === 'string' ? a : '').toLowerCase());
+          const dbAbilities = d.abilities.map(a => (a.name || '').toLowerCase());
+          const abilityMatches = aiAbilities.filter(a => dbAbilities.some(da => da.includes(a) || a.includes(da)));
+          score += abilityMatches.length * 15;
+        }
+
+        // Set total match — if AI says "44/101", the set must have ~101 cards.
+        // Strong disambiguator when same card appears across multiple sets.
+        if (card.card_number && card.card_number.includes('/')) {
+          const aiSetTotal = parseInt(card.card_number.split('/')[1]?.replace(/^0+/, '') || '0');
+          const dbSetTotal = parseInt(d.set?.printedTotal || d.set?.total || '0');
+          if (aiSetTotal && dbSetTotal) {
+            if (aiSetTotal === dbSetTotal) {
+              score += 50;  // Set size matches exactly — strong confirmation
+            } else {
+              const diff = Math.abs(aiSetTotal - dbSetTotal);
+              if (diff <= 2) score += 20;         // Close enough (OCR ±1-2)
+              else if (diff <= 10) score -= 30;   // Different set probably
+              else score -= 80;                    // Totally different era of set
+            }
+          }
+        }
+
+        // Set code match
+        if (card.set_code && d.set?.id?.toUpperCase() === card.set_code.toUpperCase()) score += 25;
+        // Set name match (fuzzy — AI might say "Team Magma" instead of full name)
+        if (card.set_name && d.set?.name) {
+          const aiSet = card.set_name.toLowerCase().replace(/^ex\s+/i, '');
+          const dbSet = d.set.name.toLowerCase().replace(/^ex\s+/i, '');
+          if (aiSet === dbSet) score += 25;
+          else if (dbSet.includes(aiSet) || aiSet.includes(dbSet)) score += 15;
+        }
+
+        // Attack names match — very strong for disambiguation
+        if (card.attacks?.length && d.attacks?.length) {
+          const aiAttacks = card.attacks.map(a => (typeof a === 'string' ? a : a.name || '').toLowerCase());
+          const dbAttacks = d.attacks.map(a => (a.name || '').toLowerCase());
+          const matches = aiAttacks.filter(a => dbAttacks.some(da => da.includes(a) || a.includes(da)));
+          score += matches.length * 15;
+        }
+
+        // Suffix type match (ex vs GX vs V etc.)
+        const aiSuffix = extractPokemonSuffix(card.name);
+        const dbSuffix = extractPokemonSuffix(d.name);
+        if (aiSuffix && dbSuffix && aiSuffix === dbSuffix) score += 35;
+        else if (aiSuffix && dbSuffix && aiSuffix !== dbSuffix) score -= 50; // Penalise wrong type
+
+        console.log(`[VERIFY-PKM]   "${d.name}" (${d.set?.name} [${d.set?.printedTotal} cards] #${d.number}, HP:${d.hp}) => score ${score}`);
+
+        if (score > globalBestScore) {
+          globalBestScore = score;
+          globalBest = d;
+        }
       }
     }
 
@@ -3333,61 +3375,62 @@ async function priceEbaySold(card) {
   // Broadest: just the name + game
   queries.push(`${card.name} ${gameNames[card.game] || 'tcg'} card`);
 
-  for (const query of queries) {
-    console.log(`[eBay] Searching: "${query}"`);
-    try {
-      const resp = await axios.get('https://api.ebay.com/buy/browse/v1/item_summary/search', {
-        params: {
-          q: query,
-          category_ids: '183454', // Collectible Card Games category
-          filter: 'buyingOptions:{FIXED_PRICE|AUCTION}',
-          sort: 'price',
-          limit: 15
-        },
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'X-EBAY-C-MARKETPLACE-ID': 'EBAY_IE' // Ireland for EUR
-        },
-        timeout: 10000
-      });
+  // Fire all queries in parallel but still prefer the most specific one
+  // (queries[0]) — we iterate results in specificity order and return the
+  // first query that produced usable prices. Worst-case latency drops from
+  // ~30s (3 × 10s timeouts) to ~10s.
+  const responses = await Promise.all(queries.map(q =>
+    axios.get('https://api.ebay.com/buy/browse/v1/item_summary/search', {
+      params: {
+        q,
+        category_ids: '183454', // Collectible Card Games
+        filter: 'buyingOptions:{FIXED_PRICE|AUCTION}',
+        sort: 'price',
+        limit: 15
+      },
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'X-EBAY-C-MARKETPLACE-ID': 'EBAY_IE' // Ireland for EUR
+      },
+      timeout: 10000
+    })
+      .then(resp => ({ q, items: resp.data?.itemSummaries || [] }))
+      .catch(err => {
+        console.error(`[eBay] API error for "${q}": ${err.response?.data?.errors?.[0]?.message || err.message}`);
+        return { q, items: [] };
+      })
+  ));
 
-      if (resp.data?.itemSummaries?.length > 0) {
-        const items = resp.data.itemSummaries;
-        console.log(`[eBay] Found ${items.length} listings`);
+  for (const { q, items } of responses) {
+    if (!items.length) { console.log(`[eBay] "${q}" → no results`); continue; }
+    console.log(`[eBay] "${q}" → ${items.length} listings`);
 
-        const prices = items
-          .filter(i => i.price?.value)
-          .map(i => ({
-            price: parseFloat(i.price.value),
-            currency: i.price.currency,
-            title: i.title,
-            url: i.itemWebUrl
-          }))
-          .filter(i => i.price > 0 && i.price < 10000) // Filter out obvious junk
-          .sort((a, b) => a.price - b.price);
+    const prices = items
+      .filter(i => i.price?.value)
+      .map(i => ({
+        price: parseFloat(i.price.value),
+        currency: i.price.currency,
+        title: i.title,
+        url: i.itemWebUrl
+      }))
+      .filter(i => i.price > 0 && i.price < 10000) // strip obvious junk
+      .sort((a, b) => a.price - b.price);
 
-        if (prices.length > 0) {
-          const median = prices[Math.floor(prices.length / 2)];
-          return {
-            median_price: median.price,
-            low: prices[0].price,
-            high: prices[prices.length - 1].price,
-            sample_size: prices.length,
-            currency: median.currency || 'EUR',
-            recent_sales: prices.slice(0, 5).map(i => ({
-              title: i.title,
-              price: i.price,
-              currency: i.currency,
-              url: i.url
-            }))
-          };
-        }
-      } else {
-        console.log(`[eBay] No results for this query`);
-      }
-    } catch (err) {
-      console.error(`[eBay] API error for "${query}":`, err.response?.data?.errors?.[0]?.message || err.message);
-    }
+    if (!prices.length) continue;
+    const median = prices[Math.floor(prices.length / 2)];
+    return {
+      median_price: median.price,
+      low: prices[0].price,
+      high: prices[prices.length - 1].price,
+      sample_size: prices.length,
+      currency: median.currency || 'EUR',
+      recent_sales: prices.slice(0, 5).map(i => ({
+        title: i.title,
+        price: i.price,
+        currency: i.currency,
+        url: i.url
+      }))
+    };
   }
 
   console.log('[eBay] No results found across all search strategies');
@@ -3398,6 +3441,45 @@ async function priceEbaySold(card) {
 // ============================================================
 // COMBINED PRICING ENDPOINT
 // ============================================================
+// In-memory pricing cache — keyed on the card's identifying fields plus
+// condition + graded state + buy percentage. A card re-scanned during the
+// same session (common when Dave re-checks a pile) returns in <5ms instead
+// of hitting 5 upstream APIs again. 60-min TTL keeps prices reasonably
+// fresh while eliminating the obvious duplicate work.
+const PRICE_CACHE_TTL_MS = 60 * 60 * 1000;
+const PRICE_CACHE_MAX = 500;
+const priceCache = new Map();
+function priceCacheKey(card, buyPercentage) {
+  return [
+    card.game || '',
+    (card.name || '').toLowerCase(),
+    (card.set_code || '').toUpperCase(),
+    (card.card_number || '').toString(),
+    card.condition_estimate || 'NM',
+    card.variant || 'normal',
+    card.graded ? `${card.graded.company}-${card.graded.grade}` : '',
+    String(buyPercentage)
+  ].join('|');
+}
+function priceCacheGet(key) {
+  const hit = priceCache.get(key);
+  if (!hit) return null;
+  if (Date.now() - hit.ts > PRICE_CACHE_TTL_MS) {
+    priceCache.delete(key);
+    return null;
+  }
+  // LRU: re-insert so most-recently-used stays alive
+  priceCache.delete(key);
+  priceCache.set(key, hit);
+  return hit.data;
+}
+function priceCacheSet(key, data) {
+  if (priceCache.size >= PRICE_CACHE_MAX) {
+    const first = priceCache.keys().next().value;
+    priceCache.delete(first);
+  }
+  priceCache.set(key, { ts: Date.now(), data });
+}
 
 app.post('/api/price', async (req, res) => {
   try {
@@ -3411,6 +3493,14 @@ app.post('/api/price', async (req, res) => {
     };
     const conditionMult = conditionMultipliers[card.condition_estimate] || 1.0;
     const buyPercentage = (req.body.buyPercentage || process.env.DEFAULT_BUY_PERCENTAGE || 60) / 100;
+
+    // Cache check — a re-scan of the same card/condition/percentage returns instantly.
+    const cacheKey = priceCacheKey(card, buyPercentage);
+    const cached = priceCacheGet(cacheKey);
+    if (cached) {
+      console.log(`[PRICE-CACHE] HIT ${cacheKey}`);
+      return res.json({ ...cached, cached: true });
+    }
 
     // Build Cardmarket direct link (user can tap to check live prices)
     const cmLinks = buildCardmarketUrl(card);
@@ -3714,6 +3804,7 @@ app.post('/api/price', async (req, res) => {
     pricing.hotness = hotness;
     console.log(`[HOTNESS] ${card.name}: ${hotness.score}/100 (${hotness.label}) — ${hotness.reasons.join('; ') || 'default'}`);
 
+    priceCacheSet(cacheKey, pricing);
     res.json(pricing);
   } catch (err) {
     console.error('Pricing error:', err.message);
