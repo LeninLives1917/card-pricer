@@ -311,9 +311,12 @@ function extractImageBuffer(req) {
 //   { cached: false, parsed, cacheKey|null } — caller verifies + caches
 async function identifyCore({ buffer, isBatchMode, hint }) {
   // Batch (binder) keeps higher resolution — many small cards to read.
-  // Single-card gets a tighter resize to cut payload (quadratic savings).
-  const targetSize = isBatchMode ? 1500 : 1100;
-  const jpegQuality = isBatchMode ? 90 : 88;
+  // Single-card was historically 1100px @ q88, but that throws away the
+  // detail Claude needs to read small card numbers reliably. Bumped to
+  // 1800px @ q92 to match what's actually useful for OCR. Claude SDK
+  // auto-handles payloads under 5MB; these sizes are well within that.
+  const targetSize = isBatchMode ? 2200 : 1800;
+  const jpegQuality = 92;
 
   const optimized = await sharp(buffer)
     .resize(targetSize, targetSize, { fit: 'inside', withoutEnlargement: true })

@@ -16,7 +16,7 @@
   <title>Card Pricer</title>
   <script>
     // Register service worker for PWA install + offline shell.
-    console.log('[APP] Card Pricer client v40 loaded');
+    console.log('[APP] Card Pricer client v41 loaded');
     if ('serviceWorker' in navigator) {
       window.addEventListener('load', () => {
         navigator.serviceWorker.register('/service-worker.js', { updateViaCache: 'none' })
@@ -2138,34 +2138,40 @@ async function handleFileUpload(event) {
   event.target.value = '';
 }
 
-// Client-side resize — targets 5MB max (Claude's limit).
-// Sends at full original resolution unless the file exceeds 5MB,
-// then progressively scales down until it fits.
-function resizeDataUrl(dataUrl, maxBytes = 5 * 1024 * 1024) {
+// Client-side resize with explicit dimension + quality controls.
+//   maxDimension — cap for the longer side (null = don't cap on pixels)
+//   quality      — JPEG quality (0.95 preserves small-text detail)
+//   maxBytes     — hard cap on output size (Claude's 5MB limit)
+// The image is returned at original resolution if it already fits. Otherwise
+// we scale down to maxDimension, then shrink further in 20% steps if the
+// JPEG is still over the byte cap. Previously this function only accepted
+// maxBytes as the 2nd positional arg — call sites that tried to pass a
+// pixel dimension were silently treating it as bytes, which butchered the
+// image down to ~700px every scan.
+function resizeDataUrl(dataUrl, { maxDimension = null, quality = 0.95, maxBytes = 5 * 1024 * 1024 } = {}) {
   return new Promise((resolve, reject) => {
-    // Quick size check — base64 is ~33% larger than raw bytes
     const estimatedBytes = (dataUrl.length - dataUrl.indexOf(',') - 1) * 0.75;
-    if (estimatedBytes <= maxBytes) { resolve(dataUrl); return; }
+    if (!maxDimension && estimatedBytes <= maxBytes) { resolve(dataUrl); return; }
 
     const img = new Image();
     img.onload = () => {
       try {
         let w = img.naturalWidth, h = img.naturalHeight;
-        let quality = 0.98;
+        // Apply dimension cap first
+        if (maxDimension && Math.max(w, h) > maxDimension) {
+          const scale = maxDimension / Math.max(w, h);
+          w = Math.round(w * scale);
+          h = Math.round(h * scale);
+        }
         let result = dataUrl;
-
-        // Try progressively smaller sizes until under 5MB
         for (let attempt = 0; attempt < 5; attempt++) {
           const canvas = document.createElement('canvas');
-          canvas.width = Math.round(w);
-          canvas.height = Math.round(h);
-          canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+          canvas.width = w;
+          canvas.height = h;
+          canvas.getContext('2d').drawImage(img, 0, 0, w, h);
           result = canvas.toDataURL('image/jpeg', quality);
-
           const bytes = (result.length - result.indexOf(',') - 1) * 0.75;
           if (bytes <= maxBytes) break;
-
-          // Scale down 20% each attempt
           w = Math.round(w * 0.8);
           h = Math.round(h * 0.8);
         }
@@ -2554,9 +2560,10 @@ async function handleBulkFiles(event) {
   // full-res original is discarded.
   for (const f of files) {
     const rawUrl = await readFileAsDataURL(f);
-    // Resize for upload/OCR (2400px high quality) and thumbnail (120px)
+    // Resize for upload (2400px at 0.95 — bulk is often binder pages where
+    // many small cards need to stay readable) and thumbnail (~300px).
     let uploadUrl, thumbUrl;
-    try { uploadUrl = await resizeDataUrl(rawUrl); } catch { uploadUrl = rawUrl; }
+    try { uploadUrl = await resizeDataUrl(rawUrl, { maxDimension: 2400, quality: 0.95 }); } catch { uploadUrl = rawUrl; }
     // Thumbnail is small — just scale the upload down via canvas
     try {
       thumbUrl = await new Promise((resolve) => {
@@ -2807,7 +2814,10 @@ async function processImage(imageData) {
     let uploadImage = imageData;
     if (state.mode !== 'batch') {
       try {
-        uploadImage = await resizeDataUrl(imageData, 3200, 0.95);
+        // 2000px longer side at quality 0.95 — preserves small-text detail
+        // (set code + card number at the bottom of the card) while keeping
+        // the upload reasonable on cellular.
+        uploadImage = await resizeDataUrl(imageData, { maxDimension: 2000, quality: 0.95 });
       } catch (e) {
         console.warn('Client resize failed, sending original:', e);
       }
