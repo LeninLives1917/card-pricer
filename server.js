@@ -7,6 +7,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import axios from 'axios';
 import rateLimit from 'express-rate-limit';
 import { createClient as createSupabaseClient } from '@supabase/supabase-js';
+import Stripe from 'stripe';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import crypto from 'crypto';
@@ -22,7 +23,16 @@ const app = express();
 // to come from the proxy IP and per-IP rate limits would collapse into one bucket.
 app.set('trust proxy', 1);
 app.use(cors());
-app.use(express.json({ limit: '50mb' }));
+// Preserve raw request body for the Stripe webhook path so we can verify
+// signatures. Other routes still get the parsed JSON via req.body.
+app.use(express.json({
+  limit: '50mb',
+  verify: (req, res, buf) => {
+    if (req.originalUrl && req.originalUrl.startsWith('/api/stripe-webhook')) {
+      req.rawBody = buf;
+    }
+  }
+}));
 
 // ============================================================
 // RATE LIMITS — protect paid upstreams (Anthropic, Brevo) from abuse
@@ -105,9 +115,11 @@ function logScanEvent(userId, endpoint) {
 // up automatically. Beta plan exists so the closed-beta testers aren't
 // capped while we iterate.
 const PLAN_LIMITS = {
-  'beta': null,  // closed-beta testers — unmetered
-  'free': 40,    // public free tier
-  'pro':  null   // paid tier
+  'beta':   null,  // closed-beta testers — unmetered
+  'free':   40,    // public free tier (onboarding)
+  'solo':   100,   // €9/mo or €81/yr — small booth / solo dealer
+  'vendor': 500,   // €29/mo or €261/yr — regular show vendor
+  'shop':   null   // €59/mo or €531/yr — unlimited, physical shops
 };
 
 // Query the user's scan count for the current calendar month (UTC).
@@ -170,6 +182,193 @@ app.get('/api/usage', requireAuth, async (req, res) => {
     const usage = await getUsage(req.user.id);
     res.json(usage);
   } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ============================================================
+// STRIPE — checkout, customer portal, webhook (Phase D)
+// ============================================================
+const stripe = process.env.STRIPE_SECRET_KEY
+  ? new Stripe(process.env.STRIPE_SECRET_KEY, { apiVersion: '2024-06-20' })
+  : null;
+if (!stripe) {
+  console.warn('[STRIPE] STRIPE_SECRET_KEY missing — billing endpoints disabled.');
+}
+
+// Price ID → { plan, interval } and vice versa. Config lives entirely in
+// env vars so pricing can be swapped without a code deploy.
+const PRICE_TO_PLAN = {
+  [process.env.STRIPE_PRICE_SOLO_MONTHLY]:   { plan: 'solo',   interval: 'monthly' },
+  [process.env.STRIPE_PRICE_SOLO_YEARLY]:    { plan: 'solo',   interval: 'yearly'  },
+  [process.env.STRIPE_PRICE_VENDOR_MONTHLY]: { plan: 'vendor', interval: 'monthly' },
+  [process.env.STRIPE_PRICE_VENDOR_YEARLY]:  { plan: 'vendor', interval: 'yearly'  },
+  [process.env.STRIPE_PRICE_SHOP_MONTHLY]:   { plan: 'shop',   interval: 'monthly' },
+  [process.env.STRIPE_PRICE_SHOP_YEARLY]:    { plan: 'shop',   interval: 'yearly'  },
+};
+function priceForPlan(plan, interval) {
+  const key = `STRIPE_PRICE_${plan.toUpperCase()}_${interval.toUpperCase()}`;
+  return process.env[key] || null;
+}
+
+// Ensure the user has a Stripe customer; create on first checkout.
+async function getOrCreateStripeCustomer(user) {
+  const { data: profile } = await supabase
+    .from('profiles').select('stripe_customer_id').eq('user_id', user.id).maybeSingle();
+  if (profile?.stripe_customer_id) return profile.stripe_customer_id;
+  const customer = await stripe.customers.create({
+    email: user.email,
+    metadata: { supabase_user_id: user.id }
+  });
+  await supabase
+    .from('profiles')
+    .update({ stripe_customer_id: customer.id })
+    .eq('user_id', user.id);
+  return customer.id;
+}
+
+// POST /api/checkout — returns { url } for a Stripe Checkout session.
+app.post('/api/checkout', requireAuth, async (req, res) => {
+  if (!stripe) return res.status(503).json({ error: 'billing unavailable' });
+  try {
+    const { tier, interval } = req.body || {};
+    if (!['solo', 'vendor', 'shop'].includes(tier)) {
+      return res.status(400).json({ error: 'invalid tier' });
+    }
+    if (!['monthly', 'yearly'].includes(interval)) {
+      return res.status(400).json({ error: 'invalid interval' });
+    }
+    const price = priceForPlan(tier, interval);
+    if (!price) return res.status(500).json({ error: 'price id not configured' });
+
+    const customerId = await getOrCreateStripeCustomer(req.user);
+    const origin = `${req.protocol}://${req.get('host')}`;
+    const session = await stripe.checkout.sessions.create({
+      mode: 'subscription',
+      customer: customerId,
+      line_items: [{ price, quantity: 1 }],
+      success_url: `${origin}/?checkout=success`,
+      cancel_url: `${origin}/?checkout=cancel`,
+      allow_promotion_codes: true,
+      // Metadata on the session (and the eventual subscription) so the
+      // webhook can map Stripe events back to our Supabase user without
+      // needing a reverse lookup on stripe_customer_id.
+      metadata: { supabase_user_id: req.user.id, plan: tier, interval },
+      subscription_data: {
+        metadata: { supabase_user_id: req.user.id, plan: tier, interval }
+      }
+    });
+    res.json({ url: session.url });
+  } catch (e) {
+    console.error('[CHECKOUT] failed:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// POST /api/portal — returns { url } for Stripe Customer Portal session.
+// Used for self-serve cancellation, payment method updates, invoice history.
+app.post('/api/portal', requireAuth, async (req, res) => {
+  if (!stripe) return res.status(503).json({ error: 'billing unavailable' });
+  try {
+    const { data: profile } = await supabase
+      .from('profiles').select('stripe_customer_id').eq('user_id', req.user.id).maybeSingle();
+    if (!profile?.stripe_customer_id) {
+      return res.status(400).json({ error: 'no stripe customer — subscribe first' });
+    }
+    const origin = `${req.protocol}://${req.get('host')}`;
+    const session = await stripe.billingPortal.sessions.create({
+      customer: profile.stripe_customer_id,
+      return_url: `${origin}/`
+    });
+    res.json({ url: session.url });
+  } catch (e) {
+    console.error('[PORTAL] failed:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// POST /api/stripe-webhook — Stripe → us. Signature-verified, so no requireAuth.
+// Uses raw body (captured by the express.json verify callback at top of file).
+app.post('/api/stripe-webhook', async (req, res) => {
+  if (!stripe || !process.env.STRIPE_WEBHOOK_SECRET) {
+    return res.status(503).send('webhook unavailable');
+  }
+  const sig = req.headers['stripe-signature'];
+  let event;
+  try {
+    event = stripe.webhooks.constructEvent(req.rawBody, sig, process.env.STRIPE_WEBHOOK_SECRET);
+  } catch (e) {
+    console.error('[WEBHOOK] signature verification failed:', e.message);
+    return res.status(400).send(`Webhook Error: ${e.message}`);
+  }
+
+  try {
+    switch (event.type) {
+      case 'checkout.session.completed': {
+        const s = event.data.object;
+        const userId = s.metadata?.supabase_user_id;
+        if (userId && s.subscription) {
+          // Pull the subscription to know the price → plan mapping.
+          const sub = await stripe.subscriptions.retrieve(s.subscription);
+          const priceId = sub.items.data[0]?.price?.id;
+          const mapped = PRICE_TO_PLAN[priceId] || { plan: s.metadata?.plan, interval: s.metadata?.interval };
+          await supabase.from('profiles').update({
+            plan: mapped.plan,
+            plan_interval: mapped.interval,
+            stripe_customer_id: s.customer,
+            stripe_subscription_id: s.subscription
+          }).eq('user_id', userId);
+          console.log(`[WEBHOOK] checkout.completed → ${userId} upgraded to ${mapped.plan} (${mapped.interval})`);
+        }
+        break;
+      }
+      case 'customer.subscription.updated':
+      case 'customer.subscription.created': {
+        const sub = event.data.object;
+        const userId = sub.metadata?.supabase_user_id;
+        if (!userId) break;
+        const priceId = sub.items.data[0]?.price?.id;
+        const mapped = PRICE_TO_PLAN[priceId] || null;
+        // Any non-active status = revert to free (past_due, unpaid, canceled, incomplete_expired).
+        const isActive = sub.status === 'active' || sub.status === 'trialing';
+        const nextPlan = isActive && mapped ? mapped.plan : 'free';
+        const nextInterval = isActive && mapped ? mapped.interval : null;
+        await supabase.from('profiles').update({
+          plan: nextPlan,
+          plan_interval: nextInterval,
+          stripe_subscription_id: sub.id
+        }).eq('user_id', userId);
+        console.log(`[WEBHOOK] sub.${event.type.endsWith('created') ? 'created' : 'updated'} status=${sub.status} → ${userId} plan=${nextPlan}`);
+        break;
+      }
+      case 'customer.subscription.deleted': {
+        const sub = event.data.object;
+        const userId = sub.metadata?.supabase_user_id;
+        if (!userId) break;
+        await supabase.from('profiles').update({
+          plan: 'free',
+          plan_interval: null,
+          stripe_subscription_id: null
+        }).eq('user_id', userId);
+        console.log(`[WEBHOOK] sub.deleted → ${userId} downgraded to free`);
+        break;
+      }
+      case 'invoice.payment_failed': {
+        const inv = event.data.object;
+        console.warn(`[WEBHOOK] invoice.payment_failed: customer=${inv.customer} amount=${inv.amount_due}`);
+        // Subscription state change will also fire — no action needed here beyond logging.
+        break;
+      }
+      case 'invoice.paid':
+        // Renewal successful. No DB change needed; subscription.updated will
+        // fire if anything about the plan changes.
+        break;
+      default:
+        console.log(`[WEBHOOK] unhandled event type: ${event.type}`);
+    }
+    res.json({ received: true });
+  } catch (e) {
+    console.error('[WEBHOOK] handler error:', e.message);
     res.status(500).json({ error: e.message });
   }
 });

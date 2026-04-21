@@ -20,7 +20,7 @@
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script>
     // Register service worker for PWA install + offline shell.
-    console.log('[APP] Card Pricer client v53 loaded');
+    console.log('[APP] Card Pricer client v54 loaded');
     if ('serviceWorker' in navigator) {
       window.addEventListener('load', () => {
         navigator.serviceWorker.register('/service-worker.js', { updateViaCache: 'none' })
@@ -294,9 +294,11 @@
       const countLabel = document.getElementById('usageCountLabel');
       const bar = document.getElementById('usageBar');
       const fill = document.getElementById('usageBarFill');
+      const actions = document.getElementById('planActionsRow');
       if (!planLabel || !countLabel) return;
-      const planName = { beta: 'Beta', free: 'Free', pro: 'Pro' }[u.plan] || u.plan;
+      const planName = { beta: 'Beta', free: 'Free', solo: 'Solo', vendor: 'Vendor', shop: 'Shop' }[u.plan] || u.plan;
       planLabel.textContent = `Plan: ${planName}`;
+      _currentPlan = u.plan;
       if (u.limit == null) {
         countLabel.textContent = `${u.used} scans this month · unlimited`;
         if (bar) bar.style.display = 'none';
@@ -306,17 +308,25 @@
         if (bar) bar.style.display = 'block';
         if (fill) {
           fill.style.width = pct + '%';
-          // Colour shifts to warn as we approach the limit.
           fill.style.background = pct >= 100 ? 'var(--red)'
                                 : pct >= 80  ? 'linear-gradient(135deg, var(--orange), var(--red))'
                                 :              'var(--grad-accent)';
         }
       }
+      // Upgrade / Manage subscription button.
+      if (actions) {
+        const isPaid = ['solo', 'vendor', 'shop'].includes(u.plan);
+        if (isPaid) {
+          actions.innerHTML = `<button class="header-btn" onclick="openCustomerPortal()" style="width:100%; justify-content:center;">Manage subscription</button>`;
+        } else {
+          actions.innerHTML = `<button class="header-btn" onclick="showPlanPicker()" style="width:100%; justify-content:center; background: var(--grad-accent); color: white; border: none; box-shadow: 0 4px 12px rgba(108,92,231,0.3);">Upgrade plan</button>`;
+        }
+      }
     }
 
     // Show a "limit reached" modal when the server returns 429 with
-    // scan_quota_exceeded. Simple for now — clicking "Ok" dismisses;
-    // full upgrade flow lands in Phase D.
+    // scan_quota_exceeded. Dismiss + Upgrade buttons — Upgrade opens the
+    // plan picker rather than just closing the blocker.
     function showQuotaExceededModal(payload) {
       let modal = document.getElementById('quotaModal');
       if (!modal) {
@@ -327,8 +337,8 @@
           <div class="auth-card" style="max-width:420px;">
             <h2>🔒 Monthly limit reached</h2>
             <div class="auth-sub" id="quotaModalBody"></div>
-            <button type="button" class="auth-submit" onclick="document.getElementById('quotaModal').remove(); refreshUsage();">Got it</button>
-            <div class="auth-footer">Beta testers: message the team to bump your plan.</div>
+            <button type="button" class="auth-submit" onclick="document.getElementById('quotaModal').remove(); showPlanPicker();">Upgrade</button>
+            <button type="button" class="auth-submit" style="background:var(--surface2); color:var(--text-dim); box-shadow:none; margin-top:6px;" onclick="document.getElementById('quotaModal').remove(); refreshUsage();">Later</button>
           </div>`;
         document.body.appendChild(modal);
       }
@@ -338,6 +348,126 @@
           || `You've used all ${payload?.limit || 'your'} scans this month on the ${payload?.plan || 'free'} plan.`;
       }
     }
+
+    // ========== PLAN PICKER (Phase D) ==========
+    // Static tier definitions — match server's PLAN_LIMITS + Stripe price
+    // IDs. Prices live on the server (env vars), the client just needs the
+    // display copy and the tier slug to send to /api/checkout.
+    const PLAN_TIERS = [
+      { slug: 'solo',   name: 'Solo',   scans: '100 scans/month',  monthly: 9,  yearly: 81,  popular: false },
+      { slug: 'vendor', name: 'Vendor', scans: '500 scans/month',  monthly: 29, yearly: 261, popular: true },
+      { slug: 'shop',   name: 'Shop',   scans: 'Unlimited scans',  monthly: 59, yearly: 531, popular: false }
+    ];
+    let _planInterval = 'monthly';
+    let _currentPlan  = 'free';
+
+    function showPlanPicker() {
+      // Try to reflect the user's current plan so the current tier is marked.
+      if (typeof window.renderUsage === 'function' || true) {
+        fetch('/api/usage').then(r => r.ok ? r.json() : null).then(u => {
+          if (u?.plan) _currentPlan = u.plan;
+          renderPlanPicker();
+        }).catch(() => renderPlanPicker());
+      }
+      const o = document.getElementById('planOverlay');
+      if (o) o.classList.remove('hidden');
+    }
+    function hidePlanPicker() {
+      const o = document.getElementById('planOverlay');
+      if (o) o.classList.add('hidden');
+      const err = document.getElementById('planPickerError');
+      if (err) err.textContent = '';
+    }
+    function setPlanInterval(interval) {
+      _planInterval = interval;
+      document.querySelectorAll('.plan-interval-btn').forEach(b => {
+        b.classList.toggle('active', b.dataset.interval === interval);
+      });
+      renderPlanPicker();
+    }
+    function renderPlanPicker() {
+      const grid = document.getElementById('planPickerGrid');
+      if (!grid) return;
+      grid.innerHTML = PLAN_TIERS.map(t => {
+        const price = _planInterval === 'monthly' ? t.monthly : t.yearly;
+        const unit  = _planInterval === 'monthly' ? '/mo'     : '/yr';
+        const isCurrent = t.slug === _currentPlan;
+        const classes = ['plan-card'];
+        if (t.popular && !isCurrent) classes.push('popular');
+        if (isCurrent) classes.push('current');
+        return `
+          <div class="${classes.join(' ')}">
+            ${isCurrent ? '<div class="plan-badge current-badge">CURRENT</div>'
+                        : t.popular ? '<div class="plan-badge">POPULAR</div>' : ''}
+            <div class="plan-name">${t.name}</div>
+            <div class="plan-price">€${price}<small>${unit}</small></div>
+            <div class="plan-scans">${t.scans}</div>
+            <button class="plan-choose" ${isCurrent ? 'disabled' : ''} onclick="pickPlan('${t.slug}')">
+              ${isCurrent ? 'Current plan' : 'Choose'}
+            </button>
+          </div>`;
+      }).join('');
+    }
+
+    async function pickPlan(tier) {
+      const errEl = document.getElementById('planPickerError');
+      if (errEl) errEl.textContent = '';
+      try {
+        const resp = await fetch('/api/checkout', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ tier, interval: _planInterval })
+        });
+        if (!resp.ok) {
+          const j = await resp.json().catch(() => ({}));
+          if (errEl) errEl.textContent = j.error || `Checkout failed (${resp.status})`;
+          return;
+        }
+        const { url } = await resp.json();
+        if (url) window.location.href = url;
+      } catch (e) {
+        if (errEl) errEl.textContent = e.message || 'Checkout failed.';
+      }
+    }
+
+    async function openCustomerPortal() {
+      try {
+        const resp = await fetch('/api/portal', { method: 'POST' });
+        if (!resp.ok) {
+          const j = await resp.json().catch(() => ({}));
+          alert(j.error || 'Unable to open the billing portal.');
+          return;
+        }
+        const { url } = await resp.json();
+        if (url) window.location.href = url;
+      } catch (e) {
+        alert(e?.message || 'Unable to open the billing portal.');
+      }
+    }
+
+    // Handle Stripe Checkout return. Stripe appends ?checkout=success|cancel
+    // to the success/cancel URLs we set when creating the session.
+    (function handleCheckoutReturn() {
+      const p = new URLSearchParams(location.search);
+      const s = p.get('checkout');
+      if (!s) return;
+      // Clean the URL so a reload doesn't re-trigger the handler.
+      p.delete('checkout');
+      const clean = location.pathname + (p.toString() ? '?' + p.toString() : '');
+      history.replaceState({}, '', clean);
+      if (s === 'success') {
+        // Refresh usage + show a toast once the DOM is ready. The webhook
+        // may take a second or two to update the plan, so poll briefly.
+        setTimeout(() => {
+          if (typeof refreshUsage === 'function') refreshUsage();
+          if (typeof showPairToast === 'function') showPairToast('🎉 Subscription active — enjoy!');
+        }, 1200);
+      } else if (s === 'cancel') {
+        setTimeout(() => {
+          if (typeof showPairToast === 'function') showPairToast('Checkout cancelled — no charge.');
+        }, 100);
+      }
+    })();
     if (document.readyState === 'loading') {
       document.addEventListener('DOMContentLoaded', _initAuthGate);
     } else {
@@ -1041,6 +1171,82 @@
       cursor: pointer;
     }
     .corr-btn:active { background: var(--accent); color: white; border-color: var(--accent); }
+
+    /* ---- PLAN PICKER (Phase D) ---- */
+    .plan-picker-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 10px;
+      margin: 16px 0;
+    }
+    @media (max-width: 520px) {
+      .plan-picker-grid { grid-template-columns: 1fr; }
+    }
+    .plan-card {
+      background: var(--surface2);
+      border: 1px solid rgba(255,255,255,0.06);
+      border-radius: 12px;
+      padding: 14px 12px;
+      display: flex; flex-direction: column; gap: 6px;
+      position: relative;
+    }
+    .plan-card.popular {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 2px rgba(108, 92, 231, 0.35);
+    }
+    .plan-card.current {
+      border-color: var(--green);
+      box-shadow: 0 0 0 2px rgba(0, 230, 118, 0.3);
+    }
+    .plan-badge {
+      position: absolute; top: -8px; right: 10px;
+      background: var(--grad-accent); color: white;
+      font-size: 10px; font-weight: 700;
+      padding: 2px 8px; border-radius: 999px;
+      letter-spacing: 0.3px;
+    }
+    .plan-badge.current-badge { background: var(--green); }
+    .plan-name { font-size: 15px; font-weight: 800; letter-spacing: -0.3px; }
+    .plan-price { font-size: 22px; font-weight: 900; letter-spacing: -0.5px; }
+    .plan-price small { font-size: 12px; font-weight: 600; color: var(--text-dim); }
+    .plan-scans { font-size: 12px; color: var(--text-dim); }
+    .plan-choose {
+      margin-top: 6px;
+      padding: 8px; border-radius: 8px;
+      background: var(--grad-accent); color: white;
+      border: none; font-size: 13px; font-weight: 700;
+      cursor: pointer;
+    }
+    .plan-choose:disabled { background: var(--surface); color: var(--text-dim); cursor: default; }
+    .plan-interval-toggle {
+      display: flex; gap: 0;
+      background: var(--surface2);
+      border-radius: 999px;
+      padding: 3px;
+      align-self: center;
+    }
+    .plan-interval-btn {
+      padding: 7px 16px;
+      font-size: 12px; font-weight: 700;
+      border: none;
+      background: transparent;
+      color: var(--text-dim);
+      border-radius: 999px;
+      cursor: pointer;
+    }
+    .plan-interval-btn.active { background: var(--surface); color: var(--text); }
+    .plan-save-badge {
+      font-size: 9px; font-weight: 800;
+      color: var(--green);
+      margin-left: 4px;
+      letter-spacing: 0.3px;
+    }
+    .plan-close {
+      position: absolute; top: 8px; right: 10px;
+      background: transparent; border: none;
+      color: var(--text-dim); font-size: 22px;
+      cursor: pointer; line-height: 1;
+    }
 
     /* ---- AUTH MODAL (Phase B) ---- */
     /* Blocks the laptop app until the user signs in. Scanner-mode phones
@@ -1867,6 +2073,23 @@
 </head>
 <body>
 
+<!-- ===== PLAN PICKER MODAL (Phase D) ===== -->
+<div id="planOverlay" class="auth-overlay hidden">
+  <div class="auth-card" style="max-width: 520px; position: relative;">
+    <button type="button" class="plan-close" onclick="hidePlanPicker()" title="Close">×</button>
+    <h2>Upgrade your plan</h2>
+    <div class="auth-sub">More scans, same app. Cancel any time from your account.</div>
+    <div style="display:flex; justify-content:center; margin-top: 14px;">
+      <div class="plan-interval-toggle">
+        <button type="button" class="plan-interval-btn active" data-interval="monthly" onclick="setPlanInterval('monthly')">Monthly</button>
+        <button type="button" class="plan-interval-btn" data-interval="yearly" onclick="setPlanInterval('yearly')">Yearly<span class="plan-save-badge">SAVE 25%</span></button>
+      </div>
+    </div>
+    <div class="plan-picker-grid" id="planPickerGrid"></div>
+    <div id="planPickerError" class="auth-error"></div>
+  </div>
+</div>
+
 <!-- ===== AUTH MODAL (Phase B) ===== -->
 <div id="authOverlay" class="auth-overlay hidden">
   <div class="auth-card">
@@ -2200,6 +2423,7 @@
         <div id="usageBar" style="height:6px; background:var(--surface2); border-radius:3px; margin-top:6px; overflow:hidden; display:none;">
           <div id="usageBarFill" style="height:100%; width:0%; background:var(--grad-accent); transition:width 0.3s;"></div>
         </div>
+        <div id="planActionsRow" style="margin-top: 10px;"></div>
       </div>
       <div class="setting-group">
         <h3>API Connections</h3>
