@@ -20,7 +20,7 @@
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script>
     // Register service worker for PWA install + offline shell.
-    console.log('[APP] Card Pricer client v52 loaded');
+    console.log('[APP] Card Pricer client v53 loaded');
     if ('serviceWorker' in navigator) {
       window.addEventListener('load', () => {
         navigator.serviceWorker.register('/service-worker.js', { updateViaCache: 'none' })
@@ -166,6 +166,97 @@
       await window.sb.auth.signOut();
       location.reload();
     }
+
+    // ========== STATE SYNC (localStorage ↔ Supabase) ==========
+    // Debounced push of the user's sessions + want list to /api/state.
+    // localStorage remains the fast read path; server is the durable backing
+    // store so state survives browser cache clears and follows the user to
+    // a new laptop. Simple last-writer-wins semantics.
+    let _syncTimer = null;
+    let _syncInFlight = false;
+    let _syncPending = false;
+    window._syncSuppressed = false; // set during a pull so the resulting
+                                    // saveAllSessions doesn't echo back.
+
+    function queueStateSync() {
+      if (window._syncSuppressed) return;
+      clearTimeout(_syncTimer);
+      _syncTimer = setTimeout(pushStateToServer, 1500);
+    }
+    window.queueStateSync = queueStateSync;
+
+    async function pushStateToServer() {
+      if (!window.sb || !window.state) return;
+      if (_syncInFlight) { _syncPending = true; return; }
+      _syncInFlight = true;
+      try {
+        const { data } = await window.sb.auth.getSession();
+        if (!data?.session) return;
+        const payload = {
+          sessions: window.state.sessions || {},
+          currentSessionId: window.state.currentSessionId || null,
+          wantlist: JSON.parse(localStorage.getItem('cardpricer_wantlist') || '[]'),
+          v: 1
+        };
+        await fetch('/api/state', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ state: payload })
+        });
+      } catch (e) {
+        console.warn('[SYNC] push failed:', e?.message || e);
+      } finally {
+        _syncInFlight = false;
+        if (_syncPending) { _syncPending = false; queueStateSync(); }
+      }
+    }
+
+    async function pullStateFromServer() {
+      if (!window.sb || !window.state) return;
+      try {
+        const { data } = await window.sb.auth.getSession();
+        if (!data?.session) return;
+        const resp = await fetch('/api/state');
+        if (!resp.ok) return;
+        const body = await resp.json();
+        if (!body?.state) {
+          // Server empty — seed it with whatever local has, if anything.
+          if (window.state.sessions && Object.keys(window.state.sessions).length) {
+            pushStateToServer();
+          }
+          return;
+        }
+        const s = body.state;
+        window._syncSuppressed = true;
+        try {
+          if (s.sessions && typeof s.sessions === 'object') {
+            window.state.sessions = s.sessions;
+          }
+          if (s.currentSessionId) window.state.currentSessionId = s.currentSessionId;
+          if (Array.isArray(s.wantlist)) {
+            localStorage.setItem('cardpricer_wantlist', JSON.stringify(s.wantlist));
+          }
+          // Flush to localStorage so in-memory and cache agree.
+          if (typeof saveAllSessions === 'function') saveAllSessions();
+          // Re-render everything that reads from state.sessions / wantlist.
+          if (typeof renderSessionPills === 'function') renderSessionPills();
+          if (typeof renderSessionLog === 'function') renderSessionLog();
+          if (typeof renderWantList === 'function') renderWantList();
+          if (typeof updateSessionStrip === 'function') updateSessionStrip();
+          if (typeof updateRecentRibbon === 'function') updateRecentRibbon();
+          const logCount = document.getElementById('logCount');
+          if (logCount && window.state.sessions?.[window.state.currentSessionId]?.log) {
+            logCount.textContent = window.state.sessions[window.state.currentSessionId].log.length;
+          }
+        } finally {
+          window._syncSuppressed = false;
+        }
+        console.log('[SYNC] state restored from server');
+      } catch (e) {
+        console.warn('[SYNC] pull failed:', e?.message || e);
+      }
+    }
+    window.pullStateFromServer = pullStateFromServer;
 
     // Session check on load — if not scanner-mode and no session, show modal.
     // Runs as soon as the script evaluates; DOM may not be ready yet, so we
@@ -2301,6 +2392,9 @@ let state = {
     }
   }
 };
+// Expose to the head auth script so sync functions can read/write state
+// without crossing module boundaries.
+window.state = state;
 
 // ============================================================
 // TABS
@@ -4222,6 +4316,9 @@ function saveAllSessions() {
     sessions: state.sessions,
     currentSessionId: state.currentSessionId
   }));
+  // Push to Supabase (debounced). Suppressed during a pull so we don't
+  // echo the server's own state back to itself.
+  if (typeof queueStateSync === 'function') queueStateSync();
 }
 // saveAllSessions is equivalent to saveSession — both persist
 
@@ -4464,7 +4561,10 @@ function calcMargin(entry) {
 // WANT LIST
 // ============================================================
 function getWantList() { return JSON.parse(localStorage.getItem('cardpricer_wantlist') || '[]'); }
-function saveWantList(list) { localStorage.setItem('cardpricer_wantlist', JSON.stringify(list)); }
+function saveWantList(list) {
+  localStorage.setItem('cardpricer_wantlist', JSON.stringify(list));
+  if (typeof queueStateSync === 'function') queueStateSync();
+}
 function addWantItem() {
   const name = document.getElementById('wantName').value.trim();
   const setC = document.getElementById('wantSet').value.trim();
@@ -4969,6 +5069,13 @@ document.addEventListener('DOMContentLoaded', () => {
   if (getSetting('amoled', 'true') !== false && getSetting('amoled', 'true') !== 'false') document.body.classList.add('amoled');
   updateSessionStrip();
   updateRecentRibbon();
+  // Pull any server-side state for this user (sessions + want list).
+  // Runs after local init so the pull overwrites a fully-initialised
+  // state object; scanner-mode phones skip this automatically because
+  // they don't have a Supabase session.
+  if (typeof pullStateFromServer === 'function' && !document.body.classList.contains('scanner-mode')) {
+    pullStateFromServer();
+  }
 });
 
 // ===================================================================

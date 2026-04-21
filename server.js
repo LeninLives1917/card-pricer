@@ -175,6 +175,45 @@ app.get('/api/usage', requireAuth, async (req, res) => {
 });
 
 // ============================================================
+// USER STATE SYNC (Phase B-sync)
+// ============================================================
+// Stores the user's session log + want list + selected-session id as a
+// single JSONB blob keyed on user_id. Simple last-writer-wins: localStorage
+// is the fast UI cache, Supabase is the durable backing store. Shop users
+// are typically one-device so concurrency isn't a real concern yet.
+app.get('/api/state', requireAuth, async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('user_state')
+      .select('state, updated_at')
+      .eq('user_id', req.user.id)
+      .maybeSingle();
+    if (error) throw error;
+    res.json({ state: data?.state || null, updated_at: data?.updated_at || null });
+  } catch (e) {
+    console.error('[STATE] get failed:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.put('/api/state', requireAuth, express.json({ limit: '10mb' }), async (req, res) => {
+  try {
+    const state = req.body?.state;
+    if (!state || typeof state !== 'object') {
+      return res.status(400).json({ error: 'body must include a state object' });
+    }
+    const { error } = await supabase
+      .from('user_state')
+      .upsert({ user_id: req.user.id, state, updated_at: new Date().toISOString() });
+    if (error) throw error;
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('[STATE] put failed:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ============================================================
 // USD → EUR — refreshed daily from Frankfurter (ECB data, no auth needed).
 // ============================================================
 // Used to convert TCGPlayer USD prices into EUR for buy-offer calculations.
