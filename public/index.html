@@ -20,7 +20,7 @@
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script>
     // Register service worker for PWA install + offline shell.
-    console.log('[APP] Card Pricer client v51 loaded');
+    console.log('[APP] Card Pricer client v52 loaded');
     if ('serviceWorker' in navigator) {
       window.addEventListener('load', () => {
         navigator.serviceWorker.register('/service-worker.js', { updateViaCache: 'none' })
@@ -74,6 +74,25 @@
         // Auto-surface expired sessions: re-show the auth modal on 401.
         if (resp.status === 401 && url.startsWith('/api/') && !document.body.classList.contains('scanner-mode')) {
           if (typeof showAuthOverlay === 'function') showAuthOverlay();
+        }
+        // Quota hit: surface a modal. Clone the response so the caller
+        // can still read the body normally.
+        if (resp.status === 429 && url.startsWith('/api/')) {
+          resp.clone().json().then(body => {
+            if (body?.error === 'scan_quota_exceeded' && typeof showQuotaExceededModal === 'function') {
+              showQuotaExceededModal(body);
+            }
+          }).catch(() => {});
+        }
+        // Live usage update from enforceQuota's X-Scan-* headers —
+        // lets the settings banner stay current without a round-trip.
+        if (resp.ok && url.startsWith('/api/')) {
+          const used = resp.headers.get('X-Scan-Used');
+          const plan = resp.headers.get('X-Scan-Plan');
+          if (used != null && plan && typeof renderUsage === 'function') {
+            const limitHdr = resp.headers.get('X-Scan-Limit');
+            renderUsage({ plan, used: parseInt(used, 10), limit: limitHdr != null ? parseInt(limitHdr, 10) : null });
+          }
         }
         return resp;
       };
@@ -158,12 +177,74 @@
       try {
         const { data } = await window.sb.auth.getSession();
         if (!data?.session) { showAuthOverlay(); return; }
-        // Populate the account row in settings
         const label = document.getElementById('authAccountLabel');
         if (label) label.textContent = data.session.user?.email || '(logged in)';
+        // Fetch + render monthly usage (Phase C).
+        refreshUsage();
       } catch (e) {
         console.error('[AUTH] session check failed:', e);
         showAuthOverlay();
+      }
+    }
+
+    // Fetch and render the user's plan + scan count from /api/usage.
+    // Called after auth and after every successful scan so the banner
+    // stays current without a page reload.
+    async function refreshUsage() {
+      try {
+        const resp = await fetch('/api/usage');
+        if (!resp.ok) return;
+        const u = await resp.json();
+        renderUsage(u);
+      } catch (e) { /* ignore — usage is non-critical */ }
+    }
+    function renderUsage(u) {
+      const planLabel = document.getElementById('usagePlanLabel');
+      const countLabel = document.getElementById('usageCountLabel');
+      const bar = document.getElementById('usageBar');
+      const fill = document.getElementById('usageBarFill');
+      if (!planLabel || !countLabel) return;
+      const planName = { beta: 'Beta', free: 'Free', pro: 'Pro' }[u.plan] || u.plan;
+      planLabel.textContent = `Plan: ${planName}`;
+      if (u.limit == null) {
+        countLabel.textContent = `${u.used} scans this month · unlimited`;
+        if (bar) bar.style.display = 'none';
+      } else {
+        const pct = Math.min(100, Math.round((u.used / u.limit) * 100));
+        countLabel.textContent = `${u.used} / ${u.limit} scans · ${u.limit - u.used} left`;
+        if (bar) bar.style.display = 'block';
+        if (fill) {
+          fill.style.width = pct + '%';
+          // Colour shifts to warn as we approach the limit.
+          fill.style.background = pct >= 100 ? 'var(--red)'
+                                : pct >= 80  ? 'linear-gradient(135deg, var(--orange), var(--red))'
+                                :              'var(--grad-accent)';
+        }
+      }
+    }
+
+    // Show a "limit reached" modal when the server returns 429 with
+    // scan_quota_exceeded. Simple for now — clicking "Ok" dismisses;
+    // full upgrade flow lands in Phase D.
+    function showQuotaExceededModal(payload) {
+      let modal = document.getElementById('quotaModal');
+      if (!modal) {
+        modal = document.createElement('div');
+        modal.id = 'quotaModal';
+        modal.className = 'auth-overlay';
+        modal.innerHTML = `
+          <div class="auth-card" style="max-width:420px;">
+            <h2>🔒 Monthly limit reached</h2>
+            <div class="auth-sub" id="quotaModalBody"></div>
+            <button type="button" class="auth-submit" onclick="document.getElementById('quotaModal').remove(); refreshUsage();">Got it</button>
+            <div class="auth-footer">Beta testers: message the team to bump your plan.</div>
+          </div>`;
+        document.body.appendChild(modal);
+      }
+      const body = modal.querySelector('#quotaModalBody');
+      if (body) {
+        body.textContent = payload?.message
+          || `You've used all ${payload?.limit || 'your'} scans this month on the ${payload?.plan || 'free'} plan.`;
       }
     }
     if (document.readyState === 'loading') {
@@ -2020,6 +2101,13 @@
         <div class="setting-row">
           <span class="setting-label" id="authAccountLabel">—</span>
           <button class="header-btn" onclick="signOut()" style="background: var(--red); color: white; border-color: var(--red);">Sign out</button>
+        </div>
+        <div class="setting-row">
+          <span class="setting-label" id="usagePlanLabel">Plan: —</span>
+          <span class="setting-value" id="usageCountLabel">—</span>
+        </div>
+        <div id="usageBar" style="height:6px; background:var(--surface2); border-radius:3px; margin-top:6px; overflow:hidden; display:none;">
+          <div id="usageBarFill" style="height:100%; width:0%; background:var(--grad-accent); transition:width 0.3s;"></div>
         </div>
       </div>
       <div class="setting-group">

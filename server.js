@@ -87,9 +87,8 @@ async function requireAuth(req, res, next) {
   }
 }
 
-// Fire-and-forget scan logging. Phase C will use this to enforce monthly
-// quotas for the free plan; for now it's just data collection for the
-// beta period. Failure to log must NEVER block a scan.
+// Fire-and-forget scan logging. Phase C uses this to enforce monthly
+// quotas for free-plan users. Failure to log must NEVER block a scan.
 function logScanEvent(userId, endpoint) {
   if (!supabase || !userId) return;
   supabase.from('scan_events').insert({ user_id: userId, endpoint }).then(
@@ -97,6 +96,83 @@ function logScanEvent(userId, endpoint) {
     (e) => console.warn('[AUTH] scan_events insert failed:', e?.message || e)
   );
 }
+
+// ============================================================
+// PLAN QUOTA (Phase C)
+// ============================================================
+// Monthly scan caps by plan. `null` = unlimited. Change these numbers
+// here and the /api/usage endpoint + enforceQuota middleware pick them
+// up automatically. Beta plan exists so the closed-beta testers aren't
+// capped while we iterate.
+const PLAN_LIMITS = {
+  'beta': null,  // closed-beta testers — unmetered
+  'free': 40,    // public free tier
+  'pro':  null   // paid tier
+};
+
+// Query the user's scan count for the current calendar month (UTC).
+// Returns { plan, used, limit } — limit null = unlimited.
+async function getUsage(userId) {
+  const { data: profile } = await supabase
+    .from('profiles')
+    .select('plan')
+    .eq('user_id', userId)
+    .maybeSingle();
+  const plan = profile?.plan || 'free';
+  const limit = PLAN_LIMITS[plan] ?? null;
+  const now = new Date();
+  const monthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
+  // Only count identify-ish endpoints — /api/price doesn't log events,
+  // so count(*) on scan_events is roughly "one per scanned card".
+  const { count } = await supabase
+    .from('scan_events')
+    .select('*', { count: 'exact', head: true })
+    .eq('user_id', userId)
+    .gte('ts', monthStart.toISOString());
+  return { plan, used: count || 0, limit, resetAt: new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1)).toISOString() };
+}
+
+// Gate middleware: chain after requireAuth on the identify endpoints.
+// Rejects with 429 if the user is at/over their plan limit. Fails OPEN
+// on DB errors so a Supabase blip can't take down the scanner at a show.
+async function enforceQuota(req, res, next) {
+  if (!supabase || !req.user) return next();
+  try {
+    const usage = await getUsage(req.user.id);
+    if (usage.limit != null && usage.used >= usage.limit) {
+      return res.status(429).json({
+        error: 'scan_quota_exceeded',
+        plan: usage.plan,
+        used: usage.used,
+        limit: usage.limit,
+        resetAt: usage.resetAt,
+        message: `You've used all ${usage.limit} scans on your ${usage.plan} plan this month. Upgrade to continue.`
+      });
+    }
+    req.scanUsage = usage;
+    // Surface usage on every protected response — the client reads these
+    // to render the usage banner without making a second round-trip.
+    res.setHeader('X-Scan-Plan', usage.plan);
+    res.setHeader('X-Scan-Used', String(usage.used));
+    if (usage.limit != null) res.setHeader('X-Scan-Limit', String(usage.limit));
+    next();
+  } catch (e) {
+    console.warn('[QUOTA] check failed — allowing through:', e.message);
+    next();
+  }
+}
+
+// Usage endpoint for the client's settings/banner display.
+// GET /api/usage → { plan, used, limit, resetAt }
+// eslint-disable-next-line no-undef — declaration order is fine because app has already been created
+app.get('/api/usage', requireAuth, async (req, res) => {
+  try {
+    const usage = await getUsage(req.user.id);
+    res.json(usage);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
 
 // ============================================================
 // USD → EUR — refreshed daily from Frankfurter (ECB data, no auth needed).
@@ -515,7 +591,7 @@ async function doubleCheckAll(userImageBase64, cards) {
   return Promise.all(cards.map(c => maybeDoubleCheck(userImageBase64, c)));
 }
 
-app.post('/api/identify', identifyLimiter, requireAuth, upload.single('image'), async (req, res) => {
+app.post('/api/identify', identifyLimiter, requireAuth, enforceQuota, upload.single('image'), async (req, res) => {
   logScanEvent(req.user.id, '/api/identify');
   try {
     const buffer = extractImageBuffer(req);
@@ -557,7 +633,7 @@ app.post('/api/identify', identifyLimiter, requireAuth, upload.single('image'), 
 //   {type:'done'}
 // This shaves 500-1000ms off perceived latency because pricing kicks off
 // before the (slow) pokemontcg.io / scryfall verification round-trip.
-app.post('/api/identify-stream', identifyLimiter, requireAuth, upload.single('image'), async (req, res) => {
+app.post('/api/identify-stream', identifyLimiter, requireAuth, enforceQuota, upload.single('image'), async (req, res) => {
   logScanEvent(req.user.id, '/api/identify-stream');
   res.setHeader('Content-Type', 'application/x-ndjson');
   res.setHeader('Cache-Control', 'no-cache, no-transform');
@@ -1554,7 +1630,7 @@ async function lookupViaJustTCG(setId, cardNumber) {
 //
 // Request body: { game: 'pokemon'|'magic'|..., set_code, card_number, name? }
 // Response: { cards: [<one card shaped like /api/identify output>] }
-app.post('/api/identify-manual', requireAuth, async (req, res) => {
+app.post('/api/identify-manual', requireAuth, enforceQuota, async (req, res) => {
   logScanEvent(req.user.id, '/api/identify-manual');
   try {
     const { game, set_code, card_number, name } = req.body || {};
@@ -1782,7 +1858,7 @@ app.post('/api/identify-manual', requireAuth, async (req, res) => {
 // from the bottom of a card image.  Much cheaper than full identify because
 // the prompt is tiny, the response is a few tokens, and we use Haiku.
 // Returns: { text: "MEP 066" } or { text: "DRI 204/182" } or { error }
-app.post('/api/read-set-code', identifyLimiter, requireAuth, async (req, res) => {
+app.post('/api/read-set-code', identifyLimiter, requireAuth, enforceQuota, async (req, res) => {
   logScanEvent(req.user.id, '/api/read-set-code');
   try {
     const dataUrl = req.body?.image;
@@ -2017,7 +2093,7 @@ app.post('/api/correct-card', express.json(), (req, res) => {
 //
 // Body: { number: "123/456", setCode?: "swsh9", game?: "pokemon"|"magic" }
 // Returns: { cards: [verifiedCard] } on match, or 404 on no-match/ambiguous.
-app.post('/api/lookup-by-number', requireAuth, express.json(), async (req, res) => {
+app.post('/api/lookup-by-number', requireAuth, enforceQuota, express.json(), async (req, res) => {
   logScanEvent(req.user.id, '/api/lookup-by-number');
   try {
     const { number, set_code: setCode, game, reg_mark } = req.body || {};
