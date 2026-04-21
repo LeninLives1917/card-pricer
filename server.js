@@ -2960,19 +2960,19 @@ function buildCardmarketUrl(card) {
   // URL 404s more often than it works. API-provided URLs (from pokemontcg.io
   // / Scryfall) still override this in the caller when available.
 
-  // Build a search URL that targets the exact card. Cardmarket's search
-  // tokenises the string, so space-separated name + set code + number
-  // reliably narrows to the right product — much more robust than the
-  // parens format we previously used ("Charizard ex (OBF 125)"), which
-  // Cardmarket's tokeniser treated inconsistently and often missed.
+  // Cardmarket's product names are "Name (SETCODE NUMBER)" — e.g.
+  // "Haunter (MEP 027)". Their search tokenises on whitespace and matches
+  // products containing ALL tokens. Including the set code in the search
+  // string was too-restrictive: Cardmarket's tokeniser doesn't always
+  // index the bracketed set code as a searchable token, so "Haunter MEP
+  // 027" returned zero hits. Name + card number alone (e.g. "Haunter
+  // 027") reliably finds the product across sets, and Cardmarket's
+  // sidebar filter lets the user narrow by expansion if multiple sets
+  // share the same number.
   const num = card.card_number ? card.card_number.replace(/\/.*/, '').replace(/^0+/, '') : '';
-  const setCode = (card.set_code || card.setCode || '').toUpperCase();
 
   let searchTerm = card.name || '';
-  if (card.game === 'pokemon' && setCode && num) {
-    // "Charizard ex OBF 125" — Cardmarket resolves this to the right product.
-    searchTerm = `${card.name} ${setCode} ${num}`;
-  } else if (num) {
+  if (num) {
     searchTerm = `${card.name} ${num}`;
   }
 
@@ -2980,7 +2980,7 @@ function buildCardmarketUrl(card) {
     ? `https://www.cardmarket.com/en/${gameSlug}/Products/Search?searchString=${encodeURIComponent(searchTerm)}`
     : `https://www.cardmarket.com/en/Search?searchString=${encodeURIComponent(searchTerm)}`;
 
-  // Narrower fallback — just name (last resort if the full search 0-hits).
+  // Name-only fallback (last resort if even name+number misses)
   const fallbackTerm = card.name || '';
   const fallbackUrl = gameSlug
     ? `https://www.cardmarket.com/en/${gameSlug}/Products/Search?searchString=${encodeURIComponent(fallbackTerm)}`
