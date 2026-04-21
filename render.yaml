@@ -3,7 +3,7 @@ services:
     name: card-pricer
     runtime: node
     plan: free
-    buildCommand: npm install
+    buildCommand: npm install && node --check server.js
     startCommand: node server.js
     envVars:
       - key: NODE_VERSION

@@ -42,7 +42,7 @@ In the Render service's **Environment** tab, add:
 
 Click **Create Web Service**. First build takes ~3-5 min. You'll get a URL like:
 
-    https://card-pricer.onrender.com
+    https://card-pricer-60qq.onrender.com
 
 Open it on laptop + phone. Phone-pairing via QR will "just work" because Render serves HTTPS (required for camera access on iOS/Android).
 
