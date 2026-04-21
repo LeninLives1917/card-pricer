@@ -289,9 +289,9 @@ app.post('/api/identify', upload.single('image'), async (req, res) => {
     // Haiku 4.5 for single-card ID (fast + cheap, plenty accurate for reading
     // a card number + name). Sonnet 4 for batch binder pages (needs to see
     // many small cards accurately).
-    const model = isBatchMode
-      ? 'claude-sonnet-4-20250514'
-      : 'claude-sonnet-4-20250514'; // Sonnet for single-card too — Haiku was misreading card numbers (e.g. 223 → 225) even at higher res. Accuracy > speed.
+    // Sonnet for both single-card and batch — Haiku was misreading card
+    // numbers (e.g. 223 → 225) even at higher resolutions. Accuracy > speed.
+    const model = 'claude-sonnet-4-20250514';
 
     const response = await anthropic.messages.create({
       model,
@@ -411,9 +411,9 @@ app.post('/api/identify-stream', upload.single('image'), async (req, res) => {
       : 'Identify this trading card. FIRST read the card number at the bottom of the card — this is the most critical field. If it has no slash (like SM211, SWSH066) it is a PROMO card. Be extremely precise with the set code and card number.';
     if (userHint) userMessage += `\n\nUser hint: ${userHint}`;
 
-    const model = isBatchMode
-      ? 'claude-sonnet-4-20250514'
-      : 'claude-sonnet-4-20250514'; // Sonnet for single-card too — Haiku was misreading card numbers (e.g. 223 → 225) even at higher res. Accuracy > speed.
+    // Sonnet for both single-card and batch — Haiku was misreading card
+    // numbers (e.g. 223 → 225) even at higher resolutions. Accuracy > speed.
+    const model = 'claude-sonnet-4-20250514';
 
     const response = await anthropic.messages.create({
       model,
@@ -471,12 +471,6 @@ app.post('/api/identify-stream', upload.single('image'), async (req, res) => {
     send({ type: 'error', error: err.message });
     res.end();
   }
-});
-
-// Lightweight health endpoint — used by UptimeRobot / any uptime pinger
-// to keep the Render free-tier dyno warm (no cold-start wait at card shows).
-app.get('/api/health', (req, res) => {
-  res.json({ ok: true, ts: Date.now(), uptime: process.uptime() });
 });
 
 // ============================================================
@@ -1772,9 +1766,7 @@ Return ONLY the set code and number. If you cannot read any set code, respond: N
 app.post('/api/report-bad-id', express.json({ limit: '15mb' }), async (req, res) => {
   try {
     const { card, reason, image, timestamp, ua } = req.body || {};
-    const fs = await import('fs');
-    const path = await import('path');
-    const logDir = path.join(__dirname, 'logs');
+    const logDir = join(__dirname, 'logs');
     if (!fs.existsSync(logDir)) fs.mkdirSync(logDir, { recursive: true });
     const entry = {
       t: new Date().toISOString(),
@@ -1788,7 +1780,7 @@ app.post('/api/report-bad-id', express.json({ limit: '15mb' }), async (req, res)
       ua: (ua || '').slice(0, 200),
       orig_timestamp: timestamp
     };
-    fs.appendFileSync(path.join(logDir, 'bad-ids.log'), JSON.stringify(entry) + '\n');
+    fs.appendFileSync(join(logDir, 'bad-ids.log'), JSON.stringify(entry) + '\n');
     console.log(`[BAD-ID] ${entry.card?.name || '?'} — ${entry.reason || '(no reason)'}`);
     res.json({ ok: true });
   } catch (err) {
@@ -2731,47 +2723,6 @@ function getGameSlug(game) {
 // ============================================================
 // Builds a Cardmarket search URL the user can tap to check prices.
 // Cloudflare blocks automated scraping, so we give the user a direct link instead.
-// ============================================================
-// Cardmarket direct URL builder
-// ============================================================
-// URL pattern: /en/{Game}/Products/Singles/{Set-Slug}/{Card-Slug}-{CMCode}{Number}
-// Example: /en/Pokemon/Products/Singles/Obsidian-Flames/Charizard-ex-OBF125
-
-// Pokemon TCG API set ID -> Cardmarket set code mapping
-const POKEMON_CM_SET_CODES = {
-  // Scarlet & Violet era
-  'sv1': 'SVI', 'sv2': 'PAL', 'sv3': 'OBF', 'sv3pt5': 'MEW',
-  'sv4': 'PAR', 'sv4pt5': 'PAF', 'sv5': 'TEF', 'sv6': 'TWM',
-  'sv6pt5': 'SFA', 'sv7': 'SSP', 'sv8': 'SCR', 'sv8pt5': 'PRE',
-  'svp': 'SVP',
-  // Sword & Shield era
-  'swsh1': 'SSH', 'swsh2': 'RCL', 'swsh3': 'DAA', 'swsh4': 'VIV',
-  'swsh5': 'BST', 'swsh6': 'CRE', 'swsh7': 'EVS', 'swsh8': 'FST',
-  'swsh9': 'BRS', 'swsh10': 'ASR', 'swsh11': 'LOR', 'swsh12': 'SIT',
-  'swsh12pt5': 'CRZ', 'swshp': 'SWSH',
-  // Sun & Moon era
-  'sm1': 'SUM', 'sm2': 'GRI', 'sm3': 'BUS', 'sm4': 'CIN',
-  'sm5': 'UPR', 'sm6': 'FLI', 'sm7': 'CES', 'sm8': 'LOT',
-  'sm9': 'TEU', 'sm10': 'UNB', 'sm11': 'UNM', 'sm12': 'CEC',
-  'sm115': 'HIF', 'smp': 'SM',
-  // Special sets
-  'pgo': 'PGO', 'cel25': 'CEL', 'cel25c': 'CEL',
-};
-
-// Cardmarket set URL slug mapping (API set name -> CM slug)
-// Most work by just hyphenating, but some need special handling
-const POKEMON_CM_SET_SLUGS = {
-  'sv1': 'Scarlet-and-Violet', 'sv2': 'Paldea-Evolved', 'sv3': 'Obsidian-Flames',
-  'sv3pt5': 'Pokemon-Card-151', 'sv4': 'Paradox-Rift', 'sv4pt5': 'Paldean-Fates',
-  'sv5': 'Temporal-Forces', 'sv6': 'Twilight-Masquerade', 'sv6pt5': 'Shrouded-Fable',
-  'sv7': 'Stellar-Crown', 'sv8': 'Surging-Sparks', 'sv8pt5': 'Prismatic-Evolutions',
-  'svp': 'SV-Black-Star-Promos',
-  'sm115': 'Hidden-Fates', 'smp': 'SM-Black-Star-Promos',
-  'pgo': 'Pokemon-GO',
-};
-
-// MTG: Scryfall provides purchase_uris.cardmarket directly — handled in priceMagicCard
-
 function buildCardmarketUrl(card) {
   const gameSlug = getGameSlug(card.game);
   const condCode = CONDITION_TO_CM[card.condition_estimate] || 2;
@@ -3843,9 +3794,13 @@ app.get('/api/search', async (req, res) => {
 // ============================================================
 // HEALTH CHECK
 // ============================================================
+// Health endpoint — used by the client to show API status, and by UptimeRobot
+// (or any uptime pinger) to keep the Render free-tier dyno warm.
 app.get('/api/health', (req, res) => {
   res.json({
     status: 'ok',
+    ts: Date.now(),
+    uptime: process.uptime(),
     apis: {
       anthropic: !!process.env.ANTHROPIC_API_KEY,
       cardmarket: '✅ Direct links + API prices (no scraping)',
@@ -3915,6 +3870,10 @@ app.get('/api/room/:id/history', (req, res) => {
 app.get('/quote', (req, res) => {
   res.sendFile(join(__dirname, 'public', 'quote.html'));
 });
+
+function escapeHtml(s) {
+  return String(s || '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
 
 // Lead capture — customer submits their email + card list, we email them a
 // quote and ping the shop. Uses Brevo transactional API (no new deps).
@@ -4093,10 +4052,6 @@ app.post('/api/quote-lead', async (req, res) => {
     res.status(500).json({ error: e.message || 'Failed to send quote' });
   }
 });
-
-function escapeHtml(s) {
-  return String(s || '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-}
 
 // SPA fallback
 app.get('*', (req, res) => {
