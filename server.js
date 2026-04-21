@@ -5,6 +5,7 @@ import multer from 'multer';
 import sharp from 'sharp';
 import Anthropic from '@anthropic-ai/sdk';
 import axios from 'axios';
+import rateLimit from 'express-rate-limit';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import crypto from 'crypto';
@@ -16,8 +17,34 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
 const app = express();
+// Render puts us behind its edge proxy; without this, every request appears
+// to come from the proxy IP and per-IP rate limits would collapse into one bucket.
+app.set('trust proxy', 1);
 app.use(cors());
 app.use(express.json({ limit: '50mb' }));
+
+// ============================================================
+// RATE LIMITS — protect paid upstreams (Anthropic, Brevo) from abuse
+// ============================================================
+// Scanning endpoints: generous enough for a real card-show session (you can
+// easily scan 1/sec for minutes), but capped so a script-kiddie can't drain
+// the Anthropic budget in an afternoon.
+const identifyLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 60,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many identify requests — slow down.' }
+});
+// Quote-lead triggers Brevo emails. Much lower cap because a single abuser
+// spamming this drains email-send quota and could mark the domain as spammy.
+const quoteLeadLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many quote requests — please try again later.' }
+});
 // Force no-cache on service-worker.js and index.html to bust PWA staleness
 app.get('/service-worker.js', (req, res) => {
   res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
@@ -230,7 +257,7 @@ function cacheSet(key, val) {
   }
 }
 
-app.post('/api/identify', upload.single('image'), async (req, res) => {
+app.post('/api/identify', identifyLimiter, upload.single('image'), async (req, res) => {
   try {
     const isBatchMode = req.body.batch === 'true' || req.body.batch === true;
 
@@ -361,7 +388,7 @@ app.post('/api/identify', upload.single('image'), async (req, res) => {
 //   {type:'done'}
 // This shaves 500-1000ms off perceived latency because pricing kicks off
 // before the (slow) pokemontcg.io / scryfall verification round-trip.
-app.post('/api/identify-stream', upload.single('image'), async (req, res) => {
+app.post('/api/identify-stream', identifyLimiter, upload.single('image'), async (req, res) => {
   res.setHeader('Content-Type', 'application/x-ndjson');
   res.setHeader('Cache-Control', 'no-cache, no-transform');
   res.setHeader('X-Accel-Buffering', 'no');
@@ -1614,7 +1641,7 @@ app.post('/api/identify-manual', async (req, res) => {
 // from the bottom of a card image.  Much cheaper than full identify because
 // the prompt is tiny, the response is a few tokens, and we use Haiku.
 // Returns: { text: "MEP 066" } or { text: "DRI 204/182" } or { error }
-app.post('/api/read-set-code', async (req, res) => {
+app.post('/api/read-set-code', identifyLimiter, async (req, res) => {
   try {
     const dataUrl = req.body?.image;
     if (!dataUrl) {
@@ -3877,7 +3904,7 @@ function escapeHtml(s) {
 
 // Lead capture — customer submits their email + card list, we email them a
 // quote and ping the shop. Uses Brevo transactional API (no new deps).
-app.post('/api/quote-lead', async (req, res) => {
+app.post('/api/quote-lead', quoteLeadLimiter, async (req, res) => {
   try {
     const { email, name, newsletter, cards, totals, cashPct, creditPct } = req.body || {};
     if (!email || !cards || !Array.isArray(cards) || !cards.length) {
