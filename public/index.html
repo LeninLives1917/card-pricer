@@ -2414,16 +2414,14 @@ function extractCardNumber(text) {
 
 async function tryOcrIdentify(imageData) {
   try {
-    // Default is ON — set-code reader saves API cost vs full identify.
-    // Users can disable in Settings if they prefer full AI identify.
-    // Default OFF: the OCR-first path bypasses the full Sonnet identify, so
-    // a single misread character (e.g. "027" → "2") silently returns the
-    // wrong card with no name/HP cross-check. Users who want the speed
-    // tradeoff can opt in via Settings.
-    const ocrPref = getSetting('ocrFirst', 'false');
-    if (ocrPref === false || ocrPref === 'false') {
-      return null;
-    }
+    // OCR-first is HARD-DISABLED. The path bypasses Sonnet's full identify
+    // (no name/HP cross-check), and a pre-existing localStorage value from
+    // before v39's default-off change was keeping it on for existing users
+    // — every scan was eating 10s+ on /api/read-set-code before falling
+    // through to /api/identify-stream. If we bring this back it needs a
+    // validation step (compare OCR'd card's identity against the AI-
+    // identified card) before we trust it.
+    return null;
 
     const t0 = performance.now();
     console.log('[SET-CODE] Sending image to Claude Haiku to read set code...');
