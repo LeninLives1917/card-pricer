@@ -20,7 +20,7 @@
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script>
     // Register service worker for PWA install + offline shell.
-    console.log('[APP] Card Pricer client v59 loaded');
+    console.log('[APP] Card Pricer client v60 loaded');
     if ('serviceWorker' in navigator) {
       window.addEventListener('load', () => {
         navigator.serviceWorker.register('/service-worker.js', { updateViaCache: 'none' })
@@ -151,6 +151,11 @@
           okEl.textContent = 'Check your email for a confirmation link.';
           return;
         }
+        // Fire welcome email on signup only (not login). Fire-and-forget —
+        // email delivery failures must not block the UX.
+        if (_authMode === 'signup') {
+          fetch('/api/welcome-email', { method: 'POST' }).catch(() => {});
+        }
         hideAuthOverlay();
         location.reload();
       } catch (e) {
@@ -166,6 +171,34 @@
       await window.sb.auth.signOut();
       location.reload();
     }
+
+    // ========== ONBOARDING ==========
+    // Show the "Getting started" card on Scan tab whenever the user has
+    // no scanned cards across any session. Hides as soon as the first
+    // card lands. Safe to call from anywhere; defensive no-ops when the
+    // element or state isn't ready.
+    function updateOnboardingVisibility() {
+      const card = document.getElementById('onboardingCard');
+      if (!card) return;
+      const sessions = window.state?.sessions;
+      if (!sessions) return;
+      const empty = Object.values(sessions).every(s => (s?.log || []).length === 0);
+      card.classList.toggle('hidden', !empty);
+    }
+    window.updateOnboardingVisibility = updateOnboardingVisibility;
+
+    // Onboarding "Show pairing QR" button: switch to Settings tab where
+    // the pair UI lives, and auto-trigger the host (QR display) so the
+    // new user doesn't have to hunt for the button.
+    function startOnboardingPair() {
+      if (typeof switchTab === 'function') switchTab('settings');
+      setTimeout(() => {
+        if (typeof startHosting === 'function') startHosting();
+        const wrap = document.getElementById('pairQRWrap');
+        if (wrap) wrap.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }, 120);
+    }
+    window.startOnboardingPair = startOnboardingPair;
 
     // ========== STATE SYNC (localStorage ↔ Supabase) ==========
     // Debounced push of the user's sessions + want list to /api/state.
@@ -244,6 +277,7 @@
           if (typeof renderWantList === 'function') renderWantList();
           if (typeof updateSessionStrip === 'function') updateSessionStrip();
           if (typeof updateRecentRibbon === 'function') updateRecentRibbon();
+          if (typeof updateOnboardingVisibility === 'function') updateOnboardingVisibility();
           const logCount = document.getElementById('logCount');
           if (logCount && window.state.sessions?.[window.state.currentSessionId]?.log) {
             logCount.textContent = window.state.sessions[window.state.currentSessionId].log.length;
@@ -1227,6 +1261,46 @@
     }
     .corr-btn:active { background: var(--accent); color: white; border-color: var(--accent); }
 
+    /* ---- ONBOARDING CARD ---- */
+    .onboarding-card {
+      background: var(--surface);
+      border: 1px solid rgba(255,255,255,0.05);
+      border-radius: var(--radius);
+      padding: 20px 16px;
+      box-shadow: var(--shadow-card);
+      margin-bottom: 16px;
+      animation: cardEnter 320ms cubic-bezier(.2,.7,.2,1);
+    }
+    .onboarding-step {
+      display: flex;
+      gap: 12px;
+      padding: 10px 0;
+      border-top: 1px solid rgba(255,255,255,0.04);
+    }
+    .onboarding-step:first-of-type { border-top: none; }
+    .onboarding-step-num {
+      flex-shrink: 0;
+      width: 28px; height: 28px;
+      border-radius: 50%;
+      background: var(--grad-accent);
+      color: white;
+      font-size: 14px; font-weight: 800;
+      display: flex; align-items: center; justify-content: center;
+      box-shadow: 0 2px 8px rgba(108,92,231,0.35);
+    }
+    .onboarding-step-body { flex: 1; min-width: 0; }
+    .onboarding-btn {
+      padding: 8px 14px;
+      background: var(--grad-accent);
+      color: white;
+      border: none;
+      border-radius: 8px;
+      font-size: 13px; font-weight: 700;
+      cursor: pointer;
+      box-shadow: 0 2px 8px rgba(108,92,231,0.35);
+    }
+    .onboarding-btn:active { transform: scale(0.97); }
+
     /* ---- PLAN PICKER (Phase D) ---- */
     .plan-picker-grid {
       display: grid;
@@ -2162,11 +2236,19 @@
   </div>
 </div>
 
-<!-- ===== AUTH MODAL (Phase B) ===== -->
+<!-- ===== AUTH / LANDING ===== -->
 <div id="authOverlay" class="auth-overlay hidden">
-  <div class="auth-card">
-    <h2><span>Card</span>Pricer</h2>
-    <div class="auth-sub">Sign in to your shop account.</div>
+  <div class="auth-card" style="max-width:440px;">
+    <h2 style="font-size:26px;"><span>Card</span>Pricer</h2>
+    <div class="auth-sub" style="font-size:14px;">
+      AI-powered card pricing for trading-card shops.<br>
+      Phone scans, laptop decides, buy-offers in 2 seconds.
+    </div>
+    <ul style="list-style:none; padding:0; margin:16px 0; font-size:13px; color:var(--text-dim); line-height:1.8;">
+      <li>✓ Phone pairs via QR — scans land on your laptop instantly</li>
+      <li>✓ Live Cardmarket + eBay prices, condition-adjusted</li>
+      <li>✓ 40 free scans/month · plans from €9/mo · cancel any time</li>
+    </ul>
     <div class="auth-tabs">
       <button type="button" class="auth-tab active" data-mode="login" onclick="setAuthMode('login')">Log in</button>
       <button type="button" class="auth-tab" data-mode="signup" onclick="setAuthMode('signup')">Sign up</button>
@@ -2183,7 +2265,7 @@
     <div id="authError" class="auth-error"></div>
     <div id="authOk" class="auth-ok" style="display:none;"></div>
     <div class="auth-footer">
-      Closed beta — invited shops only. Your phone stays paired via QR; no separate login needed.
+      Built for card vendors &amp; shop owners. Your phone connects via QR — no separate login needed for scanning.
     </div>
   </div>
 </div>
@@ -2219,6 +2301,31 @@
   <!-- SCAN TAB -->
   <div class="main" id="tab-scan">
     <div class="scan-area">
+      <!-- Getting Started card — shown while the session is empty.
+           Auto-hides once the first card lands, updateOnboardingVisibility(). -->
+      <div id="onboardingCard" class="onboarding-card hidden">
+        <div style="font-size:20px; font-weight:800; margin-bottom:4px;">👋 Welcome to Card Pricer</div>
+        <div style="font-size:13px; color:var(--text-dim); margin-bottom:14px;">Two steps to get scanning:</div>
+        <div class="onboarding-step">
+          <div class="onboarding-step-num">1</div>
+          <div class="onboarding-step-body">
+            <div style="font-weight:700; margin-bottom:4px;">Pair your phone</div>
+            <div style="font-size:12px; color:var(--text-dim); margin-bottom:8px;">The phone becomes a dedicated camera. Every scan lands instantly on this laptop.</div>
+            <button class="onboarding-btn" onclick="startOnboardingPair()">Show pairing QR</button>
+          </div>
+        </div>
+        <div class="onboarding-step">
+          <div class="onboarding-step-num">2</div>
+          <div class="onboarding-step-body">
+            <div style="font-weight:700; margin-bottom:4px;">Scan a card</div>
+            <div style="font-size:12px; color:var(--text-dim);">Point the phone at a card, tap the circle. The card appears in the Session tab, priced and ready to offer.</div>
+          </div>
+        </div>
+        <div style="font-size:11px; color:var(--text-dim); margin-top:12px; text-align:center;">
+          No phone handy? Use the Bulk tab below to upload existing photos, or Text to type set codes.
+        </div>
+      </div>
+
       <!-- Mode Toggle — camera-based Single mode was removed; laptops
            upload images in bulk or type set codes. The phone (via QR
            pairing, ?pair=ROOMID) still runs the camera-based flow. -->
@@ -4130,6 +4237,8 @@ function addToSessionLog(result, imageData) {
   hapticPulse(wantHit ? 80 : 20);
   // Update modern UX components so strip + ribbon reflect the new scan immediately
   try { updateSessionStrip(); updateRecentRibbon(); } catch {}
+  // Hide the onboarding card once the first scan lands.
+  try { updateOnboardingVisibility(); } catch {}
   // If this device is paired as a scanner, push the scan to the host laptop
   if (state.pairRole === 'scanner') pushScanToRoom(entry);
 }
@@ -5432,6 +5541,10 @@ document.addEventListener('DOMContentLoaded', () => {
   if (typeof pullStateFromServer === 'function' && !document.body.classList.contains('scanner-mode')) {
     pullStateFromServer();
   }
+  // Initial onboarding visibility — triggers again after pullStateFromServer
+  // completes (since that function calls saveAllSessions which fires sync
+  // and re-renders, but we also want to show the card on first paint).
+  try { updateOnboardingVisibility(); } catch {}
 });
 
 // ===================================================================

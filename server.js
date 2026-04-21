@@ -215,6 +215,70 @@ const PLAN_MRR = {
   'shop':   { monthly: 59, yearly: 531 / 12 }
 };
 
+// POST /api/welcome-email — fire-and-forget Brevo welcome message after
+// a new signup. Safe to call more than once (idempotent-ish: Brevo will
+// just send again; we don't log sent state for MVP). Silently no-ops
+// when BREVO_API_KEY is missing so local/preview deploys still work.
+app.post('/api/welcome-email', requireAuth, async (req, res) => {
+  if (!process.env.BREVO_API_KEY) {
+    return res.json({ ok: false, note: 'Brevo not configured — skipping welcome email.' });
+  }
+  const email = req.user.email;
+  if (!email) return res.status(400).json({ error: 'user has no email on record' });
+
+  const SHOP_NAME = process.env.SHOP_NAME || 'Card Pricer';
+  const SENDER_EMAIL = process.env.BREVO_SENDER_EMAIL || process.env.SHOP_EMAIL || 'no-reply@cardpricer.app';
+  const APP_URL = `${req.protocol}://${req.get('host')}/`;
+
+  const html = `
+    <div style="font-family:-apple-system,system-ui,sans-serif; max-width:560px; margin:0 auto; padding:24px; color:#1a1a1a;">
+      <h2 style="font-size:24px; margin:0 0 8px; color:#6c5ce7;">Welcome to Card Pricer 👋</h2>
+      <p style="font-size:15px; line-height:1.5; color:#444; margin:0 0 20px;">
+        Glad you're here. You're on the <b>beta</b> plan — unmetered while we iterate. Here's how to get scanning in under a minute:
+      </p>
+      <ol style="font-size:14px; line-height:1.7; color:#333; padding-left:20px;">
+        <li><b>Open the app on your laptop</b> and sign in.</li>
+        <li><b>Go to Settings → Pair Phone (QR)</b> → tap <b>Host (show QR)</b>.</li>
+        <li><b>Scan the QR with your phone's camera</b>. Your phone becomes a dedicated scanner — every photo lands instantly on the laptop, priced and ready.</li>
+      </ol>
+      <p style="margin:24px 0;">
+        <a href="${APP_URL}" style="display:inline-block; padding:12px 20px; background:#6c5ce7; color:white; text-decoration:none; border-radius:8px; font-weight:700;">Open the app</a>
+      </p>
+      <p style="font-size:13px; color:#666; line-height:1.5;">
+        Questions or bugs? Just reply to this email — it comes straight to us.
+      </p>
+      <p style="font-size:12px; color:#888; margin-top:32px; border-top:1px solid #eee; padding-top:12px;">
+        ${SHOP_NAME}
+      </p>
+    </div>
+  `;
+
+  try {
+    const r = await fetch('https://api.brevo.com/v3/smtp/email', {
+      method: 'POST',
+      headers: {
+        'api-key': process.env.BREVO_API_KEY,
+        'Content-Type': 'application/json',
+        'Accept': 'application/json'
+      },
+      body: JSON.stringify({
+        sender: { name: SHOP_NAME, email: SENDER_EMAIL },
+        to: [{ email }],
+        subject: 'Welcome to Card Pricer',
+        htmlContent: html
+      })
+    });
+    if (!r.ok) {
+      const t = await r.text();
+      throw new Error('Brevo ' + r.status + ': ' + t.slice(0, 200));
+    }
+    res.json({ ok: true });
+  } catch (e) {
+    console.warn('[WELCOME] send failed:', e.message);
+    res.json({ ok: false, error: e.message });
+  }
+});
+
 // GET /api/me — client uses this to know the current user's email, plan,
 // and is_admin flag (to decide whether to show the Admin tab).
 app.get('/api/me', requireAuth, async (req, res) => {
