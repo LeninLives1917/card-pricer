@@ -20,7 +20,7 @@
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script>
     // Register service worker for PWA install + offline shell.
-    console.log('[APP] Card Pricer client v58 loaded');
+    console.log('[APP] Card Pricer client v59 loaded');
     if ('serviceWorker' in navigator) {
       window.addEventListener('load', () => {
         navigator.serviceWorker.register('/service-worker.js', { updateViaCache: 'none' })
@@ -2498,14 +2498,7 @@
         </div>
         <div id="planActionsRow" style="margin-top: 10px;"></div>
       </div>
-      <div class="setting-group" style="display:none;">
-        <h3>API Connections</h3>
-        <div id="apiStatus">
-          <div class="setting-row">
-            <span class="setting-label">Checking...</span>
-          </div>
-        </div>
-      </div>
+<!-- API Connections moved to Admin tab. -->
       <div class="setting-group">
         <h3>How It Works</h3>
         <p style="font-size: 13px; color: var(--text-dim); line-height: 1.5;">
@@ -2618,6 +2611,14 @@
       <div class="setting-group">
         <h3>Plan breakdown</h3>
         <div id="adminPlanBreakdown" style="display:flex; flex-direction:column; gap:6px; font-size:13px;"></div>
+      </div>
+      <div class="setting-group">
+        <h3>API health</h3>
+        <div id="apiStatus">
+          <div class="setting-row">
+            <span class="setting-label">Checking…</span>
+          </div>
+        </div>
       </div>
       <div class="setting-group">
         <h3>Recent users</h3>
@@ -2756,9 +2757,11 @@ function switchTab(tab) {
     const el = document.getElementById('tab-' + t);
     if (el) el.classList.toggle('hidden', t !== tab);
   });
-  if (tab === 'settings') checkAPIs();
   if (tab === 'log') renderSessionLog();
-  if (tab === 'admin' && typeof loadAdminDashboard === 'function') loadAdminDashboard();
+  if (tab === 'admin') {
+    if (typeof loadAdminDashboard === 'function') loadAdminDashboard();
+    if (typeof checkAPIs === 'function') checkAPIs();
+  }
 }
 
 // ============================================================
