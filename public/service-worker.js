@@ -9,7 +9,7 @@
 //     loads, refreshed in the background).
 //   - /api/*, SSE, POST, cross-origin: never intercepted — always live.
 
-const CACHE_VERSION = 'cardpricer-v48';
+const CACHE_VERSION = 'cardpricer-v49';
 const SHELL = [
   '/',
   '/index.html',

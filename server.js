@@ -2269,7 +2269,8 @@ async function verifyCard(card) {
       console.log(`[VERIFY] CORRECTED -> "${verified.name}" from ${verified.set_name} (${verified.set_code}) #${verified.card_number}`);
       // Merge: keep AI's condition estimate but use DB's set info.
       // confidence_score propagates through so the double-check gate can
-      // skip high-confidence matches.
+      // skip high-confidence matches. candidates surfaces runner-up cards
+      // for the client-side chooser when the confidence is moderate.
       return {
         ...card,
         name: verified.name || card.name,
@@ -2282,7 +2283,8 @@ async function verifyCard(card) {
         tcgplayer_url: verified.tcgplayer_url || null,
         verified: true,
         db_source: verified.source,
-        confidence_score: verified.confidence_score || null
+        confidence_score: verified.confidence_score || null,
+        candidates: verified.candidates || null
       };
     } else {
       console.log(`[VERIFY] Could not verify — using AI identification as-is`);
@@ -2589,10 +2591,13 @@ async function verifyPokemon(card) {
     // 4. Just name as fallback
     queries.push(`name:"${card.name}"`);
 
-    // Collect the best match across ALL queries (don't stop at first hit)
+    // Collect the best match across ALL queries (don't stop at first hit).
+    // allScored holds every candidate we've scored so we can surface the
+    // runners-up to the user as a chooser when the winner isn't confident.
     let globalBest = null;
     let globalBestScore = -1;
     const seenCardIds = new Set();  // Avoid scoring the same card twice
+    const allScored = [];
 
     // Fire all queries in parallel — the scoring aggregates across all results
     // anyway, so there's no reason to wait between API calls. Drops worst-case
@@ -2708,12 +2713,33 @@ async function verifyPokemon(card) {
 
         console.log(`[VERIFY-PKM]   "${d.name}" (${d.set?.name} [${d.set?.printedTotal} cards] #${d.number}, HP:${d.hp}) => score ${score}`);
 
+        allScored.push({ d, score });
         if (score > globalBestScore) {
           globalBestScore = score;
           globalBest = d;
         }
       }
     }
+
+    // Top 3 alternatives (excluding the winner) for the chooser UI.
+    // Only useful when we have multiple plausible candidates — below 40 is
+    // typically "name kind-of matched and nothing else" so we filter those out.
+    const candidates = allScored
+      .filter(x => x.score >= 40 && x.d.id !== globalBest?.id)
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 3)
+      .map(({ d, score }) => ({
+        name: d.name,
+        set_name: d.set?.name || '',
+        set_code: d.set?.id?.toUpperCase() || '',
+        card_number: d.number || '',
+        rarity: d.rarity || '',
+        hp: d.hp || '',
+        image: d.images?.small || d.images?.large || null,
+        cardmarket_url: d.cardmarket?.url || null,
+        tcgplayer_url: d.tcgplayer?.url || null,
+        score
+      }));
 
     // Return the best match found across ALL queries.
     // Threshold raised from 40 → 120: a score of 40-100 is typically just
@@ -2734,7 +2760,8 @@ async function verifyPokemon(card) {
         cardmarket_url: globalBest.cardmarket?.url || null,
         tcgplayer_url: globalBest.tcgplayer?.url || null,
         source: 'pokemontcg.io',
-        confidence_score: globalBestScore
+        confidence_score: globalBestScore,
+        candidates  // runners-up for the chooser UI when confidence is moderate
       }, card.card_number);
     } else if (globalBest) {
       console.log(`[VERIFY-PKM] Best match "${globalBest.name}" scored ${globalBestScore}, below threshold 120 — rejecting.`);
