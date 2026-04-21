@@ -20,7 +20,7 @@
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script>
     // Register service worker for PWA install + offline shell.
-    console.log('[APP] Card Pricer client v54 loaded');
+    console.log('[APP] Card Pricer client v55 loaded');
     if ('serviceWorker' in navigator) {
       window.addEventListener('load', () => {
         navigator.serviceWorker.register('/service-worker.js', { updateViaCache: 'none' })
@@ -272,9 +272,78 @@
         if (label) label.textContent = data.session.user?.email || '(logged in)';
         // Fetch + render monthly usage (Phase C).
         refreshUsage();
+        // Check admin flag via /api/me — reveals the Admin tab button if true.
+        try {
+          const meResp = await fetch('/api/me');
+          if (meResp.ok) {
+            const me = await meResp.json();
+            if (me?.is_admin) {
+              const adminBtn = document.getElementById('adminTabBtn');
+              if (adminBtn) adminBtn.classList.remove('hidden');
+            }
+          }
+        } catch (_) { /* non-fatal */ }
       } catch (e) {
         console.error('[AUTH] session check failed:', e);
         showAuthOverlay();
+      }
+    }
+
+    // ========== ADMIN DASHBOARD (Phase E) ==========
+    async function loadAdminDashboard() {
+      // Fire both fetches in parallel.
+      const [overviewResp, usersResp] = await Promise.all([
+        fetch('/api/admin/overview'),
+        fetch('/api/admin/users')
+      ]);
+      if (overviewResp.ok) {
+        const o = await overviewResp.json();
+        const set = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
+        set('adminMrr', '€' + (o.mrr || 0).toFixed(2));
+        set('adminArr', 'ARR: €' + (o.arr || 0).toFixed(2));
+        set('adminActivePaid', String(o.active_paid || 0));
+        set('adminUserCount', (o.user_count || 0) + ' total users');
+        set('adminScans', String(o.scans_this_month || 0));
+        set('adminSignups', String(o.signups_last_30 || 0));
+        // Plan breakdown as a simple bar list.
+        const breakdown = document.getElementById('adminPlanBreakdown');
+        if (breakdown && o.plan_counts) {
+          const total = Object.values(o.plan_counts).reduce((a, b) => a + b, 0) || 1;
+          const colors = { free: '#7c7c95', beta: '#6c5ce7', solo: '#40c4ff', vendor: '#00e676', shop: '#ffab40' };
+          breakdown.innerHTML = ['shop', 'vendor', 'solo', 'beta', 'free'].map(plan => {
+            const n = o.plan_counts[plan] || 0;
+            const pct = Math.round((n / total) * 100);
+            return `<div>
+              <div style="display:flex; justify-content:space-between;">
+                <span style="text-transform:capitalize;">${plan}</span>
+                <span style="color:var(--text-dim);">${n} (${pct}%)</span>
+              </div>
+              <div style="height:5px; background:var(--surface2); border-radius:3px; overflow:hidden;">
+                <div style="height:100%; width:${pct}%; background:${colors[plan]};"></div>
+              </div>
+            </div>`;
+          }).join('');
+        }
+      }
+      if (usersResp.ok) {
+        const users = await usersResp.json();
+        const body = document.getElementById('adminUserTableBody');
+        if (body) {
+          if (!users.length) {
+            body.innerHTML = '<tr><td colspan="4" style="padding:10px; color:var(--text-dim); text-align:center;">No users yet.</td></tr>';
+          } else {
+            body.innerHTML = users.map(u => {
+              const date = u.created_at ? new Date(u.created_at).toLocaleDateString() : '—';
+              const planBadge = `<span style="text-transform:capitalize; padding:2px 8px; border-radius:4px; font-size:11px; font-weight:700; background:${u.has_subscription ? 'rgba(0,230,118,0.15)' : 'rgba(124,124,149,0.15)'}; color:${u.has_subscription ? 'var(--green)' : 'var(--text-dim)'};">${u.plan}${u.plan_interval ? ' · ' + u.plan_interval[0] : ''}</span>`;
+              return `<tr style="border-bottom:1px solid var(--border);">
+                <td style="padding:6px; word-break:break-all;">${u.email || '(no email)'}${u.is_admin ? ' <span style="color:var(--orange); font-size:10px;">ADMIN</span>' : ''}</td>
+                <td style="padding:6px;">${planBadge}</td>
+                <td style="padding:6px; text-align:right;">${u.scans_this_month}</td>
+                <td style="padding:6px; color:var(--text-dim);">${date}</td>
+              </tr>`;
+            }).join('');
+          }
+        }
       }
     }
 
@@ -2134,6 +2203,7 @@
     <div class="tab" data-tab="results" onclick="switchTab('results')">Results</div>
     <div class="tab" data-tab="log" onclick="switchTab('log')">Session</div>
     <div class="tab" data-tab="settings" onclick="switchTab('settings')">Settings</div>
+    <div class="tab hidden" data-tab="admin" id="adminTabBtn" onclick="switchTab('admin')">Admin</div>
   </div>
 
   <!-- Always-visible session stats strip -->
@@ -2513,6 +2583,59 @@
       </div>
     </div>
   </div>
+
+  <!-- ===== ADMIN TAB (Phase E) ===== -->
+  <div class="main hidden" id="tab-admin">
+    <div class="settings">
+      <div class="setting-group">
+        <h3>Overview</h3>
+        <div id="adminStatsGrid" style="display:grid; grid-template-columns:repeat(2,1fr); gap:10px;">
+          <div class="admin-stat" style="padding:12px; background:var(--surface2); border-radius:10px;">
+            <div style="font-size:11px; color:var(--text-dim); text-transform:uppercase; letter-spacing:0.5px;">MRR</div>
+            <div id="adminMrr" style="font-size:26px; font-weight:900; letter-spacing:-0.5px; background:linear-gradient(180deg,#00ff88 0%,#00c853 100%); -webkit-background-clip:text; -webkit-text-fill-color:transparent;">—</div>
+            <div id="adminArr" style="font-size:11px; color:var(--text-dim); margin-top:2px;">—</div>
+          </div>
+          <div class="admin-stat" style="padding:12px; background:var(--surface2); border-radius:10px;">
+            <div style="font-size:11px; color:var(--text-dim); text-transform:uppercase; letter-spacing:0.5px;">Active paid</div>
+            <div id="adminActivePaid" style="font-size:26px; font-weight:900;">—</div>
+            <div id="adminUserCount" style="font-size:11px; color:var(--text-dim); margin-top:2px;">—</div>
+          </div>
+          <div class="admin-stat" style="padding:12px; background:var(--surface2); border-radius:10px;">
+            <div style="font-size:11px; color:var(--text-dim); text-transform:uppercase; letter-spacing:0.5px;">Scans this month</div>
+            <div id="adminScans" style="font-size:26px; font-weight:900;">—</div>
+            <div style="font-size:11px; color:var(--text-dim); margin-top:2px;">Across all users</div>
+          </div>
+          <div class="admin-stat" style="padding:12px; background:var(--surface2); border-radius:10px;">
+            <div style="font-size:11px; color:var(--text-dim); text-transform:uppercase; letter-spacing:0.5px;">Signups (30d)</div>
+            <div id="adminSignups" style="font-size:26px; font-weight:900;">—</div>
+            <div style="font-size:11px; color:var(--text-dim); margin-top:2px;">New accounts</div>
+          </div>
+        </div>
+      </div>
+      <div class="setting-group">
+        <h3>Plan breakdown</h3>
+        <div id="adminPlanBreakdown" style="display:flex; flex-direction:column; gap:6px; font-size:13px;"></div>
+      </div>
+      <div class="setting-group">
+        <h3>Recent users</h3>
+        <div style="overflow-x:auto;">
+          <table id="adminUserTable" style="width:100%; border-collapse:collapse; font-size:12px;">
+            <thead>
+              <tr style="text-align:left; color:var(--text-dim); border-bottom:1px solid var(--border);">
+                <th style="padding:6px;">Email</th>
+                <th style="padding:6px;">Plan</th>
+                <th style="padding:6px; text-align:right;">Scans</th>
+                <th style="padding:6px;">Signed up</th>
+              </tr>
+            </thead>
+            <tbody id="adminUserTableBody">
+              <tr><td colspan="4" style="padding:10px; color:var(--text-dim); text-align:center;">Loading…</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
 </div>
 
 <!-- RESULT SHEET — slides up over scan view, camera stays live behind it -->
@@ -2626,11 +2749,13 @@ window.state = state;
 function switchTab(tab) {
   state.currentTab = tab;
   document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.tab === tab));
-  ['scan', 'results', 'log', 'settings'].forEach(t => {
-    document.getElementById('tab-' + t).classList.toggle('hidden', t !== tab);
+  ['scan', 'results', 'log', 'settings', 'admin'].forEach(t => {
+    const el = document.getElementById('tab-' + t);
+    if (el) el.classList.toggle('hidden', t !== tab);
   });
   if (tab === 'settings') checkAPIs();
   if (tab === 'log') renderSessionLog();
+  if (tab === 'admin' && typeof loadAdminDashboard === 'function') loadAdminDashboard();
 }
 
 // ============================================================

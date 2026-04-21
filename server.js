@@ -187,6 +187,145 @@ app.get('/api/usage', requireAuth, async (req, res) => {
 });
 
 // ============================================================
+// ADMIN ENDPOINTS (Phase E)
+// ============================================================
+// requireAdmin chains after requireAuth and checks profiles.is_admin.
+// Kept dead-simple for now — single flag, no roles. Flip a user's
+// is_admin column to true in Supabase to grant access.
+async function requireAdmin(req, res, next) {
+  if (!supabase || !req.user) return res.status(401).json({ error: 'auth required' });
+  try {
+    const { data: profile, error } = await supabase
+      .from('profiles').select('is_admin').eq('user_id', req.user.id).maybeSingle();
+    if (error) throw error;
+    if (!profile?.is_admin) return res.status(403).json({ error: 'admin only' });
+    next();
+  } catch (e) {
+    console.error('[ADMIN] requireAdmin failed:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+}
+
+// Monthly-equivalent euros for each plan + interval. Yearly normalised
+// to /12 so the MRR total is the "monthly run-rate" view finance cares
+// about. Matches the live Stripe prices — update these if pricing changes.
+const PLAN_MRR = {
+  'solo':   { monthly: 9,  yearly: 81  / 12 },
+  'vendor': { monthly: 29, yearly: 261 / 12 },
+  'shop':   { monthly: 59, yearly: 531 / 12 }
+};
+
+// GET /api/me — client uses this to know the current user's email, plan,
+// and is_admin flag (to decide whether to show the Admin tab).
+app.get('/api/me', requireAuth, async (req, res) => {
+  if (!supabase) return res.status(503).json({ error: 'auth unavailable' });
+  try {
+    const { data: profile } = await supabase
+      .from('profiles').select('plan, plan_interval, is_admin').eq('user_id', req.user.id).maybeSingle();
+    res.json({
+      user_id: req.user.id,
+      email: req.user.email,
+      plan: profile?.plan || 'free',
+      plan_interval: profile?.plan_interval || null,
+      is_admin: !!profile?.is_admin
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// GET /api/admin/overview — aggregate stats for the admin dashboard.
+app.get('/api/admin/overview', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    // Plan breakdown + MRR
+    const { data: profiles, error: pErr } = await supabase
+      .from('profiles')
+      .select('plan, plan_interval, stripe_subscription_id, created_at');
+    if (pErr) throw pErr;
+
+    const planCounts = { free: 0, beta: 0, solo: 0, vendor: 0, shop: 0 };
+    let mrr = 0;
+    let activePaid = 0;
+    for (const p of profiles || []) {
+      const plan = p.plan || 'free';
+      if (planCounts[plan] != null) planCounts[plan]++;
+      const mrrTable = PLAN_MRR[plan];
+      if (mrrTable && p.stripe_subscription_id) {
+        const interval = p.plan_interval || 'monthly';
+        mrr += mrrTable[interval] || mrrTable.monthly;
+        activePaid++;
+      }
+    }
+
+    // Scans this calendar month
+    const monthStart = new Date(Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth(), 1));
+    const { count: scansThisMonth } = await supabase
+      .from('scan_events')
+      .select('*', { count: 'exact', head: true })
+      .gte('ts', monthStart.toISOString());
+
+    // Signups last 30 days (rough funnel proxy)
+    const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+    const signupsLast30 = (profiles || []).filter(p => p.created_at >= thirtyDaysAgo).length;
+
+    res.json({
+      user_count: profiles?.length || 0,
+      active_paid: activePaid,
+      plan_counts: planCounts,
+      mrr: Math.round(mrr * 100) / 100,
+      arr: Math.round(mrr * 12 * 100) / 100,
+      scans_this_month: scansThisMonth || 0,
+      signups_last_30: signupsLast30
+    });
+  } catch (e) {
+    console.error('[ADMIN] overview failed:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// GET /api/admin/users — recent users with their plan + monthly usage.
+// Used by the admin table. Capped at 200 rows for MVP.
+app.get('/api/admin/users', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const { data: profiles, error } = await supabase
+      .from('profiles')
+      .select('user_id, plan, plan_interval, stripe_customer_id, stripe_subscription_id, created_at, is_admin')
+      .order('created_at', { ascending: false })
+      .limit(200);
+    if (error) throw error;
+
+    // Monthly usage per user.
+    const monthStart = new Date(Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth(), 1)).toISOString();
+    const { data: events } = await supabase
+      .from('scan_events').select('user_id').gte('ts', monthStart);
+    const usage = {};
+    for (const e of events || []) { usage[e.user_id] = (usage[e.user_id] || 0) + 1; }
+
+    // Emails come from auth.users — use the service role to look them up.
+    // admin.listUsers is paginated; we just pull one large page for MVP.
+    let emailByUserId = {};
+    try {
+      const { data: { users } = { users: [] } } = await supabase.auth.admin.listUsers({ perPage: 200 });
+      for (const u of users || []) emailByUserId[u.id] = u.email || '';
+    } catch (e) { console.warn('[ADMIN] email lookup failed:', e.message); }
+
+    res.json((profiles || []).map(p => ({
+      user_id: p.user_id,
+      email: emailByUserId[p.user_id] || '',
+      plan: p.plan,
+      plan_interval: p.plan_interval,
+      scans_this_month: usage[p.user_id] || 0,
+      has_subscription: !!p.stripe_subscription_id,
+      is_admin: !!p.is_admin,
+      created_at: p.created_at
+    })));
+  } catch (e) {
+    console.error('[ADMIN] users failed:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ============================================================
 // STRIPE — checkout, customer portal, webhook (Phase D)
 // ============================================================
 const stripe = process.env.STRIPE_SECRET_KEY
