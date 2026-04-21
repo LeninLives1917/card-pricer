@@ -1636,11 +1636,16 @@ app.post('/api/read-set-code', identifyLimiter, async (req, res) => {
       console.log(`[READ-SET-CODE] Passthrough: ${(rawBuffer.length/1024).toFixed(0)}KB (${mediaType})`);
     }
 
-    console.log('[READ-SET-CODE] Sending to Claude Haiku...');
+    console.log('[READ-SET-CODE] Sending to Claude Sonnet 4.6...');
     const t0 = Date.now();
 
+    // Upgraded from Haiku 4.5 to Sonnet 4.6 — the OCR-first path returns
+    // cards with zero name/HP validation downstream, so a single-char misread
+    // is a silent wrong-card failure. Sonnet 4.6 is materially better on
+    // small printed text (leading zeros, letter-shape confusions like M/W,
+    // G/C, E/F). The ~10x cost bump is pennies per scan.
     const response = await anthropic.messages.create({
-      model: 'claude-haiku-4-5-20251001',
+      model: 'claude-sonnet-4-6',
       max_tokens: 20,
       messages: [{
         role: 'user',
@@ -1652,6 +1657,8 @@ app.post('/api/read-set-code', identifyLimiter, async (req, res) => {
           {
             type: 'text',
             text: `Read the set code and card number printed on this Pokemon card. Look near the bottom of the card for small text.
+
+CRITICAL — PRESERVE LEADING ZEROS. If the printed number is "027", report "027". NOT "27" and NOT "2". Dropping zeros sends this card to the wrong entry in our database and returns a completely different card. "003/165" is NOT "3/165". This is the #1 failure mode — treat every digit you see as load-bearing, including leading zeros.
 
 FORMATS to look for (check all):
 

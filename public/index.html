@@ -16,7 +16,7 @@
   <title>Card Pricer</title>
   <script>
     // Register service worker for PWA install + offline shell.
-    console.log('[APP] Card Pricer client v38 loaded');
+    console.log('[APP] Card Pricer client v39 loaded');
     if ('serviceWorker' in navigator) {
       window.addEventListener('load', () => {
         navigator.serviceWorker.register('/service-worker.js', { updateViaCache: 'none' })
@@ -2410,7 +2410,11 @@ async function tryOcrIdentify(imageData) {
   try {
     // Default is ON — set-code reader saves API cost vs full identify.
     // Users can disable in Settings if they prefer full AI identify.
-    const ocrPref = getSetting('ocrFirst', 'true');
+    // Default OFF: the OCR-first path bypasses the full Sonnet identify, so
+    // a single misread character (e.g. "027" → "2") silently returns the
+    // wrong card with no name/HP cross-check. Users who want the speed
+    // tradeoff can opt in via Settings.
+    const ocrPref = getSetting('ocrFirst', 'false');
     if (ocrPref === false || ocrPref === 'false') {
       return null;
     }
@@ -4360,7 +4364,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const hap = getSetting('haptic', 'true'); const hapIn = document.getElementById('hapticToggle'); if (hapIn) hapIn.checked = (hap === true || hap === 'true');
   const hc = getSetting('highContrast', 'false'); const hcIn = document.getElementById('contrastToggle'); if (hcIn) hcIn.checked = (hc === true || hc === 'true');
   const rf = getSetting('rapidFire', 'false'); const rfIn = document.getElementById('rapidFireToggle'); if (rfIn) rfIn.checked = (rf === true || rf === 'true');
-  const ocr = getSetting('ocrFirst', 'true'); const ocrIn = document.getElementById('ocrFirstToggle'); if (ocrIn) ocrIn.checked = (ocr === true || ocr === 'true');
+  const ocr = getSetting('ocrFirst', 'false'); const ocrIn = document.getElementById('ocrFirstToggle'); if (ocrIn) ocrIn.checked = (ocr === true || ocr === 'true');
   const sm = getSetting('sellMarkup', '110'); const smIn = document.getElementById('sellMarkup'); if (smIn) smIn.value = sm;
   // Modern UX: apply AMOLED class, hydrate strip/ribbon, wire install prompt
   if (getSetting('amoled', 'true') !== false && getSetting('amoled', 'true') !== 'false') document.body.classList.add('amoled');
