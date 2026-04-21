@@ -249,6 +249,8 @@ DISNEY LORCANA (game="lorcana"):
 - READ the attack names — different versions have different attacks. Include them in the "attacks" array.
 - READ the EXACT card number printed on the card — this is the #1 most important field for pricing
   - INCLUDE the full number with set total, e.g. "44/95" not just "44" — the total after "/" identifies which set it belongs to
+  - PRESERVE leading zeros EXACTLY as printed. "027" is NOT "27" or "2" — report it as "027". "003/165" must be "003/165", not "3/165". Leading zeros are never decorative; dropping them breaks set lookup.
+  - If the printed number is ABOVE the set total (e.g. "229/182"), the card is a Secret Rare / "Additionals" variant — still report the exact number.
   - For EX-era Pokemon cards (2003-2007), the set total is critical because many common Pokemon appear across multiple sets with the same number
   - Example: Psyduck #44 exists in multiple EX-era sets — only the "/95" or "/116" etc. tells us WHICH set
 - READ the set symbol carefully — it appears at the bottom right of Pokemon cards and uniquely identifies the set
@@ -2308,29 +2310,70 @@ async function verifyMagic(card) {
   }
 }
 
+// Strict name comparison for the Sheet short-circuit. Rejects substring
+// matches that would let "Pikachu" satisfy "Pikachu V", or "Charizard ex"
+// satisfy "Charizard GX". Only returns true when:
+//   - normalized names are identical, OR
+//   - base names (with Pokemon suffix stripped) match AND both sides report
+//     the same suffix (e.g. both "ex", both null, both "VMAX")
+function nameMatchesSheet(aiName, dbName) {
+  const norm = s => (s || '').toLowerCase().trim().replace(/\s+/g, ' ');
+  const a = norm(aiName), d = norm(dbName);
+  if (!a || !d) return false;
+  if (a === d) return true;
+  const SUFFIX_RE = /\s*(ex|gx|v|vmax|vstar|lv\.x)\s*$/i;
+  const aBase = a.replace(SUFFIX_RE, '').trim();
+  const dBase = d.replace(SUFFIX_RE, '').trim();
+  if (aBase !== dBase) return false;
+  return extractPokemonSuffix(aiName) === extractPokemonSuffix(dbName);
+}
+
+// If Claude reported a "NNN/TTT" card number where NNN > TTT, the card is a
+// Secret Rare / "Additionals" subset on Cardmarket (e.g. DRI 229/182 is sold
+// as xDRI 229 under "Destined Rivals: Additionals"). Annotate the verified
+// result so downstream Cardmarket links + displayed labels reflect that.
+function applyAdditionalsLabel(verified, aiCardNumber) {
+  if (!verified || !aiCardNumber || typeof aiCardNumber !== 'string' || !aiCardNumber.includes('/')) return verified;
+  const [numStr, totalStr] = aiCardNumber.split('/');
+  const num = parseInt(String(numStr || '').replace(/^0+/, '') || '0');
+  const total = parseInt(String(totalStr || '').replace(/^0+/, '') || '0');
+  if (!num || !total || num <= total) return verified;
+  const baseCode = (verified.set_code || '').toUpperCase();
+  const baseName = verified.set_name || '';
+  return {
+    ...verified,
+    set_code: baseCode.startsWith('X') ? baseCode : 'X' + baseCode,
+    set_name: /additional/i.test(baseName) ? baseName : (baseName ? `${baseName}: Additionals` : baseName),
+    _additionals: true
+  };
+}
+
 // --- Pokemon via Pokemon TCG API ---
 async function verifyPokemon(card) {
   try {
     // ── LOCAL DB SHORT-CIRCUIT ──
-    // If Claude returned an exact set+number match that the Google Sheet /
-    // Pokellector DB already has, skip the 4-query pokemontcg.io waterfall
-    // entirely. The Sheet is our source of truth, so a direct hit there is
-    // MORE authoritative than a fuzzy API match. We still require the local
-    // name to roughly match Claude's to avoid blindly trusting the DB on
-    // cards where Claude read the number correctly but misidentified the card.
+    // If Claude returned an exact set+number match that the Sheet / Pokellector
+    // DB already has, skip the 4-query pokemontcg.io waterfall. Guards:
+    //   - strict name match (exact-normalized or base+suffix both agree) — no
+    //     loose substring matches that would let "Pikachu" short-circuit into
+    //     the Sheet's "Pikachu V" entry
+    //   - HP consistency when both sides report one — catches cases where
+    //     Claude misread the set code so we looked up a real but wrong card
+    //   - Secret-rare annotation applied after match so "xDRI 229" surfaces
+    //     correctly when Claude reports a number above the set total
     if (card.set_code && card.card_number) {
       const resolved = resolveSetCode(card.set_code);
       if (resolved.setId) {
         const cleanNum = String(card.card_number).replace(/\/.*/, '').replace(/^0+/, '') || String(card.card_number);
         const local = lookupLocalDb(resolved.setId, cleanNum);
         if (local) {
-          // Sanity-check name match (case-insensitive substring either way).
-          const aiName = (card.name || '').toLowerCase().trim();
-          const dbName = (local.name || '').toLowerCase().trim();
-          const nameMatches = aiName && dbName && (aiName === dbName || aiName.includes(dbName) || dbName.includes(aiName));
-          if (nameMatches) {
+          const nameOk = nameMatchesSheet(card.name, local.name);
+          const aiHp = parseInt(card.hp);
+          const dbHp = parseInt(local.hp);
+          const hpOk = !aiHp || !dbHp || Math.abs(aiHp - dbHp) <= 20;
+          if (nameOk && hpOk) {
             console.log(`[VERIFY-PKM] Local-DB HIT: ${resolved.setId}-${cleanNum} "${local.name}" — skipping pokemontcg.io`);
-            return {
+            const hit = {
               name: local.name,
               set_name: local.set_name,
               set_code: local.set_code,
@@ -2342,8 +2385,9 @@ async function verifyPokemon(card) {
               tcgplayer_url: local.tcgplayer_url || null,
               source: `local-db (${local.db_source || 'sheet'})`
             };
+            return applyAdditionalsLabel(hit, card.card_number);
           } else {
-            console.log(`[VERIFY-PKM] Local-DB entry ${resolved.setId}-${cleanNum} "${local.name}" didn't match AI name "${card.name}" — falling through to API`);
+            console.log(`[VERIFY-PKM] Local-DB entry ${resolved.setId}-${cleanNum} "${local.name}" failed match gate (name=${nameOk}, hp=${hpOk}) — falling through`);
           }
         }
       }
@@ -2524,7 +2568,7 @@ async function verifyPokemon(card) {
     // because only the name matched). 120 requires at least 2-3 signals to agree.
     if (globalBest && globalBestScore >= 120) {
       console.log(`[VERIFY-PKM] Best match: "${globalBest.name}" from ${globalBest.set?.name} (score: ${globalBestScore})`);
-      return {
+      return applyAdditionalsLabel({
         name: globalBest.name,
         set_name: globalBest.set?.name,
         set_code: globalBest.set?.id?.toUpperCase(),
@@ -2537,7 +2581,7 @@ async function verifyPokemon(card) {
         tcgplayer_url: globalBest.tcgplayer?.url || null,
         source: 'pokemontcg.io',
         confidence_score: globalBestScore
-      };
+      }, card.card_number);
     } else if (globalBest) {
       console.log(`[VERIFY-PKM] Best match "${globalBest.name}" scored ${globalBestScore}, below threshold 120 — rejecting.`);
     }
@@ -2568,7 +2612,7 @@ async function verifyPokemon(card) {
               if (hpMatch) best = hpMatch;
             }
             console.log(`[VERIFY-PKM] ALT MATCH: "${best.name}" from ${best.set?.name} #${best.number} HP:${best.hp}`);
-            return {
+            return applyAdditionalsLabel({
               name: best.name,
               set_name: best.set?.name,
               set_code: best.set?.id?.toUpperCase(),
@@ -2579,7 +2623,7 @@ async function verifyPokemon(card) {
               cardmarket_url: best.cardmarket?.url || null,
               tcgplayer_url: best.tcgplayer?.url || null,
               source: 'pokemontcg.io'
-            };
+            }, card.card_number);
           }
         } catch { /* try next suffix */ }
       }
@@ -2609,7 +2653,7 @@ async function verifyPokemon(card) {
           }
           if (bestScore > 0) {
             console.log(`[VERIFY-PKM] BASE NAME MATCH: "${best.name}" from ${best.set?.name} #${best.number} HP:${best.hp} (score: ${bestScore})`);
-            return {
+            return applyAdditionalsLabel({
               name: best.name,
               set_name: best.set?.name,
               set_code: best.set?.id?.toUpperCase(),
@@ -2618,7 +2662,7 @@ async function verifyPokemon(card) {
               hp: best.hp,
               image: best.images?.large || best.images?.small,
               source: 'pokemontcg.io'
-            };
+            }, card.card_number);
           }
         }
       } catch { /* give up */ }
