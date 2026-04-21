@@ -16,7 +16,7 @@
   <title>Card Pricer</title>
   <script>
     // Register service worker for PWA install + offline shell.
-    console.log('[APP] Card Pricer client v41 loaded');
+    console.log('[APP] Card Pricer client v42 loaded');
     if ('serviceWorker' in navigator) {
       window.addEventListener('load', () => {
         navigator.serviceWorker.register('/service-worker.js', { updateViaCache: 'none' })
@@ -2561,20 +2561,21 @@ async function handleBulkFiles(event) {
   for (const f of files) {
     const rawUrl = await readFileAsDataURL(f);
     // Resize for upload (2400px at 0.95 — bulk is often binder pages where
-    // many small cards need to stay readable) and thumbnail (~300px).
+    // many small cards need to stay readable) and preview thumbnail (600px
+    // at q0.85 — crisp on retina grid tiles + detail-view taps without
+    // blowing the 4MB localStorage cap for queued batches).
     let uploadUrl, thumbUrl;
     try { uploadUrl = await resizeDataUrl(rawUrl, { maxDimension: 2400, quality: 0.95 }); } catch { uploadUrl = rawUrl; }
-    // Thumbnail is small — just scale the upload down via canvas
     try {
       thumbUrl = await new Promise((resolve) => {
         const ti = new Image();
         ti.onload = () => {
-          const s = 300 / Math.max(ti.naturalWidth, ti.naturalHeight);
+          const s = 600 / Math.max(ti.naturalWidth, ti.naturalHeight);
           const c = document.createElement('canvas');
           c.width = Math.round(ti.naturalWidth * s);
           c.height = Math.round(ti.naturalHeight * s);
           c.getContext('2d').drawImage(ti, 0, 0, c.width, c.height);
-          resolve(c.toDataURL('image/jpeg', 0.7));
+          resolve(c.toDataURL('image/jpeg', 0.85));
         };
         ti.onerror = () => resolve(uploadUrl);
         ti.src = uploadUrl;
