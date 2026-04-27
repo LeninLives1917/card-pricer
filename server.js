@@ -1770,20 +1770,38 @@ function loadPriceDbFromFile() {
 
 // ── DOWNLOAD from pokemontcg.io ──
 // force:true lets the admin "Refresh prices" button kick off a fresh
-// pull even after CARD_DB is already loaded. Without it, this short-
-// circuits when cardDbLoading or (implicitly via callers) when the DB
-// is already populated.
+// pull even after CARD_DB is already loaded.
+//
+// Rate-limit handling: pokemontcg.io caps unauthenticated traffic at
+// 30 req/min. Setting POKEMON_TCG_API_KEY (free, sign up at the site)
+// lifts that to 20k/day. We throttle to 25 req/min unauthenticated to
+// stay safely under, ~3 req/min over budget if key is set (irrelevant).
 async function downloadCardDatabase({ force = false } = {}) {
   if (cardDbLoading) return;
   cardDbLoading = true;
   const PAGE_SIZE = 250;
+  const apiKey = process.env.POKEMON_TCG_API_KEY || '';
+  const BATCH = apiKey ? 5 : 3;
+  // Min ms between waves. With BATCH=3 and 25 req/min, each wave is 3 reqs,
+  // so we want 60s/25*3 = 7.2s between wave starts. Use 7500 for safety.
+  const WAVE_DELAY_MS = apiKey ? 0 : 7500;
+  const SAVE_EVERY_N_PAGES = 20;
+  const reqOpts = (params) => ({
+    params,
+    timeout: 30000,
+    headers: apiKey ? { 'X-Api-Key': apiKey } : {}
+  });
+  const pageParams = (page) => ({
+    pageSize: PAGE_SIZE,
+    page,
+    select: 'id,name,number,rarity,set,hp,supertype,subtypes,cardmarket,tcgplayer,images'
+  });
 
   try {
     console.log(force ? '[CARD-DB] Force refresh — pulling all pages from pokemontcg.io...' : '[CARD-DB] No local file — downloading from pokemontcg.io...');
-    const firstResp = await axios.get('https://api.pokemontcg.io/v2/cards', {
-      params: { pageSize: PAGE_SIZE, page: 1, select: 'id,name,number,rarity,set,hp,supertype,subtypes,cardmarket,tcgplayer,images' },
-      timeout: 30000
-    });
+    console.log(`[CARD-DB] API key: ${apiKey ? 'present (high rate limit)' : 'NOT SET — throttling to 25 req/min'}; BATCH=${BATCH}, WAVE_DELAY=${WAVE_DELAY_MS}ms`);
+
+    const firstResp = await axios.get('https://api.pokemontcg.io/v2/cards', reqOpts(pageParams(1)));
     const totalCount = firstResp.data?.totalCount || 0;
     const totalPages = Math.ceil(totalCount / PAGE_SIZE);
     console.log(`[CARD-DB] Total: ${totalCount} cards across ${totalPages} pages`);
@@ -1791,40 +1809,63 @@ async function downloadCardDatabase({ force = false } = {}) {
     processPageData(firstResp.data?.data || []);
     console.log(`[CARD-DB] Page 1/${totalPages} (${CARD_DB.size} cards, ${CARD_PRICES.size} priced)`);
 
-    const BATCH = 3;
+    let pagesSinceSave = 1;
+    let pagesFailed = 0;
+    const failedPages = [];
+
     for (let start = 2; start <= totalPages; start += BATCH) {
       const pages = [];
       for (let p = start; p < start + BATCH && p <= totalPages; p++) {
         pages.push(
-          axios.get('https://api.pokemontcg.io/v2/cards', {
-            params: { pageSize: PAGE_SIZE, page: p, select: 'id,name,number,rarity,set,hp,supertype,subtypes,cardmarket,tcgplayer,images' },
-            timeout: 30000
-          }).then(r => {
-            processPageData(r.data?.data || []);
-            return p;
-          }).catch(e => {
-            console.log(`[CARD-DB] Page ${p} failed: ${e.message}`);
-            return null;
-          })
+          axios.get('https://api.pokemontcg.io/v2/cards', reqOpts(pageParams(p)))
+            .then(r => { processPageData(r.data?.data || []); return p; })
+            .catch(e => {
+              const status = e?.response?.status;
+              const msg = status ? `HTTP ${status}` : e.message;
+              console.log(`[CARD-DB] Page ${p} failed: ${msg}`);
+              pagesFailed++;
+              failedPages.push(p);
+              return null;
+            })
         );
       }
       const done = await Promise.all(pages);
-      const maxPage = Math.max(...done.filter(Boolean));
+      const maxPage = Math.max(...done.filter(Boolean), 0);
+      pagesSinceSave += BATCH;
       if (maxPage % 10 === 0 || maxPage === totalPages) {
-        console.log(`[CARD-DB] Progress: page ${maxPage}/${totalPages} (${CARD_DB.size} cards, ${CARD_PRICES.size} priced)`);
+        console.log(`[CARD-DB] Progress: page ${maxPage}/${totalPages} (${CARD_DB.size} cards, ${CARD_PRICES.size} priced, ${pagesFailed} failed)`);
+      }
+      // Incremental save so a mid-flight crash doesn't lose everything.
+      if (pagesSinceSave >= SAVE_EVERY_N_PAGES) {
+        try {
+          _lastPriceRefreshAt = Date.now();
+          saveCardDbToFile();
+          savePriceDbToFile();
+        } catch (saveErr) {
+          console.warn('[CARD-DB] Incremental save failed (continuing):', saveErr.message);
+        }
+        pagesSinceSave = 0;
+      }
+      // Throttle so we stay under pokemontcg.io's unauthenticated rate cap.
+      if (WAVE_DELAY_MS > 0 && start + BATCH <= totalPages) {
+        await new Promise(r => setTimeout(r, WAVE_DELAY_MS));
       }
     }
 
     cardDbCount = CARD_DB.size;
     cardDbReady = true;
     _lastPriceRefreshAt = Date.now();
-    console.log(`[CARD-DB] Download complete! ${cardDbCount} cards (${CARD_PRICES.size} priced).`);
+    if (pagesFailed > 0) {
+      console.warn(`[CARD-DB] Download complete with ${pagesFailed} failed page(s): ${failedPages.slice(0, 30).join(',')}${failedPages.length > 30 ? '…' : ''}`);
+    } else {
+      console.log(`[CARD-DB] Download complete! ${cardDbCount} cards (${CARD_PRICES.size} priced).`);
+    }
 
-    // Save both files so next restart is instant
     saveCardDbToFile();
     savePriceDbToFile();
   } catch (e) {
     console.error(`[CARD-DB] Download failed: ${e.message}`);
+    console.error(e.stack);
     if (CARD_DB.size > 0) {
       cardDbCount = CARD_DB.size;
       cardDbReady = true;
