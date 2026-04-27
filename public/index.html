@@ -601,8 +601,23 @@
       document.getElementById('shopCashPct').value = shop.cash_pct ?? 55;
       document.getElementById('shopCreditPct').value = shop.credit_pct ?? 70;
       document.getElementById('shopBrevoList').value = shop.brevo_list_id || '';
+      document.getElementById('shopNewsletterProvider').value = shop.newsletter_provider || 'brevo';
+      document.getElementById('shopNewsletterShow').checked = shop.newsletter_show !== false;
+      document.getElementById('shopMailchimpKey').value = shop.mailchimp_api_key || '';
+      document.getElementById('shopMailchimpList').value = shop.mailchimp_list_id || '';
+      document.getElementById('shopConvertkitKey').value = shop.convertkit_api_key || '';
+      document.getElementById('shopConvertkitForm').value = shop.convertkit_form_id || '';
       document.getElementById('shopActive').checked = shop.active !== false;
+      applyNewsletterProviderUI();
       renderEmbedSnippet(shop);
+    }
+
+    // Show/hide provider-specific fields based on dropdown selection.
+    function applyNewsletterProviderUI() {
+      const provider = (document.getElementById('shopNewsletterProvider')?.value) || 'brevo';
+      document.querySelectorAll('.np-brevo').forEach(el => { el.style.display = provider === 'brevo' ? '' : 'none'; });
+      document.querySelectorAll('.np-mailchimp').forEach(el => { el.style.display = provider === 'mailchimp' ? '' : 'none'; });
+      document.querySelectorAll('.np-convertkit').forEach(el => { el.style.display = provider === 'convertkit' ? '' : 'none'; });
     }
     function renderEmbedSnippet(shop) {
       const slug = shop.slug || '';
@@ -657,6 +672,12 @@
         cash_pct: parseInt(document.getElementById('shopCashPct').value, 10),
         credit_pct: parseInt(document.getElementById('shopCreditPct').value, 10),
         brevo_list_id: (document.getElementById('shopBrevoList').value || '').trim() || null,
+        newsletter_provider: document.getElementById('shopNewsletterProvider').value || 'brevo',
+        newsletter_show: document.getElementById('shopNewsletterShow').checked,
+        mailchimp_api_key: (document.getElementById('shopMailchimpKey').value || '').trim() || null,
+        mailchimp_list_id: (document.getElementById('shopMailchimpList').value || '').trim() || null,
+        convertkit_api_key: (document.getElementById('shopConvertkitKey').value || '').trim() || null,
+        convertkit_form_id: (document.getElementById('shopConvertkitForm').value || '').trim() || null,
         active: document.getElementById('shopActive').checked
       };
       btn.disabled = true; const origText = btn.textContent; btn.textContent = 'Saving…';
@@ -2987,9 +3008,39 @@
           <div class="setting-row"><span class="setting-label">Credit %</span>
             <input id="shopCreditPct" type="number" min="1" max="100" class="setting-number" style="width:80px;" />
           </div>
-          <div class="setting-row"><span class="setting-label">Brevo list ID (newsletter, optional)</span>
+          <div class="setting-row"><span class="setting-label">Newsletter provider</span>
+            <select id="shopNewsletterProvider" class="setting-select" style="width:160px;" onchange="applyNewsletterProviderUI()">
+              <option value="brevo">Brevo</option>
+              <option value="mailchimp">Mailchimp</option>
+              <option value="convertkit">ConvertKit</option>
+              <option value="off">Off (don't auto-subscribe)</option>
+            </select>
+          </div>
+          <div class="setting-row"><span class="setting-label">Show "subscribe to newsletter" checkbox</span>
+            <input id="shopNewsletterShow" type="checkbox" />
+          </div>
+
+          <!-- Brevo-only fields -->
+          <div class="setting-row np-brevo"><span class="setting-label">Brevo list ID (optional)</span>
             <input id="shopBrevoList" type="number" class="setting-number" style="width:120px;" />
           </div>
+
+          <!-- Mailchimp-only fields -->
+          <div class="setting-row np-mailchimp" style="display:none;"><span class="setting-label">Mailchimp API key</span>
+            <input id="shopMailchimpKey" type="text" class="setting-number" style="width:240px;" placeholder="abc123…-us21" />
+          </div>
+          <div class="setting-row np-mailchimp" style="display:none;"><span class="setting-label">Mailchimp audience (list) ID</span>
+            <input id="shopMailchimpList" type="text" class="setting-number" style="width:200px;" />
+          </div>
+
+          <!-- ConvertKit-only fields -->
+          <div class="setting-row np-convertkit" style="display:none;"><span class="setting-label">ConvertKit API key</span>
+            <input id="shopConvertkitKey" type="text" class="setting-number" style="width:240px;" />
+          </div>
+          <div class="setting-row np-convertkit" style="display:none;"><span class="setting-label">ConvertKit form ID</span>
+            <input id="shopConvertkitForm" type="text" class="setting-number" style="width:200px;" />
+          </div>
+
           <div class="setting-row"><span class="setting-label">Active</span>
             <input id="shopActive" type="checkbox" />
           </div>

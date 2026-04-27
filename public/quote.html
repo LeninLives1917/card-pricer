@@ -354,6 +354,19 @@
         noteLine.innerHTML = 'Prices shown are indicative and assume Near Mint condition. Final offer depends on in-person condition check. Cash offer is ' +
           getCashPct() + '% of market value, store credit is ' + getCreditPct() + '%. We price off Cardmarket (EU) and Scryfall live data.';
       }
+      // Newsletter checkbox: hidden when the shop opts out.
+      const checkboxRow = document.querySelector('.checkbox-row');
+      if (checkboxRow) {
+        if (SHOP_CONFIG.newsletter_show === false) {
+          checkboxRow.style.display = 'none';
+          const cb = document.getElementById('leadNewsletter');
+          if (cb) cb.checked = false;
+        } else if (name) {
+          // Update label to reference the shop, not hardcoded Board & Brewed.
+          const label = checkboxRow.querySelector('label');
+          if (label) label.innerHTML = 'Keep me posted on new arrivals, tournaments &amp; card buying offers at ' + escapeHtml(name) + '.';
+        }
+      }
     }
 
     function applyEmbedMode() {

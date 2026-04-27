@@ -5135,7 +5135,7 @@ app.get('/api/shop-config/:slug', async (req, res) => {
   try {
     const { data } = await supabase
       .from('shops')
-      .select('slug,name,logo_url,accent_color,cash_pct,credit_pct,active')
+      .select('slug,name,logo_url,accent_color,cash_pct,credit_pct,active,newsletter_show')
       .eq('slug', slug).eq('active', true).maybeSingle();
     if (!data) return res.status(404).json({ error: 'shop not found' });
     shopConfigCache.set(slug, { value: data, expires: Date.now() + SHOP_CONFIG_TTL_MS });
@@ -5320,42 +5320,95 @@ app.post('/api/quote-lead', quoteLeadLimiter, async (req, res) => {
       }).then(r => r.ok ? r.json() : r.text().then(t => { throw new Error('Brevo ' + r.status + ': ' + t); }));
     };
 
-    // If the customer opted in, add them to the active newsletter list.
-    // For multi-tenant: shop.brevo_list_id wins; otherwise falls back to
-    // BREVO_NEWSLETTER_LIST_ID env var (single-tenant default).
-    const subscribeIfOptedIn = async () => {
-      if (!newsletter) return { subscribed: false };
-      const listId = newsletterListId;
-      if (!listId) {
-        console.log('[QUOTE-LEAD] newsletter opt-in but no list ID configured');
-        return { subscribed: false, reason: 'no list configured' };
-      }
+    // Pluggable newsletter subscription. Provider chosen per shop:
+    //   'brevo'      → shop.brevo_list_id || env BREVO_NEWSLETTER_LIST_ID
+    //   'mailchimp'  → shop.mailchimp_api_key + shop.mailchimp_list_id
+    //   'convertkit' → shop.convertkit_api_key + shop.convertkit_form_id
+    //   'off'        → checkbox visible but no auto-subscribe
+    // Single-tenant fallback (no shop record): defaults to 'brevo' + env list.
+    const provider = shop?.newsletter_provider || 'brevo';
+
+    async function subscribeBrevo() {
+      const listId = shop?.brevo_list_id || parseInt(process.env.BREVO_NEWSLETTER_LIST_ID || '0', 10);
+      if (!listId) return { subscribed: false, reason: 'no brevo list configured' };
+      if (!process.env.BREVO_API_KEY) return { subscribed: false, reason: 'no brevo api key' };
       try {
-        // createContact will add OR update. updateEnabled: true lets us upsert without a 400 if they already exist.
-        const res = await fetch('https://api.brevo.com/v3/contacts', {
+        const r = await fetch('https://api.brevo.com/v3/contacts', {
           method: 'POST',
-          headers: {
-            'api-key': process.env.BREVO_API_KEY,
-            'Content-Type': 'application/json',
-            'Accept': 'application/json'
-          },
-          body: JSON.stringify({
-            email,
-            attributes: name ? { FIRSTNAME: name } : {},
-            listIds: [listId],
-            updateEnabled: true
-          })
+          headers: { 'api-key': process.env.BREVO_API_KEY, 'Content-Type': 'application/json', 'Accept': 'application/json' },
+          body: JSON.stringify({ email, attributes: name ? { FIRSTNAME: name } : {}, listIds: [listId], updateEnabled: true })
         });
-        if (!res.ok) {
-          const text = await res.text();
-          console.warn('[QUOTE-LEAD] newsletter subscribe failed:', res.status, text);
+        if (!r.ok) {
+          const text = await r.text();
+          console.warn('[QUOTE-LEAD] brevo subscribe failed:', r.status, text);
           return { subscribed: false, reason: text };
         }
-        return { subscribed: true };
+        return { subscribed: true, provider: 'brevo' };
       } catch (e) {
-        console.warn('[QUOTE-LEAD] newsletter subscribe error:', e.message);
         return { subscribed: false, reason: e.message };
       }
+    }
+
+    async function subscribeMailchimp() {
+      const apiKey = shop?.mailchimp_api_key;
+      const listId = shop?.mailchimp_list_id;
+      if (!apiKey || !listId) return { subscribed: false, reason: 'mailchimp not configured' };
+      // Mailchimp keys end in '-<dc>', e.g. 'abc123-us21'. DC tells us the host.
+      const dc = String(apiKey).split('-').pop();
+      if (!dc) return { subscribed: false, reason: 'mailchimp api key has no DC suffix' };
+      try {
+        const r = await fetch(`https://${dc}.api.mailchimp.com/3.0/lists/${encodeURIComponent(listId)}/members`, {
+          method: 'POST',
+          headers: {
+            'Authorization': 'Basic ' + Buffer.from('anystring:' + apiKey).toString('base64'),
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            email_address: email,
+            status: 'subscribed',
+            merge_fields: name ? { FNAME: name } : {}
+          })
+        });
+        // 400 with "Member Exists" is success-equivalent — they were already subscribed.
+        if (!r.ok) {
+          const text = await r.text();
+          if (text.includes('Member Exists')) return { subscribed: true, provider: 'mailchimp', existed: true };
+          console.warn('[QUOTE-LEAD] mailchimp subscribe failed:', r.status, text);
+          return { subscribed: false, reason: text };
+        }
+        return { subscribed: true, provider: 'mailchimp' };
+      } catch (e) {
+        return { subscribed: false, reason: e.message };
+      }
+    }
+
+    async function subscribeConvertKit() {
+      const apiKey = shop?.convertkit_api_key;
+      const formId = shop?.convertkit_form_id;
+      if (!apiKey || !formId) return { subscribed: false, reason: 'convertkit not configured' };
+      try {
+        const r = await fetch(`https://api.convertkit.com/v3/forms/${encodeURIComponent(formId)}/subscribe`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ api_key: apiKey, email, first_name: name || undefined })
+        });
+        if (!r.ok) {
+          const text = await r.text();
+          console.warn('[QUOTE-LEAD] convertkit subscribe failed:', r.status, text);
+          return { subscribed: false, reason: text };
+        }
+        return { subscribed: true, provider: 'convertkit' };
+      } catch (e) {
+        return { subscribed: false, reason: e.message };
+      }
+    }
+
+    const subscribeIfOptedIn = async () => {
+      if (!newsletter) return { subscribed: false };
+      if (provider === 'off') return { subscribed: false, reason: 'provider off — opt-in saved to quote_leads' };
+      if (provider === 'mailchimp') return subscribeMailchimp();
+      if (provider === 'convertkit') return subscribeConvertKit();
+      return subscribeBrevo();
     };
 
     const [,, subRes] = await Promise.all([
@@ -5382,10 +5435,18 @@ app.post('/api/quote-lead', quoteLeadLimiter, async (req, res) => {
 // 5-minute in-memory TTL.
 const SHOP_PLANS = ['shop', 'beta'];
 
+const NEWSLETTER_PROVIDERS = ['brevo', 'mailchimp', 'convertkit', 'off'];
+
 function validateShopPayload(body, { partial }) {
   const errs = [];
   const out = {};
-  const { slug, name, email, logo_url, accent_color, cash_pct, credit_pct, brevo_list_id, active } = body || {};
+  const {
+    slug, name, email, logo_url, accent_color, cash_pct, credit_pct,
+    brevo_list_id, active,
+    newsletter_provider, newsletter_show,
+    mailchimp_api_key, mailchimp_list_id,
+    convertkit_api_key, convertkit_form_id
+  } = body || {};
 
   if (slug !== undefined) {
     const s = String(slug).toLowerCase();
@@ -5436,6 +5497,30 @@ function validateShopPayload(body, { partial }) {
   }
 
   if (active !== undefined) out.active = !!active;
+
+  if (newsletter_provider !== undefined) {
+    if (!NEWSLETTER_PROVIDERS.includes(newsletter_provider)) {
+      errs.push('newsletter_provider must be one of: ' + NEWSLETTER_PROVIDERS.join(', '));
+    } else {
+      out.newsletter_provider = newsletter_provider;
+    }
+  }
+
+  if (newsletter_show !== undefined) out.newsletter_show = !!newsletter_show;
+
+  // Mailchimp / ConvertKit credentials. Stored as plain text — same trust
+  // level as the email column. Empty string clears the field; null clears too.
+  for (const [k, v] of [
+    ['mailchimp_api_key', mailchimp_api_key],
+    ['mailchimp_list_id', mailchimp_list_id],
+    ['convertkit_api_key', convertkit_api_key],
+    ['convertkit_form_id', convertkit_form_id]
+  ]) {
+    if (v === undefined) continue;
+    if (v === null || v === '') { out[k] = null; continue; }
+    if (typeof v !== 'string') { errs.push(`${k} must be a string`); continue; }
+    out[k] = v.trim().slice(0, 200);
+  }
 
   return { errs, out };
 }
