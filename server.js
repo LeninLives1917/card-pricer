@@ -398,35 +398,46 @@ app.get('/api/admin/users', requireAuth, requireAdmin, async (req, res) => {
 // (which embeds both tcgplayer.prices + cardmarket.prices in one
 // API call). No shipping factor — raw price comparison only.
 
-// Pick the best (highest-spread) variant pair for one card. Direction:
-//   'us_to_eu' — buy in US (TCGplayer USD), sell in EU (Cardmarket EUR). ratio = EU / converted-US.
-//   'eu_to_us' — buy in EU (Cardmarket EUR), sell in US (TCGplayer USD). ratio = converted-US / EU.
-// In both cases higher ratio means a better arbitrage opportunity.
-function bestArbitrage(entry, usdToEurRate, direction = 'us_to_eu') {
-  if (!entry?.tcg || !entry?.cm) return null;
+// Return EVERY viable variant pair for one card, with computed ratio.
+// Used by the 'auto' path so reverse-holo and non-foil opportunities both
+// surface as their own rows. Each variant compared like-for-like:
+//   normal/holofoil/1stEd     ↔  cardmarket.lowPriceExPlus|lowPrice|trendPrice
+//   reverseHolofoil           ↔  cardmarket.reverseHoloLow|reverseHoloTrend
+// Direction:
+//   'us_to_eu' — ratio = EU / converted-US.
+//   'eu_to_us' — ratio = converted-US / EU.
+function arbitrageVariants(entry, usdToEurRate, direction = 'us_to_eu') {
+  if (!entry?.tcg || !entry?.cm) return [];
   const cm = entry.cm;
   const tcg = entry.tcg;
 
-  const variants = [];
-  // Non-foil/holofoil variants compare against cardmarket lowPriceExPlus / lowPrice / trendPrice.
+  const pairs = [];
   const cmNormalEur = cm.lowPriceExPlus || cm.lowPrice || cm.trendPrice || 0;
   for (const k of ['normal', 'holofoil', '1stEditionNormal', '1stEditionHolofoil', 'unlimitedHolofoil']) {
     const usd = tcg[k]?.market;
-    if (usd && cmNormalEur) variants.push({ variant: k, usd, eur: cmNormalEur });
+    if (usd && cmNormalEur) pairs.push({ variant: k, usd, eur: cmNormalEur });
   }
-  // Reverse holofoil — uses reverseHoloLow / reverseHoloTrend
   const cmReverseEur = cm.reverseHoloLow || cm.reverseHoloTrend || 0;
   if (tcg.reverseHolofoil?.market && cmReverseEur) {
-    variants.push({ variant: 'reverseHolofoil', usd: tcg.reverseHolofoil.market, eur: cmReverseEur });
+    pairs.push({ variant: 'reverseHolofoil', usd: tcg.reverseHolofoil.market, eur: cmReverseEur });
   }
 
-  let best = null;
-  for (const v of variants) {
+  const out = [];
+  for (const v of pairs) {
     const usdInEur = v.usd * usdToEurRate;
     if (usdInEur <= 0) continue;
     const ratio = direction === 'eu_to_us' ? (usdInEur / v.eur) : (v.eur / usdInEur);
-    if (!best || ratio > best.ratio) best = { ...v, usdInEur, ratio };
+    out.push({ ...v, usdInEur, ratio });
   }
+  return out;
+}
+
+// Backward-compat helper — returns just the best variant (used elsewhere
+// if needed; the arbitrage endpoint now uses arbitrageVariants directly).
+function bestArbitrage(entry, usdToEurRate, direction = 'us_to_eu') {
+  const all = arbitrageVariants(entry, usdToEurRate, direction);
+  let best = null;
+  for (const v of all) if (!best || v.ratio > best.ratio) best = v;
   return best;
 }
 
@@ -475,40 +486,42 @@ app.post('/api/admin/arbitrage', requireAuth, requireAdmin, (req, res) => {
   const out = [];
   for (const [key, e] of CARD_PRICES) {
     if (setFilter && !setFilter.has(String(e.setId || '').toLowerCase())) continue;
-    const arb = (variant === 'auto')
-      ? bestArbitrage(e, USD_TO_EUR, dir)
-      : singleVariantArbitrage(e, variant, USD_TO_EUR, dir);
-    if (!arb) continue;
-    // Source-side floor: USD price for us_to_eu, EUR price for eu_to_us.
-    const srcPrice = dir === 'eu_to_us' ? arb.eur : arb.usd;
-    if (srcPrice < minSrc) continue;
-    if (arb.ratio < threshold) continue;
-    // Spread is always destination-currency value of (dst - src-converted).
-    // For us_to_eu: in EUR. For eu_to_us: in USD.
-    const spread = dir === 'eu_to_us'
-      ? +(arb.usd - (arb.eur / USD_TO_EUR)).toFixed(2)   // USD profit per card
-      : +(arb.eur - arb.usdInEur).toFixed(2);             // EUR profit per card
-    out.push({
-      key,
-      name: e.name,
-      setName: e.setName,
-      setCode: e.setCode,
-      setId: e.setId,
-      number: e.number,
-      rarity: e.rarity,
-      image: e.image,
-      variant: arb.variant,
-      usd: +arb.usd.toFixed(2),
-      usdInEur: +arb.usdInEur.toFixed(2),
-      eur: +arb.eur.toFixed(2),
-      ratio: +arb.ratio.toFixed(3),
-      spread,
-      spreadCurrency: dir === 'eu_to_us' ? 'USD' : 'EUR',
-      direction: dir,
-      tcgplayerUrl: e.tcgplayerUrl,
-      cardmarketUrl: e.cardmarketUrl,
-      fetchedAt: e.fetchedAt
-    });
+    // 'auto' emits one row per variant where TCG + CM both have a price
+    // for that printing — so a card with both holofoil and reverseHolofoil
+    // arbitrage shows two distinct rows, comparing like-for-like.
+    const arbs = (variant === 'auto')
+      ? arbitrageVariants(e, USD_TO_EUR, dir)
+      : (() => { const v = singleVariantArbitrage(e, variant, USD_TO_EUR, dir); return v ? [v] : []; })();
+    for (const arb of arbs) {
+      const srcPrice = dir === 'eu_to_us' ? arb.eur : arb.usd;
+      if (srcPrice < minSrc) continue;
+      if (arb.ratio < threshold) continue;
+      const spread = dir === 'eu_to_us'
+        ? +(arb.usd - (arb.eur / USD_TO_EUR)).toFixed(2)
+        : +(arb.eur - arb.usdInEur).toFixed(2);
+      out.push({
+        // Per-variant row key so duplicate-card multi-variant rows don't collide.
+        key: `${key}-${arb.variant}`,
+        name: e.name,
+        setName: e.setName,
+        setCode: e.setCode,
+        setId: e.setId,
+        number: e.number,
+        rarity: e.rarity,
+        image: e.image,
+        variant: arb.variant,
+        usd: +arb.usd.toFixed(2),
+        usdInEur: +arb.usdInEur.toFixed(2),
+        eur: +arb.eur.toFixed(2),
+        ratio: +arb.ratio.toFixed(3),
+        spread,
+        spreadCurrency: dir === 'eu_to_us' ? 'USD' : 'EUR',
+        direction: dir,
+        tcgplayerUrl: e.tcgplayerUrl,
+        cardmarketUrl: e.cardmarketUrl,
+        fetchedAt: e.fetchedAt
+      });
+    }
   }
   out.sort((a, b) => sortBy === 'spread' || sortBy === 'spreadEur'
     ? b.spread - a.spread
