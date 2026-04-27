@@ -381,6 +381,133 @@
       }
     }
 
+    // ========== ADMIN — US/EU ARBITRAGE FINDER ==========
+    // Live in the Admin tab — admin-only via server-side requireAdmin.
+    // Reads CARD_PRICES (server) populated alongside CARD_DB.
+    let _arbRefreshPoll = null;
+
+    function escapeHtmlArb(s) {
+      return String(s || '').replace(/[&<>"']/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
+    }
+
+    function setArbStatus(msg, color) {
+      const el = document.getElementById('arbStatus');
+      if (!el) return;
+      el.textContent = msg || '';
+      el.style.color = color || 'var(--text-dim)';
+    }
+
+    function arbRowHtml(r) {
+      const variantLabel = ({ normal: 'Normal', holofoil: 'Holo', reverseHolofoil: 'Rev. Holo', '1stEditionNormal': '1st Ed', '1stEditionHolofoil': '1st Ed Holo', unlimitedHolofoil: 'Unl. Holo' })[r.variant] || r.variant;
+      return `<div style="display:grid; grid-template-columns:48px 1fr auto auto auto; gap:10px; align-items:center; padding:8px; background:var(--surface2); border-radius:8px; margin-bottom:6px;">
+        ${r.image ? `<img src="${escapeHtmlArb(r.image)}" style="width:48px; height:auto; border-radius:6px;" loading="lazy" />` : '<div style="width:48px;height:67px;background:var(--surface);border-radius:6px;"></div>'}
+        <div style="min-width:0;">
+          <div style="font-weight:600; font-size:13px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${escapeHtmlArb(r.name)}</div>
+          <div style="font-size:11px; color:var(--text-dim);">${escapeHtmlArb(r.setName || r.setCode || '')} · #${escapeHtmlArb(r.number)} · ${escapeHtmlArb(variantLabel)}</div>
+        </div>
+        <div style="text-align:right; font-size:12px; line-height:1.4;">
+          <div>$${r.usd.toFixed(2)} <span style="color:var(--text-dim);">(€${r.usdInEur.toFixed(2)})</span></div>
+          <div style="color:var(--accent-light);">€${r.eur.toFixed(2)}</div>
+        </div>
+        <div style="text-align:right; font-weight:700; color:var(--green); font-size:14px; line-height:1.2;">×${r.ratio.toFixed(2)}<br/><span style="font-size:11px; color:var(--text-dim); font-weight:400;">+€${r.spreadEur.toFixed(2)}</span></div>
+        <div style="display:flex; flex-direction:column; gap:4px;">
+          ${r.tcgplayerUrl ? `<a href="${escapeHtmlArb(r.tcgplayerUrl)}" target="_blank" rel="noopener" class="header-btn" style="font-size:10px; padding:4px 8px;">TCGplayer</a>` : ''}
+          ${r.cardmarketUrl ? `<a href="${escapeHtmlArb(r.cardmarketUrl)}" target="_blank" rel="noopener" class="header-btn" style="font-size:10px; padding:4px 8px;">Cardmarket</a>` : ''}
+        </div>
+      </div>`;
+    }
+
+    async function runArbitrageScan() {
+      const btn = document.getElementById('arbScanBtn');
+      const resultsEl = document.getElementById('arbResults');
+      if (!btn || !resultsEl) return;
+      btn.disabled = true; const orig = btn.textContent; btn.textContent = 'Scanning…';
+      setArbStatus('Scanning…');
+      const body = {
+        minUsd: parseFloat(document.getElementById('arbMinUsd').value) || 0,
+        threshold: parseFloat(document.getElementById('arbThreshold').value) || 1.30,
+        variant: document.getElementById('arbVariant').value || 'auto',
+        sortBy: document.getElementById('arbSortBy').value || 'ratio',
+        limit: parseInt(document.getElementById('arbLimit').value, 10) || 100
+      };
+      try {
+        const r = await fetch('/api/admin/arbitrage', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body)
+        });
+        if (!r.ok) {
+          const err = await r.json().catch(() => ({}));
+          if (r.status === 403) setArbStatus('Admin access required.', 'var(--red)');
+          else setArbStatus(err.error || ('Scan failed (' + r.status + ')'), 'var(--red)');
+          resultsEl.innerHTML = '';
+          return;
+        }
+        const data = await r.json();
+        const ageMin = data.lastRefreshAt ? Math.round((Date.now() - data.lastRefreshAt) / 60000) : null;
+        const ageStr = ageMin == null ? 'no snapshot yet — click Refresh prices' : (ageMin < 1 ? 'just now' : ageMin < 60 ? ageMin + ' min ago' : Math.round(ageMin / 60) + ' h ago');
+        setArbStatus(`Scanned ${data.cardsPriced.toLocaleString()} priced cards · ${data.matched} matched · USD→EUR rate ${data.rate.toFixed(4)} · prices ${ageStr}.`);
+        if (!data.results.length) {
+          resultsEl.innerHTML = '<div style="padding:16px; text-align:center; color:var(--text-dim); font-size:12px;">No cards matched. Try a lower threshold or smaller min USD.</div>';
+        } else {
+          resultsEl.innerHTML = data.results.map(arbRowHtml).join('');
+        }
+      } catch (e) {
+        setArbStatus(e.message || 'Network error', 'var(--red)');
+      } finally {
+        btn.disabled = false; btn.textContent = orig;
+      }
+    }
+
+    async function refreshArbitragePrices() {
+      const btn = document.getElementById('arbRefreshBtn');
+      if (!btn) return;
+      btn.disabled = true; const orig = btn.textContent; btn.textContent = 'Refreshing…';
+      try {
+        const r = await fetch('/api/admin/refresh-prices', { method: 'POST' });
+        if (!r.ok) {
+          const err = await r.json().catch(() => ({}));
+          setArbStatus(err.error || 'Refresh failed', 'var(--red)');
+          btn.disabled = false; btn.textContent = orig;
+          return;
+        }
+        const data = await r.json();
+        if (data.alreadyLoading) {
+          setArbStatus('A refresh is already running — polling for completion…', 'var(--orange)');
+        } else {
+          setArbStatus('Refresh started — pulling all sets from pokemontcg.io. This takes ~5 minutes.', 'var(--accent-light)');
+        }
+        if (_arbRefreshPoll) clearInterval(_arbRefreshPoll);
+        _arbRefreshPoll = setInterval(async () => {
+          try {
+            const sr = await fetch('/api/admin/refresh-status');
+            if (!sr.ok) return;
+            const s = await sr.json();
+            if (s.loading) {
+              setArbStatus(`Refreshing… ${s.cardsPriced.toLocaleString()} priced so far (${s.cardsTotal.toLocaleString()} cards).`, 'var(--accent-light)');
+            } else {
+              clearInterval(_arbRefreshPoll); _arbRefreshPoll = null;
+              const ageMin = s.lastRefreshAt ? Math.round((Date.now() - s.lastRefreshAt) / 60000) : null;
+              setArbStatus(`Refresh complete: ${s.cardsPriced.toLocaleString()} priced cards · USD→EUR ${s.rate.toFixed(4)}${ageMin == null ? '' : ' · ' + (ageMin < 1 ? 'just now' : ageMin + ' min ago')}.`, 'var(--green)');
+              btn.disabled = false; btn.textContent = orig;
+            }
+          } catch (e) { /* poll silently */ }
+        }, 10000);
+      } catch (e) {
+        setArbStatus(e.message || 'Network error', 'var(--red)');
+        btn.disabled = false; btn.textContent = orig;
+      }
+    }
+
+    // Live-update the threshold slider label as the user drags.
+    document.addEventListener('DOMContentLoaded', () => {
+      const slider = document.getElementById('arbThreshold');
+      const label = document.getElementById('arbThresholdLabel');
+      if (slider && label) {
+        slider.addEventListener('input', () => { label.textContent = parseFloat(slider.value).toFixed(2); });
+      }
+    });
+
     // Fetch and render the user's plan + scan count from /api/usage.
     // Called after auth and after every successful scan so the banner
     // stays current without a page reload.
@@ -425,6 +552,146 @@
           actions.innerHTML = `<button class="header-btn" onclick="showPlanPicker()" style="width:100%; justify-content:center; background: var(--grad-accent); color: white; border: none; box-shadow: 0 4px 12px rgba(108,92,231,0.3);">Upgrade plan</button>`;
         }
       }
+      // Embed widget panel — shop+beta plan only.
+      loadEmbedPanel(u.plan);
+    }
+
+    // ========== EMBED WIDGET (shop plan) ==========
+    // Show + populate the "Customer Quote Tool" panel for shop+beta plans.
+    // Other plans see nothing (panel stays display:none). Hooked off
+    // renderUsage so it auto-refreshes when the user upgrades mid-session.
+    let _shopState = null;
+    async function loadEmbedPanel(plan) {
+      const group = document.getElementById('embedSettingsGroup');
+      if (!group) return;
+      const allowed = plan === 'shop' || plan === 'beta';
+      if (!allowed) { group.style.display = 'none'; return; }
+      group.style.display = '';
+      try {
+        const r = await fetch('/api/shop');
+        if (!r.ok) {
+          showEmbedNoShop();
+          return;
+        }
+        const shop = await r.json();
+        _shopState = shop;
+        if (!shop) showEmbedNoShop();
+        else showEmbedHasShop(shop);
+      } catch (e) {
+        console.warn('[EMBED] load failed:', e.message);
+        showEmbedNoShop();
+      }
+    }
+    function showEmbedNoShop() {
+      const noEl = document.getElementById('embedNoShop');
+      const yesEl = document.getElementById('embedHasShop');
+      if (noEl) noEl.style.display = '';
+      if (yesEl) yesEl.style.display = 'none';
+    }
+    function showEmbedHasShop(shop) {
+      const noEl = document.getElementById('embedNoShop');
+      const yesEl = document.getElementById('embedHasShop');
+      if (noEl) noEl.style.display = 'none';
+      if (yesEl) yesEl.style.display = '';
+      document.getElementById('shopSlug').value = shop.slug || '';
+      document.getElementById('shopName').value = shop.name || '';
+      document.getElementById('shopEmail').value = shop.email || '';
+      document.getElementById('shopLogo').value = shop.logo_url || '';
+      document.getElementById('shopColor').value = shop.accent_color || '#b45309';
+      document.getElementById('shopCashPct').value = shop.cash_pct ?? 55;
+      document.getElementById('shopCreditPct').value = shop.credit_pct ?? 70;
+      document.getElementById('shopBrevoList').value = shop.brevo_list_id || '';
+      document.getElementById('shopActive').checked = shop.active !== false;
+      renderEmbedSnippet(shop);
+    }
+    function renderEmbedSnippet(shop) {
+      const slug = shop.slug || '';
+      const color = shop.accent_color || '#b45309';
+      const snippet = '<script src="' + location.origin + '/widget.js"\n        data-shop="' + slug + '"\n        data-color="' + color + '"\n        data-position="floating"\n        defer><\/script>';
+      const ta = document.getElementById('embedSnippet');
+      if (ta) ta.value = snippet;
+      const link = document.getElementById('embedPreviewLink');
+      if (link) {
+        link.href = '/quote?shop=' + encodeURIComponent(slug);
+        link.textContent = 'Preview';
+      }
+    }
+    async function createShop() {
+      const slug = (document.getElementById('newShopSlug').value || '').trim().toLowerCase();
+      const name = (document.getElementById('newShopName').value || '').trim();
+      const email = (document.getElementById('newShopEmail').value || '').trim();
+      const errEl = document.getElementById('createShopError');
+      const btn = document.getElementById('createShopBtn');
+      if (errEl) errEl.textContent = '';
+      if (!slug || !name || !email) { if (errEl) errEl.textContent = 'Slug, name, and email are required.'; return; }
+      btn.disabled = true; const origText = btn.textContent; btn.textContent = 'Creating…';
+      try {
+        const r = await fetch('/api/shop', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ slug, name, email })
+        });
+        const data = await r.json().catch(() => ({}));
+        if (!r.ok) {
+          if (errEl) errEl.textContent = data.error || ('Create failed (' + r.status + ')');
+          return;
+        }
+        _shopState = data;
+        showEmbedHasShop(data);
+      } catch (e) {
+        if (errEl) errEl.textContent = e.message || 'Network error';
+      } finally {
+        btn.disabled = false; btn.textContent = origText;
+      }
+    }
+    async function saveShop() {
+      const statusEl = document.getElementById('saveShopStatus');
+      const btn = document.getElementById('saveShopBtn');
+      if (statusEl) { statusEl.textContent = ''; statusEl.style.color = ''; }
+      const payload = {
+        slug: (document.getElementById('shopSlug').value || '').trim().toLowerCase(),
+        name: (document.getElementById('shopName').value || '').trim(),
+        email: (document.getElementById('shopEmail').value || '').trim(),
+        logo_url: (document.getElementById('shopLogo').value || '').trim() || null,
+        accent_color: document.getElementById('shopColor').value,
+        cash_pct: parseInt(document.getElementById('shopCashPct').value, 10),
+        credit_pct: parseInt(document.getElementById('shopCreditPct').value, 10),
+        brevo_list_id: (document.getElementById('shopBrevoList').value || '').trim() || null,
+        active: document.getElementById('shopActive').checked
+      };
+      btn.disabled = true; const origText = btn.textContent; btn.textContent = 'Saving…';
+      try {
+        const r = await fetch('/api/shop', {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        const data = await r.json().catch(() => ({}));
+        if (!r.ok) {
+          if (statusEl) { statusEl.textContent = data.error || ('Save failed (' + r.status + ')'); statusEl.style.color = 'var(--red)'; }
+          return;
+        }
+        _shopState = data;
+        renderEmbedSnippet(data);
+        if (statusEl) { statusEl.textContent = 'Saved.'; statusEl.style.color = 'var(--green)'; setTimeout(() => { if (statusEl) statusEl.textContent = ''; }, 2000); }
+      } catch (e) {
+        if (statusEl) { statusEl.textContent = e.message || 'Network error'; statusEl.style.color = 'var(--red)'; }
+      } finally {
+        btn.disabled = false; btn.textContent = origText;
+      }
+    }
+    async function copyEmbedSnippet() {
+      const ta = document.getElementById('embedSnippet');
+      if (!ta) return;
+      try {
+        await navigator.clipboard.writeText(ta.value);
+      } catch (_) {
+        // Fallback for older browsers / non-https local dev
+        ta.select();
+        try { document.execCommand('copy'); } catch (_) {}
+      }
+      const statusEl = document.getElementById('saveShopStatus');
+      if (statusEl) { statusEl.textContent = 'Copied!'; statusEl.style.color = 'var(--green)'; setTimeout(() => { if (statusEl) statusEl.textContent = ''; }, 1500); }
     }
 
     // Show a "limit reached" modal when the server returns 429 with
@@ -2680,6 +2947,65 @@
         <div id="wantListContainer"></div>
       </div>
 
+      <!-- Customer Quote Tool (Embed widget) — shop plan only -->
+      <div class="setting-group" id="embedSettingsGroup" style="display:none;">
+        <h3>Customer Quote Tool (Embed)</h3>
+        <p style="font-size:12px; color:var(--text-dim); margin-bottom:10px; line-height:1.5;">
+          Drop a snippet on your shop website to let customers request quotes on their cards. Leads route to your email and (optionally) a Brevo newsletter list.
+        </p>
+
+        <div id="embedNoShop" style="display:none;">
+          <p style="font-size:12px; color:var(--text-dim); margin-bottom:10px;">No shop set up yet. Pick a slug — this becomes the public ID in your embed snippet.</p>
+          <div style="display:flex; gap:6px; margin-bottom:8px;">
+            <input id="newShopSlug" class="setting-number" placeholder="shop slug (e.g. brewed)" style="flex:2;" />
+            <input id="newShopName" class="setting-number" placeholder="Display name" style="flex:2;" />
+          </div>
+          <input id="newShopEmail" type="email" class="setting-number" placeholder="Lead email (where quotes land)" style="width:100%; margin-bottom:8px;" />
+          <button class="header-btn" id="createShopBtn" onclick="createShop()" style="width:100%; justify-content:center; color:var(--green);">Set up my embed</button>
+          <div id="createShopError" style="font-size:12px; color:var(--red); margin-top:6px;"></div>
+        </div>
+
+        <div id="embedHasShop" style="display:none;">
+          <div class="setting-row"><span class="setting-label">Shop slug</span>
+            <input id="shopSlug" class="setting-number" style="width:160px;" />
+          </div>
+          <div class="setting-row"><span class="setting-label">Display name</span>
+            <input id="shopName" class="setting-number" style="width:200px;" />
+          </div>
+          <div class="setting-row"><span class="setting-label">Lead email</span>
+            <input id="shopEmail" type="email" class="setting-number" style="width:200px;" />
+          </div>
+          <div class="setting-row"><span class="setting-label">Logo URL (https…)</span>
+            <input id="shopLogo" class="setting-number" style="width:200px;" placeholder="https://…/logo.png" />
+          </div>
+          <div class="setting-row"><span class="setting-label">Accent colour</span>
+            <input id="shopColor" type="color" style="width:60px; height:32px; border:none; background:transparent; cursor:pointer;" />
+          </div>
+          <div class="setting-row"><span class="setting-label">Cash %</span>
+            <input id="shopCashPct" type="number" min="1" max="100" class="setting-number" style="width:80px;" />
+          </div>
+          <div class="setting-row"><span class="setting-label">Credit %</span>
+            <input id="shopCreditPct" type="number" min="1" max="100" class="setting-number" style="width:80px;" />
+          </div>
+          <div class="setting-row"><span class="setting-label">Brevo list ID (newsletter, optional)</span>
+            <input id="shopBrevoList" type="number" class="setting-number" style="width:120px;" />
+          </div>
+          <div class="setting-row"><span class="setting-label">Active</span>
+            <input id="shopActive" type="checkbox" />
+          </div>
+          <button class="header-btn" id="saveShopBtn" onclick="saveShop()" style="width:100%; justify-content:center; color:var(--accent-light); margin-top:6px;">Save changes</button>
+          <div id="saveShopStatus" style="font-size:12px; margin-top:6px; min-height:14px;"></div>
+
+          <h4 style="margin:14px 0 6px; font-size:13px;">Embed snippet</h4>
+          <p style="font-size:11px; color:var(--text-dim); margin-bottom:6px;">Paste before <code>&lt;/body&gt;</code> on your shop website.</p>
+          <textarea id="embedSnippet" readonly style="width:100%; min-height:80px; font-family:'SF Mono','Fira Code',Consolas,monospace; font-size:11px; padding:8px; background:var(--surface2); color:var(--text); border:1px solid var(--border); border-radius:6px;"></textarea>
+          <div style="display:flex; gap:6px; margin-top:6px;">
+            <button class="header-btn" onclick="copyEmbedSnippet()" style="flex:1; color:var(--accent-light);">Copy snippet</button>
+            <a id="embedPreviewLink" class="header-btn" target="_blank" rel="noopener" style="flex:1; text-decoration:none; color:var(--text); justify-content:center;">Preview</a>
+          </div>
+        </div>
+      </div>
+
       <div class="setting-group">
         <h3>Session</h3>
         <button class="header-btn" onclick="clearSession()" style="width:100%; justify-content:center; color: var(--red);">Clear Current Session Log</button>
@@ -2744,6 +3070,51 @@
             </tbody>
           </table>
         </div>
+      </div>
+
+      <!-- US→EU Arbitrage Finder — admin only, raw price comparison -->
+      <div class="setting-group">
+        <h3>US→EU Arbitrage Finder</h3>
+        <p style="font-size:12px; color:var(--text-dim); margin-bottom:10px; line-height:1.5;">
+          English Pokemon cards priced cheaper on TCGplayer (USD) than Cardmarket (EUR). Raw comparison — no shipping/import fees factored. Data from <code>pokemontcg.io</code>.
+        </p>
+
+        <div style="display:grid; grid-template-columns:max-content 1fr 64px; gap:8px 12px; align-items:center; margin-bottom:10px;">
+          <label class="setting-label" style="font-size:12px;">Min USD price</label>
+          <input id="arbMinUsd" type="number" min="0" step="0.5" value="5" class="setting-number" style="width:100%;" />
+          <span style="font-size:11px; color:var(--text-dim);">$</span>
+
+          <label class="setting-label" style="font-size:12px;">Threshold (EU ≥ US ×)</label>
+          <input id="arbThreshold" type="range" min="1.10" max="2.00" step="0.05" value="1.30" style="width:100%;" />
+          <span id="arbThresholdLabel" style="font-size:13px; color:var(--accent-light); text-align:right;">1.30</span>
+
+          <label class="setting-label" style="font-size:12px;">Variant</label>
+          <select id="arbVariant" class="setting-select" style="width:100%;">
+            <option value="auto">Auto (best spread)</option>
+            <option value="normal">Normal</option>
+            <option value="holofoil">Holofoil</option>
+            <option value="reverseHolofoil">Reverse Holo</option>
+          </select>
+          <span></span>
+
+          <label class="setting-label" style="font-size:12px;">Sort by</label>
+          <select id="arbSortBy" class="setting-select" style="width:100%;">
+            <option value="ratio">Ratio (biggest %)</option>
+            <option value="spreadEur">Spread € (biggest absolute)</option>
+          </select>
+          <span></span>
+
+          <label class="setting-label" style="font-size:12px;">Limit</label>
+          <input id="arbLimit" type="number" min="10" max="500" value="100" class="setting-number" style="width:100%;" />
+          <span></span>
+        </div>
+
+        <div style="display:flex; gap:8px;">
+          <button class="header-btn" id="arbScanBtn" onclick="runArbitrageScan()" style="flex:1; color:var(--green);">Scan</button>
+          <button class="header-btn" id="arbRefreshBtn" onclick="refreshArbitragePrices()" style="flex:1; color:var(--accent-light);">Refresh prices (~5 min)</button>
+        </div>
+        <div id="arbStatus" style="font-size:11px; color:var(--text-dim); margin-top:8px; min-height:14px; line-height:1.5;"></div>
+        <div id="arbResults" style="margin-top:12px;"></div>
       </div>
     </div>
   </div>

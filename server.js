@@ -390,6 +390,144 @@ app.get('/api/admin/users', requireAuth, requireAdmin, async (req, res) => {
 });
 
 // ============================================================
+// ADMIN — US/EU ARBITRAGE FINDER
+// ============================================================
+// Surfaces English Pokemon cards priced significantly cheaper on
+// TCGplayer (USD) than Cardmarket (EUR). Reads the in-memory
+// CARD_PRICES map populated alongside CARD_DB from pokemontcg.io
+// (which embeds both tcgplayer.prices + cardmarket.prices in one
+// API call). No shipping factor — raw price comparison only.
+
+// Pick the best (highest-spread) variant pair for one card.
+// Returns null when there's no overlapping priced variant.
+function bestArbitrage(entry, usdToEurRate) {
+  if (!entry?.tcg || !entry?.cm) return null;
+  const cm = entry.cm;
+  const tcg = entry.tcg;
+
+  const variants = [];
+  // Non-foil/holofoil variants compare against cardmarket lowPriceExPlus / lowPrice / trendPrice.
+  const cmNormalEur = cm.lowPriceExPlus || cm.lowPrice || cm.trendPrice || 0;
+  for (const k of ['normal', 'holofoil', '1stEditionNormal', '1stEditionHolofoil', 'unlimitedHolofoil']) {
+    const usd = tcg[k]?.market;
+    if (usd && cmNormalEur) variants.push({ variant: k, usd, eur: cmNormalEur });
+  }
+  // Reverse holofoil — uses reverseHoloLow / reverseHoloTrend
+  const cmReverseEur = cm.reverseHoloLow || cm.reverseHoloTrend || 0;
+  if (tcg.reverseHolofoil?.market && cmReverseEur) {
+    variants.push({ variant: 'reverseHolofoil', usd: tcg.reverseHolofoil.market, eur: cmReverseEur });
+  }
+
+  let best = null;
+  for (const v of variants) {
+    const usdInEur = v.usd * usdToEurRate;
+    if (usdInEur <= 0) continue;
+    const ratio = v.eur / usdInEur;
+    if (!best || ratio > best.ratio) best = { ...v, usdInEur, ratio };
+  }
+  return best;
+}
+
+// Compute arbitrage for a fixed variant — used when the user picks
+// "Normal" / "Holofoil" / "Reverse Holo" instead of "auto".
+function singleVariantArbitrage(entry, variant, usdToEurRate) {
+  if (!entry?.tcg || !entry?.cm) return null;
+  const tcg = entry.tcg;
+  const cm = entry.cm;
+  let usd = 0, eur = 0;
+  if (variant === 'reverseHolofoil') {
+    usd = tcg.reverseHolofoil?.market || 0;
+    eur = cm.reverseHoloLow || cm.reverseHoloTrend || 0;
+  } else {
+    // 'normal' or 'holofoil' both compare against the non-reverse cm price
+    usd = tcg[variant]?.market || 0;
+    eur = cm.lowPriceExPlus || cm.lowPrice || cm.trendPrice || 0;
+  }
+  if (!usd || !eur) return null;
+  const usdInEur = usd * usdToEurRate;
+  if (usdInEur <= 0) return null;
+  return { variant, usd, eur, usdInEur, ratio: eur / usdInEur };
+}
+
+// POST /api/admin/arbitrage — scan CARD_PRICES with the given filters.
+app.post('/api/admin/arbitrage', requireAuth, requireAdmin, (req, res) => {
+  const {
+    minUsd = 5,
+    threshold = 1.30,
+    sets = null,
+    variant = 'auto',
+    limit = 100,
+    sortBy = 'ratio'
+  } = req.body || {};
+
+  const setFilter = sets && Array.isArray(sets) && sets.length
+    ? new Set(sets.map(s => String(s).toLowerCase()))
+    : null;
+
+  const out = [];
+  for (const [key, e] of CARD_PRICES) {
+    if (setFilter && !setFilter.has(String(e.setId || '').toLowerCase())) continue;
+    const arb = (variant === 'auto')
+      ? bestArbitrage(e, USD_TO_EUR)
+      : singleVariantArbitrage(e, variant, USD_TO_EUR);
+    if (!arb) continue;
+    if (arb.usd < minUsd) continue;
+    if (arb.ratio < threshold) continue;
+    out.push({
+      key,
+      name: e.name,
+      setName: e.setName,
+      setCode: e.setCode,
+      setId: e.setId,
+      number: e.number,
+      rarity: e.rarity,
+      image: e.image,
+      variant: arb.variant,
+      usd: +arb.usd.toFixed(2),
+      usdInEur: +arb.usdInEur.toFixed(2),
+      eur: +arb.eur.toFixed(2),
+      ratio: +arb.ratio.toFixed(3),
+      spreadEur: +(arb.eur - arb.usdInEur).toFixed(2),
+      tcgplayerUrl: e.tcgplayerUrl,
+      cardmarketUrl: e.cardmarketUrl,
+      fetchedAt: e.fetchedAt
+    });
+  }
+  out.sort((a, b) => sortBy === 'spreadEur' ? b.spreadEur - a.spreadEur : b.ratio - a.ratio);
+  res.json({
+    rate: USD_TO_EUR,
+    cardsPriced: CARD_PRICES.size,
+    matched: out.length,
+    lastRefreshAt: _lastPriceRefreshAt || null,
+    results: out.slice(0, Math.min(parseInt(limit, 10) || 100, 500))
+  });
+});
+
+// POST /api/admin/refresh-prices — kick off a fresh pull. Returns
+// immediately; client polls /api/admin/refresh-status for completion.
+app.post('/api/admin/refresh-prices', requireAuth, requireAdmin, async (req, res) => {
+  if (cardDbLoading) {
+    return res.json({ ok: false, alreadyLoading: true, cardsPriced: CARD_PRICES.size });
+  }
+  res.json({ ok: true, started: true, before: CARD_PRICES.size });
+  // Fire-and-forget — pages take ~5 min to refresh on a free Render dyno.
+  downloadCardDatabase({ force: true })
+    .then(() => console.log(`[ARBITRAGE] refresh complete: ${CARD_PRICES.size} priced cards`))
+    .catch(e => console.error('[ARBITRAGE] refresh failed:', e.message));
+});
+
+// GET /api/admin/refresh-status — UI polls this while a refresh is in flight.
+app.get('/api/admin/refresh-status', requireAuth, requireAdmin, (req, res) => {
+  res.json({
+    cardsPriced: CARD_PRICES.size,
+    cardsTotal: CARD_DB.size,
+    loading: cardDbLoading,
+    lastRefreshAt: _lastPriceRefreshAt || null,
+    rate: USD_TO_EUR
+  });
+});
+
+// ============================================================
 // STRIPE — checkout, customer portal, webhook (Phase D)
 // ============================================================
 const stripe = process.env.STRIPE_SECRET_KEY
@@ -651,6 +789,15 @@ app.get(['/', '/index.html'], (req, res) => {
   res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
   res.sendFile(join(__dirname, 'public', 'index.html'));
 });
+// Widget loader gets a 5-minute cache. Customer sites embed this on every
+// page-load so we want a long TTL, but short enough that fixes propagate
+// reasonably fast. Served before the static middleware to override its
+// no-cache defaults.
+app.get('/widget.js', (req, res) => {
+  res.setHeader('Cache-Control', 'public, max-age=300, s-maxage=300');
+  res.setHeader('Content-Type', 'application/javascript; charset=utf-8');
+  res.sendFile(join(__dirname, 'public', 'widget.js'));
+});
 app.use(express.static(join(__dirname, 'public'), { etag: false, maxAge: 0 }));
 
 // Multer for file uploads (in-memory)
@@ -889,10 +1036,20 @@ async function identifyCore({ buffer, hint }) {
   const targetSize = 1800;
   const jpegQuality = 92;
 
-  const optimized = await sharp(buffer)
-    .resize(targetSize, targetSize, { fit: 'inside', withoutEnlargement: true })
-    .jpeg({ quality: jpegQuality })
-    .toBuffer();
+  // Modern phones already client-resize to ~1800-2000px; re-encoding here
+  // is wasted CPU on the critical path. Pass through if the source is
+  // already JPEG/PNG within bounds — Anthropic accepts both.
+  const meta = await sharp(buffer).metadata().catch(() => ({}));
+  const srcMax = Math.max(meta.width || 0, meta.height || 0);
+  const passthroughOk = (meta.format === 'jpeg' || meta.format === 'png')
+    && srcMax > 0 && srcMax <= targetSize;
+  const optimized = passthroughOk
+    ? buffer
+    : await sharp(buffer)
+        .resize(targetSize, targetSize, { fit: 'inside', withoutEnlargement: true })
+        .jpeg({ quality: jpegQuality })
+        .toBuffer();
+  const optimizedFormat = passthroughOk ? meta.format : 'jpeg';
   const imageData = optimized.toString('base64');
 
   // Cache only no-hint scans: a hint changes the expected output.
@@ -917,7 +1074,7 @@ async function identifyCore({ buffer, hint }) {
     messages: [{
       role: 'user',
       content: [
-        { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: imageData } },
+        { type: 'image', source: { type: 'base64', media_type: optimizedFormat === 'png' ? 'image/png' : 'image/jpeg', data: imageData } },
         { type: 'text', text: userMessage }
       ]
     }]
@@ -938,7 +1095,7 @@ async function identifyCore({ buffer, hint }) {
   }
   // imageBase64 is returned so the caller can feed it into the two-pass
   // double-check (compare scan vs DB reference image).
-  return { cached: false, parsed, cacheKey, imageBase64: imageData };
+  return { cached: false, parsed, cacheKey, imageBase64: imageData, imageMediaType: optimizedFormat === 'png' ? 'image/png' : 'image/jpeg' };
 }
 
 // Verify each card against the real game databases in parallel.
@@ -959,7 +1116,7 @@ async function verifyIdentified(cards) {
 //
 // Gated by confidence_score — if verifyPokemon scored the match >= 200
 // we skip the double-check (high-confidence matches don't need it).
-async function maybeDoubleCheck(userImageBase64, card) {
+async function maybeDoubleCheck(userImageBase64, userImageMediaType, card) {
   if (!userImageBase64) return card;
   if (card.game !== 'pokemon') return card;
   if (!card.verified || !card.reference_image) return card;
@@ -967,10 +1124,22 @@ async function maybeDoubleCheck(userImageBase64, card) {
   if (card.confidence_score && card.confidence_score >= 200) return card;
 
   try {
-    const refResp = await axios.get(card.reference_image, {
-      responseType: 'arraybuffer',
-      timeout: 8000
-    });
+    // Reuse the in-flight ref-image fetch started by verifyPokemon when
+    // available. Falls back to a fresh axios.get for cards verified via
+    // other paths (Magic, etc.) or when the prefetch was skipped.
+    let refResp;
+    if (card._refImagePromise) {
+      refResp = await card._refImagePromise;
+      if (refResp && refResp._failed) {
+        console.warn(`[DOUBLE-CHECK] prefetch failed for "${card.name}": ${refResp._failed}`);
+        return card;
+      }
+    } else {
+      refResp = await axios.get(card.reference_image, {
+        responseType: 'arraybuffer',
+        timeout: 8000
+      });
+    }
     const refBase64 = Buffer.from(refResp.data).toString('base64');
     const mediaType = /\.png($|\?)/i.test(card.reference_image) ? 'image/png'
                     : /\.jpe?g($|\?)/i.test(card.reference_image) ? 'image/jpeg'
@@ -992,7 +1161,7 @@ async function maybeDoubleCheck(userImageBase64, card) {
         role: 'user',
         content: [
           { type: 'text', text: `Image 1 is the user's scan. Image 2 is the candidate (${card.name} from ${card.set_name || '?'} #${card.card_number || '?'}). Same card printing?` },
-          { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: userImageBase64 } },
+          { type: 'image', source: { type: 'base64', media_type: userImageMediaType || 'image/jpeg', data: userImageBase64 } },
           { type: 'image', source: { type: 'base64', media_type: mediaType, data: refBase64 } }
         ]
       }]
@@ -1021,9 +1190,26 @@ async function maybeDoubleCheck(userImageBase64, card) {
   }
 }
 
-async function doubleCheckAll(userImageBase64, cards) {
+async function doubleCheckAll(userImageBase64, userImageMediaType, cards) {
   if (!cards?.length) return cards || [];
-  return Promise.all(cards.map(c => maybeDoubleCheck(userImageBase64, c)));
+  return Promise.all(cards.map(c => maybeDoubleCheck(userImageBase64, userImageMediaType, c)));
+}
+
+// Strip internal fields (underscore-prefixed) from cards before sending to
+// the client. _refImagePromise contains an in-flight axios promise used for
+// the parallel ref-image prefetch optimisation — JSON.stringify would either
+// throw on the circular Buffer ref or send garbage.
+function stripInternals(cards) {
+  if (!cards?.length) return cards || [];
+  return cards.map(c => {
+    if (!c || typeof c !== 'object') return c;
+    const out = {};
+    for (const k of Object.keys(c)) {
+      if (k.startsWith('_')) continue;
+      out[k] = c[k];
+    }
+    return out;
+  });
 }
 
 app.post('/api/identify', identifyLimiter, requireAuth, enforceQuota, upload.single('image'), async (req, res) => {
@@ -1042,10 +1228,11 @@ app.post('/api/identify', identifyLimiter, requireAuth, enforceQuota, upload.sin
       console.log(`[VERIFY] Verifying ${out.parsed.cards.length} card(s) against databases...`);
       out.parsed.cards = await verifyIdentified(out.parsed.cards);
       // Two-pass double-check for moderate-confidence Pokemon matches.
-      out.parsed.cards = await doubleCheckAll(out.imageBase64, out.parsed.cards);
+      out.parsed.cards = await doubleCheckAll(out.imageBase64, out.imageMediaType, out.parsed.cards);
     }
 
     const anyRejected = (out.parsed.cards || []).some(c => c?.verify_rejected);
+    out.parsed.cards = stripInternals(out.parsed.cards);
     if (out.cacheKey && !anyRejected) cacheSet(out.cacheKey, out.parsed);
     res.json(out.parsed);
   } catch (err) {
@@ -1099,11 +1286,12 @@ app.post('/api/identify-stream', identifyLimiter, requireAuth, enforceQuota, upl
       try {
         out.parsed.cards = await verifyIdentified(out.parsed.cards);
         // Two-pass double-check for moderate-confidence Pokemon matches.
-        out.parsed.cards = await doubleCheckAll(out.imageBase64, out.parsed.cards);
+        out.parsed.cards = await doubleCheckAll(out.imageBase64, out.imageMediaType, out.parsed.cards);
       } catch (e) {
         console.error('[IDENT-STREAM] verify error:', e.message);
       }
     }
+    out.parsed.cards = stripInternals(out.parsed.cards);
     send({ type: 'verified', cards: out.parsed.cards || [] });
 
     // Skip caching when verify rejected a card — a better image on re-scan
@@ -1393,6 +1581,15 @@ let cardDbCount = 0;
 let cardDbLoading = false;
 let cardDbDirty = false;   // true if we have new entries not yet saved
 
+// CARD_PRICES is a parallel snapshot of cardmarket.prices (EUR) +
+// tcgplayer.prices (USD) per card, populated by the same pokemontcg.io
+// pages that fill CARD_DB. Used only by the admin arbitrage tool — kept
+// separate from CARD_DB so the lean lookupLocalDb path stays small.
+// Sibling JSON file lets us survive restarts without re-downloading.
+const CARD_PRICES_FILE = join(__dirname, 'data', 'card-prices.json');
+const CARD_PRICES = new Map();
+let _lastPriceRefreshAt = 0;
+
 // Apply hardcoded Pokellector corrections — overwrites any bad data for me1/mep
 function applyPokellectorCorrections() {
   let count = 0;
@@ -1504,14 +1701,52 @@ function loadCardDbFromFile() {
   }
 }
 
-// ── DOWNLOAD from pokemontcg.io (only if no local file) ──
-async function downloadCardDatabase() {
+// ── PRICE SNAPSHOT persistence (admin arbitrage tool) ──
+function savePriceDbToFile() {
+  try {
+    const dataDir = join(__dirname, 'data');
+    if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
+    const obj = { _lastRefreshAt: _lastPriceRefreshAt, cards: {} };
+    for (const [key, val] of CARD_PRICES) obj.cards[key] = val;
+    fs.writeFileSync(CARD_PRICES_FILE, JSON.stringify(obj));
+    const sizeMB = (fs.statSync(CARD_PRICES_FILE).size / 1024 / 1024).toFixed(1);
+    console.log(`[PRICE-DB] Saved ${CARD_PRICES.size} priced cards to ${CARD_PRICES_FILE} (${sizeMB} MB)`);
+  } catch (e) {
+    console.error(`[PRICE-DB] Failed to save: ${e.message}`);
+  }
+}
+
+function loadPriceDbFromFile() {
+  try {
+    if (!fs.existsSync(CARD_PRICES_FILE)) return false;
+    const raw = fs.readFileSync(CARD_PRICES_FILE, 'utf8');
+    const obj = JSON.parse(raw);
+    const cards = obj?.cards || obj || {};
+    const keys = Object.keys(cards);
+    if (keys.length === 0) return false;
+    for (const key of keys) CARD_PRICES.set(key, cards[key]);
+    _lastPriceRefreshAt = obj?._lastRefreshAt || 0;
+    const sizeMB = (fs.statSync(CARD_PRICES_FILE).size / 1024 / 1024).toFixed(1);
+    console.log(`[PRICE-DB] Loaded ${CARD_PRICES.size} priced cards from file (${sizeMB} MB)`);
+    return true;
+  } catch (e) {
+    console.error(`[PRICE-DB] Failed to load file: ${e.message}`);
+    return false;
+  }
+}
+
+// ── DOWNLOAD from pokemontcg.io ──
+// force:true lets the admin "Refresh prices" button kick off a fresh
+// pull even after CARD_DB is already loaded. Without it, this short-
+// circuits when cardDbLoading or (implicitly via callers) when the DB
+// is already populated.
+async function downloadCardDatabase({ force = false } = {}) {
   if (cardDbLoading) return;
   cardDbLoading = true;
   const PAGE_SIZE = 250;
 
   try {
-    console.log('[CARD-DB] No local file — downloading from pokemontcg.io...');
+    console.log(force ? '[CARD-DB] Force refresh — pulling all pages from pokemontcg.io...' : '[CARD-DB] No local file — downloading from pokemontcg.io...');
     const firstResp = await axios.get('https://api.pokemontcg.io/v2/cards', {
       params: { pageSize: PAGE_SIZE, page: 1, select: 'id,name,number,rarity,set,hp,supertype,subtypes,cardmarket,tcgplayer,images' },
       timeout: 30000
@@ -1521,7 +1756,7 @@ async function downloadCardDatabase() {
     console.log(`[CARD-DB] Total: ${totalCount} cards across ${totalPages} pages`);
 
     processPageData(firstResp.data?.data || []);
-    console.log(`[CARD-DB] Page 1/${totalPages} (${CARD_DB.size} cards)`);
+    console.log(`[CARD-DB] Page 1/${totalPages} (${CARD_DB.size} cards, ${CARD_PRICES.size} priced)`);
 
     const BATCH = 3;
     for (let start = 2; start <= totalPages; start += BATCH) {
@@ -1543,16 +1778,18 @@ async function downloadCardDatabase() {
       const done = await Promise.all(pages);
       const maxPage = Math.max(...done.filter(Boolean));
       if (maxPage % 10 === 0 || maxPage === totalPages) {
-        console.log(`[CARD-DB] Progress: page ${maxPage}/${totalPages} (${CARD_DB.size} cards)`);
+        console.log(`[CARD-DB] Progress: page ${maxPage}/${totalPages} (${CARD_DB.size} cards, ${CARD_PRICES.size} priced)`);
       }
     }
 
     cardDbCount = CARD_DB.size;
     cardDbReady = true;
-    console.log(`[CARD-DB] Download complete! ${cardDbCount} cards.`);
+    _lastPriceRefreshAt = Date.now();
+    console.log(`[CARD-DB] Download complete! ${cardDbCount} cards (${CARD_PRICES.size} priced).`);
 
-    // Save to file so next restart is instant
+    // Save both files so next restart is instant
     saveCardDbToFile();
+    savePriceDbToFile();
   } catch (e) {
     console.error(`[CARD-DB] Download failed: ${e.message}`);
     if (CARD_DB.size > 0) {
@@ -1560,6 +1797,10 @@ async function downloadCardDatabase() {
       cardDbReady = true;
       console.log(`[CARD-DB] Partial: ${cardDbCount} cards available`);
       saveCardDbToFile();
+      if (CARD_PRICES.size > 0) {
+        _lastPriceRefreshAt = Date.now();
+        savePriceDbToFile();
+      }
     }
   }
   cardDbLoading = false;
@@ -1585,6 +1826,26 @@ function processPageData(cards) {
       tcgplayerUrl: c.tcgplayer?.url || null,
       source: 'pokemontcg',
     });
+
+    // Capture price snapshot for the admin arbitrage tool. Skip cards
+    // with neither side priced — those can never be arbitrage candidates.
+    if (c.tcgplayer?.prices || c.cardmarket?.prices) {
+      const cleanNum = String(num).replace(/^0+/, '') || String(num);
+      CARD_PRICES.set(`${setId.toLowerCase()}-${cleanNum}`, {
+        name: c.name,
+        setId,
+        setName: c.set?.name || '',
+        setCode: (c.set?.ptcgoCode || setId).toUpperCase(),
+        number: c.number,
+        rarity: c.rarity || '',
+        image: c.images?.small || c.images?.large || '',
+        cardmarketUrl: c.cardmarket?.url || null,
+        tcgplayerUrl: c.tcgplayer?.url || null,
+        tcg: c.tcgplayer?.prices || null,
+        cm: c.cardmarket?.prices || null,
+        fetchedAt: Date.now()
+      });
+    }
   }
 }
 
@@ -1848,7 +2109,8 @@ async function initCardDb() {
     // 2. Local JSON file (fast backup)
     const fromFile = loadCardDbFromFile();
     if (!fromFile) {
-      // 3. Download from pokemontcg.io (slow but self-healing)
+      // 3. Download from pokemontcg.io (slow but self-healing) —
+      //    this also populates CARD_PRICES + writes both files.
       await downloadCardDatabase();
     }
   }
@@ -1857,6 +2119,10 @@ async function initCardDb() {
   //    regardless of where it came from. These are hardcoded and verified.
   applyPokellectorCorrections();
   saveCardDbToFile();
+
+  // 5. Lazy-load price snapshot (admin arbitrage tool only). Missing
+  //    file is fine — admin clicks "Refresh prices" to populate.
+  if (CARD_PRICES.size === 0) loadPriceDbFromFile();
 }
 initCardDb();
 
@@ -2187,17 +2453,23 @@ app.post('/api/identify-manual', requireAuth, enforceQuota, async (req, res) => 
       if (!card && resolved.setId) {
         console.log(`[MANUAL-PKM] pokemontcg.io miss — trying fallback APIs for ${resolved.setId} #${cleanNum}`);
 
-        // Fallback 1: TCGdex (free card database)
-        card = await lookupTCGdex(resolved.setId, cleanNum);
+        // Race the two FREE fallbacks — TCGdex + JustTCG — and take the
+        // first one to return a hit. Both are safe to fire speculatively
+        // (no per-call quota cost). Race uses never-resolves for null so
+        // Promise.race only fires on a real result; allSettled tail
+        // resolves when all finish (so we exit cleanly on full miss).
+        const racers = [
+          lookupTCGdex(resolved.setId, cleanNum),
+          lookupViaJustTCG(resolved.setId, cleanNum)
+        ];
+        card = await Promise.race([
+          ...racers.map(p => p.then(r => r || new Promise(() => {}))),
+          Promise.allSettled(racers).then(rs => rs.find(s => s.status === 'fulfilled' && s.value)?.value || null)
+        ]);
 
-        // Fallback 2: TCGGO via RapidAPI (search by set name + number)
+        // TCGGO costs RapidAPI quota — only call it if both free APIs missed.
         if (!card) {
           card = await lookupViaTCGGO(resolved.setId, cleanNum, set_code);
-        }
-
-        // Fallback 3: JustTCG (search by set name + number)
-        if (!card) {
-          card = await lookupViaJustTCG(resolved.setId, cleanNum);
         }
 
         if (card) {
@@ -2805,6 +3077,7 @@ async function verifyCard(card) {
               }
               if (best && bestScore >= 50) {
                 console.log(`[VERIFY] HP re-search found BETTER match: "${best.name}" from ${best.set?.name} #${best.number} HP:${best.hp} (score: ${bestScore})`);
+                const hpRefUrl = best.images?.large || best.images?.small;
                 verified = {
                   name: best.name,
                   set_name: best.set?.name,
@@ -2812,8 +3085,9 @@ async function verifyCard(card) {
                   card_number: best.number,
                   rarity: best.rarity,
                   hp: best.hp,
-                  image: best.images?.large || best.images?.small,
-                  source: 'pokemontcg.io (HP re-search)'
+                  image: hpRefUrl,
+                  source: 'pokemontcg.io (HP re-search)',
+                  _refImagePromise: prefetchRefImage(hpRefUrl)
                 };
                 hpMismatchResolved = true;
               }
@@ -2850,7 +3124,10 @@ async function verifyCard(card) {
         verified: true,
         db_source: verified.source,
         confidence_score: verified.confidence_score || null,
-        candidates: verified.candidates || null
+        candidates: verified.candidates || null,
+        // Carry the in-flight ref-image fetch through to maybeDoubleCheck.
+        // Stripped before client send by stripInternals.
+        _refImagePromise: verified._refImagePromise || null
       };
     } else {
       console.log(`[VERIFY] Could not verify — using AI identification as-is`);
@@ -3000,6 +3277,107 @@ async function verifyMagic(card) {
 
 // Strict name comparison for the Sheet short-circuit. Rejects substring
 // matches that would let "Pikachu" satisfy "Pikachu V", or "Charizard ex"
+// Start downloading a card's reference image so doubleCheck can consume the
+// already-buffered response instead of starting a fresh axios.get after
+// verify finishes. Resolves with the axios response on success, or
+// {_failed: msg} on error — never throws, so callers can attach without
+// adding error handling.
+function prefetchRefImage(url) {
+  if (!url) return null;
+  return axios.get(url, { responseType: 'arraybuffer', timeout: 8000 })
+    .catch(e => ({ _failed: e?.message || 'prefetch failed' }));
+}
+
+// Pure scoring of one pokemontcg.io candidate against the AI's identification.
+// Pulled out so per-query promises can score-as-they-arrive and we can
+// race-exit on the first ≥ threshold hit instead of waiting all queries.
+function scoreCandidate(card, isPromo, d) {
+  let score = 0;
+
+  // Name match (exact name is critical — "Charizard ex" ≠ "Charizard GX")
+  if (d.name?.toLowerCase() === card.name?.toLowerCase()) score += 50;
+  else if (d.name?.toLowerCase().includes(card.name?.toLowerCase())) score += 20;
+
+  // HP match — very strong signal
+  if (card.hp && d.hp === card.hp) score += 40;
+  else if (card.hp && d.hp) {
+    const diff = Math.abs(parseInt(d.hp) - parseInt(card.hp));
+    if (diff <= 10) score += 20;
+  }
+
+  // Card number match — HIGHEST priority since it distinguishes alt arts and promos
+  if (card.card_number) {
+    const rawAiNum = card.card_number.replace(/\s/g, '');
+    const aiNum = rawAiNum.replace(/\/.*/, '').replace(/^0+/, '');
+    const dbNum = (d.number || '').replace(/^0+/, '');
+    const aiNumNoSV = aiNum.replace(/^SV/, '');
+    if (aiNum === dbNum || rawAiNum === d.number) {
+      score += 80;  // Very high — exact card number is the definitive ID
+    } else if (aiNumNoSV === dbNum) {
+      score += 70;  // SV prefix stripped match
+    } else if (isPromo && aiNum.length > 0 && dbNum.length > 0) {
+      score -= 40;  // Promo number mismatch — strong negative
+    } else if (aiNum.length > 0 && dbNum.length > 0) {
+      score -= 10;  // Non-promo number mismatch
+    }
+  }
+
+  // Abilities match (Pokemon TCG API has separate abilities array)
+  if (card.attacks?.length && d.abilities?.length) {
+    const aiAbilities = card.attacks.map(a => (typeof a === 'string' ? a : '').toLowerCase());
+    const dbAbilities = d.abilities.map(a => (a.name || '').toLowerCase());
+    const abilityMatches = aiAbilities.filter(a => dbAbilities.some(da => da.includes(a) || a.includes(da)));
+    score += abilityMatches.length * 15;
+  }
+
+  // Set total match — if AI says "44/101", the set must have ~101 cards.
+  if (card.card_number && card.card_number.includes('/')) {
+    const aiSetTotal = parseInt(card.card_number.split('/')[1]?.replace(/^0+/, '') || '0');
+    const dbSetTotal = parseInt(d.set?.printedTotal || d.set?.total || '0');
+    if (aiSetTotal && dbSetTotal) {
+      if (aiSetTotal === dbSetTotal) {
+        score += 50;
+      } else {
+        const diff = Math.abs(aiSetTotal - dbSetTotal);
+        if (diff <= 2) score += 20;
+        else if (diff <= 10) score -= 30;
+        else score -= 80;
+      }
+    }
+  }
+
+  // Set code match
+  if (card.set_code && d.set?.id?.toUpperCase() === card.set_code.toUpperCase()) score += 25;
+  // Set name match (fuzzy)
+  if (card.set_name && d.set?.name) {
+    const aiSet = card.set_name.toLowerCase().replace(/^ex\s+/i, '');
+    const dbSet = d.set.name.toLowerCase().replace(/^ex\s+/i, '');
+    if (aiSet === dbSet) score += 25;
+    else if (dbSet.includes(aiSet) || aiSet.includes(dbSet)) score += 15;
+  }
+
+  // Attack names match
+  if (card.attacks?.length && d.attacks?.length) {
+    const aiAttacks = card.attacks.map(a => (typeof a === 'string' ? a : a.name || '').toLowerCase());
+    const dbAttacks = d.attacks.map(a => (a.name || '').toLowerCase());
+    const matches = aiAttacks.filter(a => dbAttacks.some(da => da.includes(a) || a.includes(da)));
+    score += matches.length * 15;
+  }
+
+  // Suffix type match (ex vs GX vs V etc.)
+  const aiSuffix = extractPokemonSuffix(card.name);
+  const dbSuffix = extractPokemonSuffix(d.name);
+  if (aiSuffix && dbSuffix && aiSuffix === dbSuffix) score += 35;
+  else if (aiSuffix && dbSuffix && aiSuffix !== dbSuffix) score -= 50;
+
+  // Regulation-mark era check
+  if (card.regulation_mark && !regMarkMatchesEra(card.regulation_mark, d)) {
+    score -= 100;
+  }
+
+  return score;
+}
+
 // satisfy "Charizard GX". Only returns true when:
 //   - normalized names are identical, OR
 //   - base names (with Pokemon suffix stripped) match AND both sides report
@@ -3061,6 +3439,7 @@ async function verifyPokemon(card) {
           const hpOk = !aiHp || !dbHp || Math.abs(aiHp - dbHp) <= 20;
           if (nameOk && hpOk) {
             console.log(`[VERIFY-PKM] Local-DB HIT: ${resolved.setId}-${cleanNum} "${local.name}" — skipping pokemontcg.io`);
+            const localRefUrl = local.reference_image || null;
             const hit = {
               name: local.name,
               set_name: local.set_name,
@@ -3068,10 +3447,11 @@ async function verifyPokemon(card) {
               card_number: local.card_number,
               rarity: local.rarity,
               hp: local.hp,
-              image: local.reference_image || null,
+              image: localRefUrl,
               cardmarket_url: local.cardmarket_url || null,
               tcgplayer_url: local.tcgplayer_url || null,
-              source: `local-db (${local.db_source || 'sheet'})`
+              source: `local-db (${local.db_source || 'sheet'})`,
+              _refImagePromise: prefetchRefImage(localRefUrl)
             };
             return applyAdditionalsLabel(hit, card.card_number);
           } else {
@@ -3165,127 +3545,60 @@ async function verifyPokemon(card) {
     const seenCardIds = new Set();  // Avoid scoring the same card twice
     const allScored = [];
 
-    // Fire all queries in parallel — the scoring aggregates across all results
-    // anyway, so there's no reason to wait between API calls. Drops worst-case
-    // verify latency from ~40s (4 × 10s timeouts) to ~10s (longest single call).
-    const queryResults = await Promise.all(queries.map(q =>
+    // Fire all queries in parallel and SCORE EACH AS IT ARRIVES so we can
+    // exit early on a high-confidence hit. Each per-query promise mutates
+    // globalBest/allScored/seenCardIds as a side effect when it resolves.
+    // Drops worst-case verify latency from longest-of-N (~10s) to time-of-
+    // first-good-hit (~300-600ms typical) when a query crosses the
+    // RACE_THRESHOLD. The 150ms grace window lets any near-finished query
+    // also score before we return, eliminating most order-dependent regressions.
+    const RACE_THRESHOLD = 220;
+    const GRACE_MS = 150;
+
+    const perQueryPromises = queries.map(q =>
       axios.get('https://api.pokemontcg.io/v2/cards', {
         params: { q, pageSize: 20 },
         timeout: 10000
       })
-        .then(resp => ({ q, results: resp.data?.data || [] }))
+        .then(resp => {
+          const results = resp.data?.data || [];
+          if (results.length) console.log(`[VERIFY-PKM] "${q}" → ${results.length} results`);
+          let queryBestScore = -1;
+          for (const d of results) {
+            if (seenCardIds.has(d.id)) continue;
+            seenCardIds.add(d.id);
+            const score = scoreCandidate(card, isPromo, d);
+            console.log(`[VERIFY-PKM]   "${d.name}" (${d.set?.name} [${d.set?.printedTotal} cards] #${d.number}, HP:${d.hp}) => score ${score}`);
+            allScored.push({ d, score });
+            if (score > globalBestScore) {
+              globalBestScore = score;
+              globalBest = d;
+            }
+            if (score > queryBestScore) queryBestScore = score;
+          }
+          return { q, queryBestScore };
+        })
         .catch(err => {
           console.error(`[VERIFY-PKM] Query failed "${q}": ${err.message}`);
-          return { q, results: [] };
+          return { q, queryBestScore: -1 };
         })
-    ));
+    );
 
-    for (const { q, results } of queryResults) {
-      if (!results.length) continue;
-      console.log(`[VERIFY-PKM] "${q}" → ${results.length} results`);
-      for (const d of results) {
-        // Skip cards we've already scored from a previous query
-        if (seenCardIds.has(d.id)) continue;
-        seenCardIds.add(d.id);
-
-        let score = 0;
-
-        // Name match (exact name is critical — "Charizard ex" ≠ "Charizard GX")
-        if (d.name?.toLowerCase() === card.name?.toLowerCase()) score += 50;
-        else if (d.name?.toLowerCase().includes(card.name?.toLowerCase())) score += 20;
-
-        // HP match — very strong signal
-        if (card.hp && d.hp === card.hp) score += 40;
-        else if (card.hp && d.hp) {
-          const diff = Math.abs(parseInt(d.hp) - parseInt(card.hp));
-          if (diff <= 10) score += 20;
+    // Outer race: first query to score >= RACE_THRESHOLD triggers a 150ms
+    // grace window and then we return. If no query crosses the threshold,
+    // we wait for everything via allSettled.
+    await new Promise(resolveOuter => {
+      let done = false;
+      const finish = () => { if (!done) { done = true; resolveOuter(); } };
+      perQueryPromises.forEach(p => p.then(r => {
+        if (done || !r) return;
+        if (r.queryBestScore >= RACE_THRESHOLD) {
+          console.log(`[VERIFY-PKM] race trigger: "${r.q}" → ${r.queryBestScore} >= ${RACE_THRESHOLD}, ${GRACE_MS}ms grace`);
+          setTimeout(finish, GRACE_MS);
         }
-
-        // Card number match — HIGHEST priority since it distinguishes alt arts and promos
-        if (card.card_number) {
-          const rawAiNum = card.card_number.replace(/\s/g, '');
-          const aiNum = rawAiNum.replace(/\/.*/, '').replace(/^0+/, '');
-          const dbNum = (d.number || '').replace(/^0+/, '');
-          // For promo cards, also compare the full promo number directly
-          const aiNumNoSV = aiNum.replace(/^SV/, '');
-          if (aiNum === dbNum || rawAiNum === d.number) {
-            score += 80;  // Very high — exact card number is the definitive ID
-          } else if (aiNumNoSV === dbNum) {
-            score += 70;  // SV prefix stripped match
-          } else if (isPromo && aiNum.length > 0 && dbNum.length > 0) {
-            // For promos, a number MISMATCH is a very strong negative signal
-            score -= 40;
-          } else if (aiNum.length > 0 && dbNum.length > 0) {
-            score -= 10;  // Penalty for non-promo number mismatch
-          }
-        }
-
-        // Abilities match (Pokemon TCG API has separate abilities array)
-        if (card.attacks?.length && d.abilities?.length) {
-          const aiAbilities = card.attacks.map(a => (typeof a === 'string' ? a : '').toLowerCase());
-          const dbAbilities = d.abilities.map(a => (a.name || '').toLowerCase());
-          const abilityMatches = aiAbilities.filter(a => dbAbilities.some(da => da.includes(a) || a.includes(da)));
-          score += abilityMatches.length * 15;
-        }
-
-        // Set total match — if AI says "44/101", the set must have ~101 cards.
-        // Strong disambiguator when same card appears across multiple sets.
-        if (card.card_number && card.card_number.includes('/')) {
-          const aiSetTotal = parseInt(card.card_number.split('/')[1]?.replace(/^0+/, '') || '0');
-          const dbSetTotal = parseInt(d.set?.printedTotal || d.set?.total || '0');
-          if (aiSetTotal && dbSetTotal) {
-            if (aiSetTotal === dbSetTotal) {
-              score += 50;  // Set size matches exactly — strong confirmation
-            } else {
-              const diff = Math.abs(aiSetTotal - dbSetTotal);
-              if (diff <= 2) score += 20;         // Close enough (OCR ±1-2)
-              else if (diff <= 10) score -= 30;   // Different set probably
-              else score -= 80;                    // Totally different era of set
-            }
-          }
-        }
-
-        // Set code match
-        if (card.set_code && d.set?.id?.toUpperCase() === card.set_code.toUpperCase()) score += 25;
-        // Set name match (fuzzy — AI might say "Team Magma" instead of full name)
-        if (card.set_name && d.set?.name) {
-          const aiSet = card.set_name.toLowerCase().replace(/^ex\s+/i, '');
-          const dbSet = d.set.name.toLowerCase().replace(/^ex\s+/i, '');
-          if (aiSet === dbSet) score += 25;
-          else if (dbSet.includes(aiSet) || aiSet.includes(dbSet)) score += 15;
-        }
-
-        // Attack names match — very strong for disambiguation
-        if (card.attacks?.length && d.attacks?.length) {
-          const aiAttacks = card.attacks.map(a => (typeof a === 'string' ? a : a.name || '').toLowerCase());
-          const dbAttacks = d.attacks.map(a => (a.name || '').toLowerCase());
-          const matches = aiAttacks.filter(a => dbAttacks.some(da => da.includes(a) || a.includes(da)));
-          score += matches.length * 15;
-        }
-
-        // Suffix type match (ex vs GX vs V etc.)
-        const aiSuffix = extractPokemonSuffix(card.name);
-        const dbSuffix = extractPokemonSuffix(d.name);
-        if (aiSuffix && dbSuffix && aiSuffix === dbSuffix) score += 35;
-        else if (aiSuffix && dbSuffix && aiSuffix !== dbSuffix) score -= 50; // Penalise wrong type
-
-        // Regulation-mark era check — big penalty if Claude reported a reg
-        // mark but this candidate's set is from a different era. Catches
-        // cross-era name collisions (e.g. matching a 2018 Pikachu when the
-        // scan is clearly a 2023+ "G" reg-mark card).
-        if (card.regulation_mark && !regMarkMatchesEra(card.regulation_mark, d)) {
-          score -= 100;
-        }
-
-        console.log(`[VERIFY-PKM]   "${d.name}" (${d.set?.name} [${d.set?.printedTotal} cards] #${d.number}, HP:${d.hp}) => score ${score}`);
-
-        allScored.push({ d, score });
-        if (score > globalBestScore) {
-          globalBestScore = score;
-          globalBest = d;
-        }
-      }
-    }
+      }));
+      Promise.allSettled(perQueryPromises).then(finish);
+    });
 
     // Top 3 alternatives (excluding the winner) for the chooser UI.
     // Only useful when we have multiple plausible candidates — below 40 is
@@ -3314,6 +3627,7 @@ async function verifyPokemon(card) {
     // because only the name matched). 120 requires at least 2-3 signals to agree.
     if (globalBest && globalBestScore >= 120) {
       console.log(`[VERIFY-PKM] Best match: "${globalBest.name}" from ${globalBest.set?.name} (score: ${globalBestScore})`);
+      const refUrl = globalBest.images?.large || globalBest.images?.small;
       return applyAdditionalsLabel({
         name: globalBest.name,
         set_name: globalBest.set?.name,
@@ -3321,13 +3635,16 @@ async function verifyPokemon(card) {
         card_number: globalBest.number,
         rarity: globalBest.rarity,
         hp: globalBest.hp,
-        image: globalBest.images?.large || globalBest.images?.small,
+        image: refUrl,
         // Direct Cardmarket product URL for this exact print — not a search.
         cardmarket_url: globalBest.cardmarket?.url || null,
         tcgplayer_url: globalBest.tcgplayer?.url || null,
         source: 'pokemontcg.io',
         confidence_score: globalBestScore,
-        candidates  // runners-up for the chooser UI when confidence is moderate
+        candidates,  // runners-up for the chooser UI when confidence is moderate
+        // Start the ref-image download now so it overlaps with the rest of
+        // verify finishing. Stripped before client send by stripInternals.
+        _refImagePromise: globalBestScore < 200 ? prefetchRefImage(refUrl) : null
       }, card.card_number);
     } else if (globalBest) {
       console.log(`[VERIFY-PKM] Best match "${globalBest.name}" scored ${globalBestScore}, below threshold 120 — rejecting.`);
@@ -3359,6 +3676,7 @@ async function verifyPokemon(card) {
               if (hpMatch) best = hpMatch;
             }
             console.log(`[VERIFY-PKM] ALT MATCH: "${best.name}" from ${best.set?.name} #${best.number} HP:${best.hp}`);
+            const altRefUrl = best.images?.large || best.images?.small;
             return applyAdditionalsLabel({
               name: best.name,
               set_name: best.set?.name,
@@ -3366,10 +3684,11 @@ async function verifyPokemon(card) {
               card_number: best.number,
               rarity: best.rarity,
               hp: best.hp,
-              image: best.images?.large || best.images?.small,
+              image: altRefUrl,
               cardmarket_url: best.cardmarket?.url || null,
               tcgplayer_url: best.tcgplayer?.url || null,
-              source: 'pokemontcg.io'
+              source: 'pokemontcg.io',
+              _refImagePromise: prefetchRefImage(altRefUrl)
             }, card.card_number);
           }
         } catch { /* try next suffix */ }
@@ -3400,6 +3719,7 @@ async function verifyPokemon(card) {
           }
           if (bestScore > 0) {
             console.log(`[VERIFY-PKM] BASE NAME MATCH: "${best.name}" from ${best.set?.name} #${best.number} HP:${best.hp} (score: ${bestScore})`);
+            const baseRefUrl = best.images?.large || best.images?.small;
             return applyAdditionalsLabel({
               name: best.name,
               set_name: best.set?.name,
@@ -3407,8 +3727,9 @@ async function verifyPokemon(card) {
               card_number: best.number,
               rarity: best.rarity,
               hp: best.hp,
-              image: best.images?.large || best.images?.small,
-              source: 'pokemontcg.io'
+              image: baseRefUrl,
+              source: 'pokemontcg.io',
+              _refImagePromise: prefetchRefImage(baseRefUrl)
             }, card.card_number);
           }
         }
@@ -4745,24 +5066,124 @@ function escapeHtml(s) {
   return String(s || '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
 
+// ============================================================
+// MULTI-TENANT EMBED — shops + shop-config
+// ============================================================
+// shops table is the source of truth for which card shop a quote
+// belongs to. shop_slug travels in URLs (data-shop="..."), looked
+// up to a row that holds branding (logo, color, name) plus lead-
+// routing fields (email, brevo_list_id) which are NEVER served
+// publicly. The widget loads /api/shop-config/:slug, which strips
+// to display-only fields. Lead emails route via shop.email when
+// shop_slug is provided to /api/quote-lead, with the existing env-
+// based defaults preserved as fallback so the single-tenant flow
+// keeps working unchanged.
+const SHOP_SLUG_RE = /^[a-z0-9][a-z0-9-]*[a-z0-9]$/;
+const HEX_COLOR_RE = /^#[0-9a-fA-F]{6}$/;
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+const shopConfigCache = new Map();   // slug -> { value, expires }
+const SHOP_CONFIG_TTL_MS = 5 * 60 * 1000;
+
+function invalidateShopConfig(slug) {
+  if (slug) shopConfigCache.delete(String(slug).toLowerCase());
+}
+
+// Hash an IP with a daily-rotating salt so the leads table can
+// detect "same IP submitted 50 leads" without storing the raw IP.
+function hashIp(ip) {
+  if (!ip) return null;
+  const day = new Date().toISOString().slice(0, 10); // YYYY-MM-DD UTC
+  const salt = process.env.IP_HASH_SALT || 'card-pricer-default-salt';
+  return crypto.createHash('sha256').update(`${ip}|${day}|${salt}`).digest('hex').slice(0, 32);
+}
+
+// requirePlan middleware: chains after requireAuth and rejects
+// users not on one of the allowed plans. Embed widget is gated
+// to ['shop','beta'] — top tier (€59/mo) — by user's choice.
+function requirePlan(allowedPlans) {
+  return async (req, res, next) => {
+    if (!supabase || !req.user) return res.status(401).json({ error: 'auth required' });
+    try {
+      const { data } = await supabase.from('profiles').select('plan').eq('user_id', req.user.id).maybeSingle();
+      const plan = data?.plan || 'free';
+      if (!allowedPlans.includes(plan)) {
+        return res.status(403).json({ error: 'feature requires upgrade', plan, requires: allowedPlans });
+      }
+      next();
+    } catch (e) {
+      console.error('[REQUIRE-PLAN]', e.message);
+      res.status(500).json({ error: 'plan check failed' });
+    }
+  };
+}
+
+// GET /api/shop-config/:slug — public, display-only fields.
+// Cached in-memory for SHOP_CONFIG_TTL_MS so an embed widget
+// modal-open doesn't hit the DB on every load.
+app.get('/api/shop-config/:slug', async (req, res) => {
+  const slug = String(req.params.slug || '').toLowerCase();
+  if (!SHOP_SLUG_RE.test(slug) || slug.length > 40) {
+    return res.status(400).json({ error: 'invalid slug' });
+  }
+  const cached = shopConfigCache.get(slug);
+  if (cached && cached.expires > Date.now()) {
+    res.setHeader('Cache-Control', 'public, max-age=60');
+    return res.json(cached.value);
+  }
+  if (!supabase) return res.status(503).json({ error: 'unavailable' });
+  try {
+    const { data } = await supabase
+      .from('shops')
+      .select('slug,name,logo_url,accent_color,cash_pct,credit_pct,active')
+      .eq('slug', slug).eq('active', true).maybeSingle();
+    if (!data) return res.status(404).json({ error: 'shop not found' });
+    shopConfigCache.set(slug, { value: data, expires: Date.now() + SHOP_CONFIG_TTL_MS });
+    res.setHeader('Cache-Control', 'public, max-age=60');
+    res.json(data);
+  } catch (e) {
+    console.error('[SHOP-CONFIG]', e.message);
+    res.status(500).json({ error: 'lookup failed' });
+  }
+});
+
 // Lead capture — customer submits their email + card list, we email them a
 // quote and ping the shop. Uses Brevo transactional API (no new deps).
+// Shop-aware: when shop_slug is provided we look up the shops table and
+// route the email + newsletter signup to that shop's settings. Falls back
+// to env-based defaults when no shop_slug — single-tenant Board & Brewed
+// flow continues to work unchanged.
 app.post('/api/quote-lead', quoteLeadLimiter, async (req, res) => {
   try {
-    const { email, name, newsletter, cards, totals, cashPct, creditPct } = req.body || {};
+    const { email, name, newsletter, cards, totals, cashPct, creditPct, shop_slug } = req.body || {};
     if (!email || !cards || !Array.isArray(cards) || !cards.length) {
       return res.status(400).json({ error: 'email and cards required' });
     }
-    // Basic email shape check (server-side defence; client also validates).
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    if (!EMAIL_RE.test(email)) {
       return res.status(400).json({ error: 'invalid email' });
     }
     // Cap at 20 as a server-side guard (client also caps).
     const trimmed = cards.slice(0, 20);
 
-    const SHOP_EMAIL = process.env.SHOP_EMAIL || 'dave@boardandbrewed.ie';
-    const SHOP_NAME = process.env.SHOP_NAME || 'Board & Brewed';
+    // Look up the shop if a slug was supplied. We pull the FULL row here
+    // (not the public sanitised view) because we need email + brevo_list_id.
+    let shop = null;
+    if (shop_slug && supabase) {
+      const slugLc = String(shop_slug).toLowerCase();
+      if (SHOP_SLUG_RE.test(slugLc)) {
+        try {
+          const { data } = await supabase.from('shops').select('*').eq('slug', slugLc).eq('active', true).maybeSingle();
+          if (data) shop = data;
+        } catch (e) {
+          console.warn('[QUOTE-LEAD] shop lookup failed:', e.message);
+        }
+      }
+    }
+
+    const SHOP_EMAIL = shop?.email || process.env.SHOP_EMAIL || 'dave@boardandbrewed.ie';
+    const SHOP_NAME = shop?.name || process.env.SHOP_NAME || 'Board & Brewed';
     const SENDER_EMAIL = process.env.BREVO_SENDER_EMAIL || SHOP_EMAIL;
+    const newsletterListId = shop?.brevo_list_id || parseInt(process.env.BREVO_NEWSLETTER_LIST_ID || '0', 10);
 
     // Build card rows. Customer email gets rows without photos; shop email
     // gets a separate rows variant that references attached photo filenames.
@@ -4846,11 +5267,37 @@ app.post('/api/quote-lead', quoteLeadLimiter, async (req, res) => {
         </table>
       </div>`;
 
+    // Persist the lead to quote_leads regardless of Brevo state — gives shops
+    // a leads-history table even when email delivery is misconfigured.
+    // Fire-and-forget so a DB blip can't take down the lead capture path.
+    const persistLead = (extra) => {
+      if (!supabase) return;
+      supabase.from('quote_leads').insert({
+        shop_id: shop?.id || null,
+        shop_slug: shop?.slug || null,
+        email,
+        name: name || null,
+        newsletter: !!newsletter,
+        card_count: trimmed.length,
+        total_market: totals?.market || 0,
+        total_cash: totals?.cash || 0,
+        total_credit: totals?.credit || 0,
+        cards_json: trimmed.map(c => ({
+          name: c.name, set_code: c.set_code, card_number: c.card_number,
+          mv: c.market_value, cash: c.cash_offer, credit: c.credit_offer,
+          condition: c.condition_estimate || null
+        })),
+        ip_hash: hashIp(req.ip),
+        ...extra
+      }).then(() => {}, e => console.warn('[QUOTE-LEAD] insert failed:', e.message));
+    };
+
     // Best-effort send via Brevo. If no API key, just log + return ok so the
     // tool still works during setup — you'll still see the lead server-side.
     if (!process.env.BREVO_API_KEY) {
       console.log('[QUOTE-LEAD] (no BREVO_API_KEY set) would email to', email, 'and', SHOP_EMAIL);
       console.log('[QUOTE-LEAD] payload:', { email, name, newsletter, cardCount: trimmed.length, totals });
+      persistLead();
       return res.json({ ok: true, emailed: false, note: 'Logged server-side. Set BREVO_API_KEY to enable email.' });
     }
 
@@ -4873,13 +5320,14 @@ app.post('/api/quote-lead', quoteLeadLimiter, async (req, res) => {
       }).then(r => r.ok ? r.json() : r.text().then(t => { throw new Error('Brevo ' + r.status + ': ' + t); }));
     };
 
-    // If the customer opted in, add them to your Brevo newsletter list.
-    // Set BREVO_NEWSLETTER_LIST_ID in Render env vars (it's the numeric list ID from Brevo).
+    // If the customer opted in, add them to the active newsletter list.
+    // For multi-tenant: shop.brevo_list_id wins; otherwise falls back to
+    // BREVO_NEWSLETTER_LIST_ID env var (single-tenant default).
     const subscribeIfOptedIn = async () => {
       if (!newsletter) return { subscribed: false };
-      const listId = parseInt(process.env.BREVO_NEWSLETTER_LIST_ID || '0', 10);
+      const listId = newsletterListId;
       if (!listId) {
-        console.log('[QUOTE-LEAD] newsletter opt-in but no BREVO_NEWSLETTER_LIST_ID set');
+        console.log('[QUOTE-LEAD] newsletter opt-in but no list ID configured');
         return { subscribed: false, reason: 'no list configured' };
       }
       try {
@@ -4916,10 +5364,147 @@ app.post('/api/quote-lead', quoteLeadLimiter, async (req, res) => {
       subscribeIfOptedIn()
     ]);
 
+    persistLead();
     res.json({ ok: true, emailed: true, subscribed: subRes.subscribed });
   } catch (e) {
     console.error('[QUOTE-LEAD] failed:', e);
     res.status(500).json({ error: e.message || 'Failed to send quote' });
+  }
+});
+
+// ============================================================
+// SHOP CRUD — for shop-plan customers to manage their embed
+// ============================================================
+// One row per user (enforced by DB unique constraint on owner_user_id).
+// Plan-gated to ['shop','beta'] — embed widget is a top-tier feature.
+// All write paths invalidate the public shopConfigCache so changes
+// propagate within ~60s of the Cache-Control max-age, instead of the
+// 5-minute in-memory TTL.
+const SHOP_PLANS = ['shop', 'beta'];
+
+function validateShopPayload(body, { partial }) {
+  const errs = [];
+  const out = {};
+  const { slug, name, email, logo_url, accent_color, cash_pct, credit_pct, brevo_list_id, active } = body || {};
+
+  if (slug !== undefined) {
+    const s = String(slug).toLowerCase();
+    if (!SHOP_SLUG_RE.test(s) || s.length < 3 || s.length > 40) errs.push('invalid slug (3-40 chars, a-z 0-9 -, no leading/trailing dash)');
+    else out.slug = s;
+  } else if (!partial) errs.push('slug required');
+
+  if (name !== undefined) {
+    if (typeof name !== 'string' || !name.trim()) errs.push('name required');
+    else out.name = name.trim().slice(0, 80);
+  } else if (!partial) errs.push('name required');
+
+  if (email !== undefined) {
+    if (!EMAIL_RE.test(email)) errs.push('invalid email');
+    else out.email = email.trim().toLowerCase();
+  } else if (!partial) errs.push('email required');
+
+  if (logo_url !== undefined) {
+    if (logo_url === null || logo_url === '') out.logo_url = null;
+    else if (typeof logo_url !== 'string' || !/^https?:\/\//i.test(logo_url)) errs.push('logo_url must be a http(s) URL');
+    else out.logo_url = logo_url.slice(0, 500);
+  }
+
+  if (accent_color !== undefined) {
+    if (!HEX_COLOR_RE.test(accent_color)) errs.push('accent_color must be #RRGGBB hex');
+    else out.accent_color = accent_color;
+  }
+
+  if (cash_pct !== undefined) {
+    const n = parseInt(cash_pct, 10);
+    if (!Number.isFinite(n) || n < 1 || n > 100) errs.push('cash_pct must be 1-100');
+    else out.cash_pct = n;
+  }
+
+  if (credit_pct !== undefined) {
+    const n = parseInt(credit_pct, 10);
+    if (!Number.isFinite(n) || n < 1 || n > 100) errs.push('credit_pct must be 1-100');
+    else out.credit_pct = n;
+  }
+
+  if (brevo_list_id !== undefined) {
+    if (brevo_list_id === null || brevo_list_id === '') out.brevo_list_id = null;
+    else {
+      const n = parseInt(brevo_list_id, 10);
+      if (!Number.isFinite(n) || n < 1) errs.push('brevo_list_id must be a positive integer');
+      else out.brevo_list_id = n;
+    }
+  }
+
+  if (active !== undefined) out.active = !!active;
+
+  return { errs, out };
+}
+
+// GET /api/shop — current user's shop, or null.
+app.get('/api/shop', requireAuth, async (req, res) => {
+  if (!supabase) return res.status(503).json({ error: 'unavailable' });
+  try {
+    const { data } = await supabase.from('shops').select('*').eq('owner_user_id', req.user.id).maybeSingle();
+    res.json(data || null);
+  } catch (e) {
+    console.error('[GET /api/shop]', e.message);
+    res.status(500).json({ error: 'lookup failed' });
+  }
+});
+
+// POST /api/shop — create the user's shop. 409 on slug conflict.
+app.post('/api/shop', requireAuth, requirePlan(SHOP_PLANS), async (req, res) => {
+  if (!supabase) return res.status(503).json({ error: 'unavailable' });
+  const { errs, out } = validateShopPayload(req.body, { partial: false });
+  if (errs.length) return res.status(400).json({ error: errs.join('; ') });
+  try {
+    const { data, error } = await supabase.from('shops').insert({
+      owner_user_id: req.user.id,
+      ...out
+    }).select().maybeSingle();
+    if (error) {
+      if (error.code === '23505') {
+        // unique violation: either slug taken (slug index) or owner already has a shop (owner_user_id unique).
+        const detail = String(error.message || '').toLowerCase();
+        if (detail.includes('owner_user_id')) return res.status(409).json({ error: 'you already have a shop — use PATCH /api/shop to update' });
+        return res.status(409).json({ error: 'slug already taken' });
+      }
+      return res.status(400).json({ error: error.message });
+    }
+    invalidateShopConfig(out.slug);
+    res.json(data);
+  } catch (e) {
+    console.error('[POST /api/shop]', e.message);
+    res.status(500).json({ error: 'create failed' });
+  }
+});
+
+// PATCH /api/shop — update the user's shop. 409 on slug conflict.
+app.patch('/api/shop', requireAuth, requirePlan(SHOP_PLANS), async (req, res) => {
+  if (!supabase) return res.status(503).json({ error: 'unavailable' });
+  const { errs, out } = validateShopPayload(req.body, { partial: true });
+  if (errs.length) return res.status(400).json({ error: errs.join('; ') });
+  if (!Object.keys(out).length) return res.status(400).json({ error: 'no fields to update' });
+  try {
+    // Capture the old slug so we can invalidate it after a slug rename.
+    const { data: existing } = await supabase.from('shops').select('slug').eq('owner_user_id', req.user.id).maybeSingle();
+    const { data, error } = await supabase
+      .from('shops')
+      .update(out)
+      .eq('owner_user_id', req.user.id)
+      .select()
+      .maybeSingle();
+    if (error) {
+      if (error.code === '23505') return res.status(409).json({ error: 'slug already taken' });
+      return res.status(400).json({ error: error.message });
+    }
+    if (!data) return res.status(404).json({ error: 'no shop to update — POST /api/shop first' });
+    if (existing?.slug) invalidateShopConfig(existing.slug);
+    if (data.slug) invalidateShopConfig(data.slug);
+    res.json(data);
+  } catch (e) {
+    console.error('[PATCH /api/shop]', e.message);
+    res.status(500).json({ error: 'update failed' });
   }
 });
 

@@ -289,9 +289,21 @@
 
   <script>
     const MAX_CARDS = 20;
-    const CASH_PCT = 55;
-    const CREDIT_PCT = 70;
+    const DEFAULT_CASH_PCT = 55;
+    const DEFAULT_CREDIT_PCT = 70;
     const CONDITION_MULTS = { 'NM': 1.0, 'LP': 0.85, 'MP': 0.70, 'HP': 0.50, 'DMG': 0.30 };
+
+    // ── Embed mode + multi-tenant shop branding ─────────────
+    // ?embed=1     → hide brand header, tighten padding, allow postMessage
+    //               close/submitted events to the parent widget loader.
+    // ?shop=<slug> → fetch /api/shop-config/:slug, override brand name,
+    //               logo, accent colour, cash/credit pcts.
+    const _params = new URLSearchParams(location.search);
+    const SHOP_SLUG = _params.get('shop') || null;
+    const EMBED_MODE = _params.get('embed') === '1';
+    let SHOP_CONFIG = null;
+    function getCashPct() { return SHOP_CONFIG?.cash_pct || DEFAULT_CASH_PCT; }
+    function getCreditPct() { return SHOP_CONFIG?.credit_pct || DEFAULT_CREDIT_PCT; }
 
     const state = {
       results: [],   // { card, market, cash, credit } or { error, line }
@@ -300,6 +312,61 @@
     };
 
     const $ = (id) => document.getElementById(id);
+
+    async function loadShopConfig() {
+      if (!SHOP_SLUG) return;
+      try {
+        const r = await fetch('/api/shop-config/' + encodeURIComponent(SHOP_SLUG));
+        if (!r.ok) return;
+        SHOP_CONFIG = await r.json();
+        applyShopBranding();
+      } catch (e) {
+        console.warn('[QUOTE] shop-config fetch failed:', e.message);
+      }
+    }
+
+    function applyShopBranding() {
+      if (!SHOP_CONFIG) return;
+      const name = SHOP_CONFIG.name;
+      if (name) {
+        document.title = 'Get a Quote — ' + name;
+        const bn = document.querySelector('.brand-name');
+        if (bn) bn.textContent = name;
+        const fl = document.querySelector('footer p');
+        if (fl) fl.innerHTML = 'Powered by ' + escapeHtml(name) + ' &middot; <a href="mailto:' + escapeHtml(SHOP_CONFIG.email_public || '') + '">Contact us</a>';
+      }
+      if (SHOP_CONFIG.accent_color) {
+        document.documentElement.style.setProperty('--accent', SHOP_CONFIG.accent_color);
+        document.documentElement.style.setProperty('--accent-hover', SHOP_CONFIG.accent_color);
+        const themeMeta = document.querySelector('meta[name=theme-color]');
+        if (themeMeta) themeMeta.setAttribute('content', SHOP_CONFIG.accent_color);
+      }
+      if (SHOP_CONFIG.logo_url) {
+        const bl = document.querySelector('.brand-logo img');
+        if (bl) {
+          bl.src = SHOP_CONFIG.logo_url;
+          bl.alt = (SHOP_CONFIG.name || 'Shop') + ' logo';
+        }
+      }
+      // Refresh the "Cash X%, store credit Y%" note line if it's visible.
+      const noteLine = document.querySelector('#inputPanel .note');
+      if (noteLine) {
+        noteLine.innerHTML = 'Prices shown are indicative and assume Near Mint condition. Final offer depends on in-person condition check. Cash offer is ' +
+          getCashPct() + '% of market value, store credit is ' + getCreditPct() + '%. We price off Cardmarket (EU) and Scryfall live data.';
+      }
+    }
+
+    function applyEmbedMode() {
+      if (!EMBED_MODE) return;
+      // Host site has its own branding; hide ours to save space in the modal.
+      const brand = document.querySelector('.brand');
+      if (brand) brand.style.display = 'none';
+      const wrap = document.querySelector('.wrap');
+      if (wrap) wrap.style.padding = '12px 12px 32px';
+    }
+
+    loadShopConfig();
+    applyEmbedMode();
 
     // ---- Build Cardmarket direct URL ----
     // Pattern: /en/Pokemon/Products/Singles/{Set-Slug}/{Card-Slug}-{SetCode}{PaddedNum}
@@ -428,7 +495,7 @@
           const pr = await fetch('/api/price', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ card, buyPercentage: CASH_PCT })
+            body: JSON.stringify({ card, buyPercentage: getCashPct() })
           });
           let priced = pr.ok ? await pr.json() : null;
 
@@ -443,8 +510,8 @@
           state.results.push({
             card: finalCard,
             market: mv,
-            cash: Math.round(effectiveMV * (CASH_PCT / 100) * 100) / 100,
-            credit: Math.round(effectiveMV * (CREDIT_PCT / 100) * 100) / 100,
+            cash: Math.round(effectiveMV * (getCashPct() / 100) * 100) / 100,
+            credit: Math.round(effectiveMV * (getCreditPct() / 100) * 100) / 100,
             cardmarket_url: cmUrl
           });
         } catch (e) {
@@ -574,7 +641,8 @@
           body: JSON.stringify({
             email, name, newsletter, cards,
             totals: { market: mTotal, cash: cTotal, credit: crTotal },
-            cashPct: CASH_PCT, creditPct: CREDIT_PCT
+            cashPct: getCashPct(), creditPct: getCreditPct(),
+            shop_slug: SHOP_SLUG
           })
         });
         if (!r.ok) throw new Error('Server rejected quote');
@@ -586,8 +654,26 @@
         $('leadSuccess').textContent = data.emailed
           ? (newsletter ? 'Quote unlocked & emailed. Welcome to the list!' : 'Quote unlocked & emailed — check your inbox.')
           : 'Quote unlocked. We\'ll be in touch shortly.';
+
+        // Notify the parent widget loader. Strict origin check is done on
+        // the receiving side; we send to '*' because the parent's origin
+        // is the host shop's site, which we don't know in advance.
+        if (EMBED_MODE && window.parent !== window) {
+          try { window.parent.postMessage({ type: 'cp:submitted', shop: SHOP_SLUG }, '*'); } catch (_) {}
+          // Inject a small "Close" link in the success banner so the user
+          // can dismiss the modal without hunting for the ✕.
+          const closeLink = document.createElement('a');
+          closeLink.href = '#';
+          closeLink.textContent = ' Close ✕';
+          closeLink.style.cssText = 'margin-left:8px;color:var(--yellow);text-decoration:underline;cursor:pointer;font-size:12px';
+          closeLink.addEventListener('click', (ev) => {
+            ev.preventDefault();
+            try { window.parent.postMessage({ type: 'cp:close' }, '*'); } catch (_) {}
+          });
+          $('leadSuccess').appendChild(closeLink);
+        }
       } catch (e) {
-        alert('Couldn\'t save your details — please try again, or email dave@boardandbrewed.ie directly.');
+        alert('Couldn\'t save your details — please try again, or contact us directly.');
         btn.disabled = false;
         btn.textContent = 'Unlock my quote';
       }
