@@ -398,9 +398,11 @@ app.get('/api/admin/users', requireAuth, requireAdmin, async (req, res) => {
 // (which embeds both tcgplayer.prices + cardmarket.prices in one
 // API call). No shipping factor — raw price comparison only.
 
-// Pick the best (highest-spread) variant pair for one card.
-// Returns null when there's no overlapping priced variant.
-function bestArbitrage(entry, usdToEurRate) {
+// Pick the best (highest-spread) variant pair for one card. Direction:
+//   'us_to_eu' — buy in US (TCGplayer USD), sell in EU (Cardmarket EUR). ratio = EU / converted-US.
+//   'eu_to_us' — buy in EU (Cardmarket EUR), sell in US (TCGplayer USD). ratio = converted-US / EU.
+// In both cases higher ratio means a better arbitrage opportunity.
+function bestArbitrage(entry, usdToEurRate, direction = 'us_to_eu') {
   if (!entry?.tcg || !entry?.cm) return null;
   const cm = entry.cm;
   const tcg = entry.tcg;
@@ -422,7 +424,7 @@ function bestArbitrage(entry, usdToEurRate) {
   for (const v of variants) {
     const usdInEur = v.usd * usdToEurRate;
     if (usdInEur <= 0) continue;
-    const ratio = v.eur / usdInEur;
+    const ratio = direction === 'eu_to_us' ? (usdInEur / v.eur) : (v.eur / usdInEur);
     if (!best || ratio > best.ratio) best = { ...v, usdInEur, ratio };
   }
   return best;
@@ -430,7 +432,7 @@ function bestArbitrage(entry, usdToEurRate) {
 
 // Compute arbitrage for a fixed variant — used when the user picks
 // "Normal" / "Holofoil" / "Reverse Holo" instead of "auto".
-function singleVariantArbitrage(entry, variant, usdToEurRate) {
+function singleVariantArbitrage(entry, variant, usdToEurRate, direction = 'us_to_eu') {
   if (!entry?.tcg || !entry?.cm) return null;
   const tcg = entry.tcg;
   const cm = entry.cm;
@@ -446,19 +448,25 @@ function singleVariantArbitrage(entry, variant, usdToEurRate) {
   if (!usd || !eur) return null;
   const usdInEur = usd * usdToEurRate;
   if (usdInEur <= 0) return null;
-  return { variant, usd, eur, usdInEur, ratio: eur / usdInEur };
+  const ratio = direction === 'eu_to_us' ? (usdInEur / eur) : (eur / usdInEur);
+  return { variant, usd, eur, usdInEur, ratio };
 }
 
 // POST /api/admin/arbitrage — scan CARD_PRICES with the given filters.
 app.post('/api/admin/arbitrage', requireAuth, requireAdmin, (req, res) => {
   const {
-    minUsd = 5,
+    minSrcPrice = 5,
     threshold = 1.30,
     sets = null,
     variant = 'auto',
     limit = 100,
-    sortBy = 'ratio'
+    sortBy = 'ratio',
+    direction = 'us_to_eu'   // 'us_to_eu' | 'eu_to_us'
   } = req.body || {};
+  // Back-compat: accept the old `minUsd` field name from older clients.
+  const minSrc = req.body?.minUsd != null ? req.body.minUsd : minSrcPrice;
+
+  const dir = direction === 'eu_to_us' ? 'eu_to_us' : 'us_to_eu';
 
   const setFilter = sets && Array.isArray(sets) && sets.length
     ? new Set(sets.map(s => String(s).toLowerCase()))
@@ -468,11 +476,18 @@ app.post('/api/admin/arbitrage', requireAuth, requireAdmin, (req, res) => {
   for (const [key, e] of CARD_PRICES) {
     if (setFilter && !setFilter.has(String(e.setId || '').toLowerCase())) continue;
     const arb = (variant === 'auto')
-      ? bestArbitrage(e, USD_TO_EUR)
-      : singleVariantArbitrage(e, variant, USD_TO_EUR);
+      ? bestArbitrage(e, USD_TO_EUR, dir)
+      : singleVariantArbitrage(e, variant, USD_TO_EUR, dir);
     if (!arb) continue;
-    if (arb.usd < minUsd) continue;
+    // Source-side floor: USD price for us_to_eu, EUR price for eu_to_us.
+    const srcPrice = dir === 'eu_to_us' ? arb.eur : arb.usd;
+    if (srcPrice < minSrc) continue;
     if (arb.ratio < threshold) continue;
+    // Spread is always destination-currency value of (dst - src-converted).
+    // For us_to_eu: in EUR. For eu_to_us: in USD.
+    const spread = dir === 'eu_to_us'
+      ? +(arb.usd - (arb.eur / USD_TO_EUR)).toFixed(2)   // USD profit per card
+      : +(arb.eur - arb.usdInEur).toFixed(2);             // EUR profit per card
     out.push({
       key,
       name: e.name,
@@ -487,15 +502,20 @@ app.post('/api/admin/arbitrage', requireAuth, requireAdmin, (req, res) => {
       usdInEur: +arb.usdInEur.toFixed(2),
       eur: +arb.eur.toFixed(2),
       ratio: +arb.ratio.toFixed(3),
-      spreadEur: +(arb.eur - arb.usdInEur).toFixed(2),
+      spread,
+      spreadCurrency: dir === 'eu_to_us' ? 'USD' : 'EUR',
+      direction: dir,
       tcgplayerUrl: e.tcgplayerUrl,
       cardmarketUrl: e.cardmarketUrl,
       fetchedAt: e.fetchedAt
     });
   }
-  out.sort((a, b) => sortBy === 'spreadEur' ? b.spreadEur - a.spreadEur : b.ratio - a.ratio);
+  out.sort((a, b) => sortBy === 'spread' || sortBy === 'spreadEur'
+    ? b.spread - a.spread
+    : b.ratio - a.ratio);
   res.json({
     rate: USD_TO_EUR,
+    direction: dir,
     cardsPriced: CARD_PRICES.size,
     matched: out.length,
     lastRefreshAt: _lastPriceRefreshAt || null,
