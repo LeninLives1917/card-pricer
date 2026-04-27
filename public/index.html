@@ -419,7 +419,15 @@
       const usHighlight = _arbLastDirection === 'eu_to_us' ? 'color:var(--accent-light); font-weight:600;' : 'color:var(--text-dim);';
       const euHighlight = _arbLastDirection === 'us_to_eu' ? 'color:var(--accent-light); font-weight:600;' : 'color:var(--text-dim);';
       const spreadCcy = r.spreadCurrency === 'USD' ? '$' : '€';
-      return `<div style="display:grid; grid-template-columns:48px 1fr auto auto auto; gap:10px; align-items:center; padding:8px; background:var(--surface2); border-radius:8px; margin-bottom:6px;">
+      // Liquidity badge: green if recent EU sales + tight US spread, amber if just one signal, grey otherwise.
+      const cmAvg7 = r.cmAvg7 || 0;
+      const tcgTight = r.tcgLowMarketRatio || 0;
+      let liqLabel = '—', liqColor = 'var(--text-dim)', liqHint = 'No liquidity data';
+      if (cmAvg7 > 0 && tcgTight >= 0.6) { liqLabel = 'strong'; liqColor = 'var(--green)'; liqHint = `EU avg7 €${cmAvg7.toFixed(2)} · US low/market ${tcgTight.toFixed(2)}`; }
+      else if (cmAvg7 > 0) { liqLabel = 'active'; liqColor = '#facc15'; liqHint = `EU avg7 €${cmAvg7.toFixed(2)} · US low/market ${tcgTight.toFixed(2)}`; }
+      else if (tcgTight >= 0.6) { liqLabel = 'tight US'; liqColor = '#facc15'; liqHint = `US low/market ${tcgTight.toFixed(2)} · no recent EU sales`; }
+      else if (tcgTight > 0 || cmAvg7 > 0) { liqLabel = 'thin'; liqColor = 'var(--text-dim)'; liqHint = `EU avg7 €${cmAvg7.toFixed(2)} · US low/market ${tcgTight.toFixed(2)}`; }
+      return `<div style="display:grid; grid-template-columns:48px 1fr auto auto auto auto; gap:10px; align-items:center; padding:8px; background:var(--surface2); border-radius:8px; margin-bottom:6px;">
         ${r.image ? `<img src="${escapeHtmlArb(r.image)}" style="width:48px; height:auto; border-radius:6px;" loading="lazy" />` : '<div style="width:48px;height:67px;background:var(--surface);border-radius:6px;"></div>'}
         <div style="min-width:0;">
           <div style="font-weight:600; font-size:13px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${escapeHtmlArb(r.name)}</div>
@@ -430,6 +438,7 @@
           <div style="${euHighlight}">€${r.eur.toFixed(2)}</div>
         </div>
         <div style="text-align:right; font-weight:700; color:var(--green); font-size:14px; line-height:1.2;">×${r.ratio.toFixed(2)}<br/><span style="font-size:11px; color:var(--text-dim); font-weight:400;">+${spreadCcy}${r.spread.toFixed(2)}</span></div>
+        <div title="${escapeHtmlArb(liqHint)}" style="text-align:center; font-size:10px; font-weight:700; color:${liqColor}; text-transform:uppercase; letter-spacing:0.5px; min-width:48px;">${liqLabel}</div>
         <div style="display:flex; flex-direction:column; gap:4px;">
           ${r.tcgplayerUrl ? `<a href="${escapeHtmlArb(r.tcgplayerUrl)}" target="_blank" rel="noopener" class="header-btn" style="font-size:10px; padding:4px 8px;">TCGplayer</a>` : ''}
           ${r.cardmarketUrl ? `<a href="${escapeHtmlArb(r.cardmarketUrl)}" target="_blank" rel="noopener" class="header-btn" style="font-size:10px; padding:4px 8px;">Cardmarket</a>` : ''}
@@ -450,6 +459,7 @@
         threshold: parseFloat(document.getElementById('arbThreshold').value) || 1.30,
         variant: document.getElementById('arbVariant').value || 'auto',
         sortBy: document.getElementById('arbSortBy').value || 'ratio',
+        liquidity: document.getElementById('arbLiquidity').value || 'any',
         limit: parseInt(document.getElementById('arbLimit').value, 10) || 100
       };
       try {
@@ -497,13 +507,14 @@
         if (/[",\n\r]/.test(s)) return '"' + s.replace(/"/g, '""') + '"';
         return s;
       };
-      const header = ['Name','Set name','Set code','Number','Rarity','Variant','USD','EUR','USD in EUR','Ratio','Spread','Spread currency','Direction','TCGplayer URL','Cardmarket URL'];
+      const header = ['Name','Set name','Set code','Number','Rarity','Variant','USD','EUR','USD in EUR','Ratio','Spread','Spread currency','Direction','EU avg7 (EUR)','US low/market','TCGplayer URL','Cardmarket URL'];
       const lines = [header.map(csvEscape).join(',')];
       for (const r of _arbLastResults) {
         lines.push([
           r.name, r.setName, r.setCode, r.number, r.rarity,
           r.variant, r.usd, r.eur, r.usdInEur, r.ratio, r.spread, r.spreadCurrency || 'EUR',
           r.direction || _arbLastDirection,
+          r.cmAvg7 ?? 0, r.tcgLowMarketRatio ?? 0,
           r.tcgplayerUrl, r.cardmarketUrl
         ].map(csvEscape).join(','));
       }
@@ -3220,6 +3231,14 @@
           <select id="arbSortBy" class="setting-select" style="width:100%;">
             <option value="ratio">Ratio (biggest %)</option>
             <option value="spread">Spread (biggest absolute)</option>
+          </select>
+          <span></span>
+
+          <label class="setting-label" style="font-size:12px;">Liquidity</label>
+          <select id="arbLiquidity" class="setting-select" style="width:100%;">
+            <option value="any">Any (no filter)</option>
+            <option value="active">Active (EU sold in last 7 days)</option>
+            <option value="strong">Strong (active + tight US spread)</option>
           </select>
           <span></span>
 

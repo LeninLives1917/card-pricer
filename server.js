@@ -413,13 +413,22 @@ function arbitrageVariants(entry, usdToEurRate, direction = 'us_to_eu') {
 
   const pairs = [];
   const cmNormalEur = cm.lowPriceExPlus || cm.lowPrice || cm.trendPrice || 0;
+  const cmAvg7 = cm.avg7 || 0;     // EU 7-day rolling average — > 0 means recent sales
   for (const k of ['normal', 'holofoil', '1stEditionNormal', '1stEditionHolofoil', 'unlimitedHolofoil']) {
-    const usd = tcg[k]?.market;
-    if (usd && cmNormalEur) pairs.push({ variant: k, usd, eur: cmNormalEur });
+    const v = tcg[k];
+    const usd = v?.market;
+    if (usd && cmNormalEur) pairs.push({ variant: k, usd, eur: cmNormalEur, tcgLow: v?.low || 0, cmAvg7 });
   }
   const cmReverseEur = cm.reverseHoloLow || cm.reverseHoloTrend || 0;
+  const cmReverseAvg7 = cm.reverseHoloAvg7 || 0;
   if (tcg.reverseHolofoil?.market && cmReverseEur) {
-    pairs.push({ variant: 'reverseHolofoil', usd: tcg.reverseHolofoil.market, eur: cmReverseEur });
+    pairs.push({
+      variant: 'reverseHolofoil',
+      usd: tcg.reverseHolofoil.market,
+      eur: cmReverseEur,
+      tcgLow: tcg.reverseHolofoil.low || 0,
+      cmAvg7: cmReverseAvg7
+    });
   }
 
   const out = [];
@@ -427,7 +436,16 @@ function arbitrageVariants(entry, usdToEurRate, direction = 'us_to_eu') {
     const usdInEur = v.usd * usdToEurRate;
     if (usdInEur <= 0) continue;
     const ratio = direction === 'eu_to_us' ? (usdInEur / v.eur) : (v.eur / usdInEur);
-    out.push({ ...v, usdInEur, ratio });
+    // Liquidity proxies:
+    //   tcgLowMarketRatio close to 1 = lowest listing near market = several competitive listings.
+    //   tcgLowMarketRatio close to 0 = one cheap outlier dragging "low" down = sparse inventory.
+    const tcgLowMarketRatio = v.tcgLow > 0 && v.usd > 0 ? v.tcgLow / v.usd : 0;
+    out.push({
+      ...v,
+      usdInEur,
+      ratio,
+      tcgLowMarketRatio: +tcgLowMarketRatio.toFixed(3)
+    });
   }
   return out;
 }
@@ -447,20 +465,25 @@ function singleVariantArbitrage(entry, variant, usdToEurRate, direction = 'us_to
   if (!entry?.tcg || !entry?.cm) return null;
   const tcg = entry.tcg;
   const cm = entry.cm;
-  let usd = 0, eur = 0;
+  let usd = 0, eur = 0, tcgLow = 0, cmAvg7 = 0;
   if (variant === 'reverseHolofoil') {
     usd = tcg.reverseHolofoil?.market || 0;
     eur = cm.reverseHoloLow || cm.reverseHoloTrend || 0;
+    tcgLow = tcg.reverseHolofoil?.low || 0;
+    cmAvg7 = cm.reverseHoloAvg7 || 0;
   } else {
     // 'normal' or 'holofoil' both compare against the non-reverse cm price
     usd = tcg[variant]?.market || 0;
     eur = cm.lowPriceExPlus || cm.lowPrice || cm.trendPrice || 0;
+    tcgLow = tcg[variant]?.low || 0;
+    cmAvg7 = cm.avg7 || 0;
   }
   if (!usd || !eur) return null;
   const usdInEur = usd * usdToEurRate;
   if (usdInEur <= 0) return null;
   const ratio = direction === 'eu_to_us' ? (usdInEur / eur) : (eur / usdInEur);
-  return { variant, usd, eur, usdInEur, ratio };
+  const tcgLowMarketRatio = tcgLow > 0 && usd > 0 ? +(tcgLow / usd).toFixed(3) : 0;
+  return { variant, usd, eur, usdInEur, ratio, cmAvg7, tcgLowMarketRatio };
 }
 
 // POST /api/admin/arbitrage — scan CARD_PRICES with the given filters.
@@ -472,12 +495,16 @@ app.post('/api/admin/arbitrage', requireAuth, requireAdmin, (req, res) => {
     variant = 'auto',
     limit = 100,
     sortBy = 'ratio',
-    direction = 'us_to_eu'   // 'us_to_eu' | 'eu_to_us'
+    direction = 'us_to_eu',   // 'us_to_eu' | 'eu_to_us'
+    liquidity = 'any',        // 'any' | 'active' | 'strong'
+    tcgTightness = 0.6        // low/market ratio used by 'strong' filter
   } = req.body || {};
   // Back-compat: accept the old `minUsd` field name from older clients.
   const minSrc = req.body?.minUsd != null ? req.body.minUsd : minSrcPrice;
 
   const dir = direction === 'eu_to_us' ? 'eu_to_us' : 'us_to_eu';
+  const liqMode = ['any', 'active', 'strong'].includes(liquidity) ? liquidity : 'any';
+  const tightness = Number.isFinite(+tcgTightness) ? Math.max(0, Math.min(1, +tcgTightness)) : 0.6;
 
   const setFilter = sets && Array.isArray(sets) && sets.length
     ? new Set(sets.map(s => String(s).toLowerCase()))
@@ -496,11 +523,13 @@ app.post('/api/admin/arbitrage', requireAuth, requireAdmin, (req, res) => {
       const srcPrice = dir === 'eu_to_us' ? arb.eur : arb.usd;
       if (srcPrice < minSrc) continue;
       if (arb.ratio < threshold) continue;
+      // Liquidity filter: 'active' = recent EU sales; 'strong' = active + tight US spread.
+      if (liqMode === 'active' && !(arb.cmAvg7 > 0)) continue;
+      if (liqMode === 'strong' && !(arb.cmAvg7 > 0 && arb.tcgLowMarketRatio >= tightness)) continue;
       const spread = dir === 'eu_to_us'
         ? +(arb.usd - (arb.eur / USD_TO_EUR)).toFixed(2)
         : +(arb.eur - arb.usdInEur).toFixed(2);
       out.push({
-        // Per-variant row key so duplicate-card multi-variant rows don't collide.
         key: `${key}-${arb.variant}`,
         name: e.name,
         setName: e.setName,
@@ -517,6 +546,8 @@ app.post('/api/admin/arbitrage', requireAuth, requireAdmin, (req, res) => {
         spread,
         spreadCurrency: dir === 'eu_to_us' ? 'USD' : 'EUR',
         direction: dir,
+        cmAvg7: +(arb.cmAvg7 || 0).toFixed(2),
+        tcgLowMarketRatio: arb.tcgLowMarketRatio,
         tcgplayerUrl: e.tcgplayerUrl,
         cardmarketUrl: e.cardmarketUrl,
         fetchedAt: e.fetchedAt
