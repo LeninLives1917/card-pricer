@@ -5,11 +5,11 @@
   "start_url": "/",
   "display": "standalone",
   "orientation": "portrait",
-  "background_color": "#0a0a0f",
-  "theme_color": "#0a0a0f",
+  "background_color": "#1c1917",
+  "theme_color": "#1c1917",
   "icons": [
     {
-      "src": "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='20' fill='%236c5ce7'/><text x='50' y='68' text-anchor='middle' font-size='50' font-family='system-ui' font-weight='bold' fill='white'>CP</text></svg>",
+      "src": "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='18' fill='%231c1917'/><rect x='12' y='12' width='76' height='76' rx='12' fill='none' stroke='%23d97706' stroke-width='3'/><text x='50' y='62' text-anchor='middle' font-size='32' font-family='-apple-system,BlinkMacSystemFont,Segoe UI,system-ui,sans-serif' font-weight='800' letter-spacing='-1' fill='%23fafaf9'>CP</text></svg>",
       "sizes": "any",
       "type": "image/svg+xml"
     }
