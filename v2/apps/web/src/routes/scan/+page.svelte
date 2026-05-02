@@ -61,7 +61,8 @@
 {#if !data.user}
   <div class="empty">
     <p class="display" style="font-size: 22px;">You need to be signed in to scan.</p>
-    <p style="color: var(--paper-300); font-size: 13px; margin-top: 6px;">v2 carries Supabase JWT auth from v1. Magic-link login lands in week 7.</p>
+    <p style="color: var(--paper-300); font-size: 13px; margin-top: 6px;">Use your existing vendor account.</p>
+    <a href="/login" class="btn primary" style="margin-top: 14px; display: inline-block; text-decoration: none;">Sign in</a>
   </div>
 {:else}
   <div class="mode-toggle" role="tablist">

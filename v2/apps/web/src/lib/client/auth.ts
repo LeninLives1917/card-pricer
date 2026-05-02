@@ -20,6 +20,11 @@ function getClient(): SupabaseClient | null {
   return _client;
 }
 
+/** Public accessor — pages call this to perform sign-in / sign-out / etc. */
+export function getSupabaseClient(): SupabaseClient | null {
+  return getClient();
+}
+
 /** Returns a header object containing the current Supabase JWT, or empty if not signed in. */
 export async function supabaseAuthHeader(): Promise<Record<string, string>> {
   const sb = getClient();

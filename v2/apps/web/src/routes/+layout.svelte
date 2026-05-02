@@ -2,8 +2,17 @@
   import '@card-pricer/design/tokens.css';
   import './app.css';
   import { page } from '$app/state';
+  import { goto, invalidateAll } from '$app/navigation';
+  import { getSupabaseClient } from '$lib/client/auth.js';
   import type { LayoutData } from './$types';
   let { children, data }: { children: unknown; data: LayoutData } = $props();
+
+  async function signOut() {
+    const sb = getSupabaseClient();
+    if (sb) await sb.auth.signOut();
+    await invalidateAll();
+    await goto('/');
+  }
 
   // Only the vendor app's main routes get the tab nav.
   // /quote and embed iframe paths render bare.
@@ -28,8 +37,9 @@
     <div class="header-actions">
       {#if data.user}
         <span class="figure" style="font-size:11px; color:var(--paper-300);">{data.user.email ?? 'signed in'}</span>
+        <button class="header-btn" type="button" onclick={signOut}>Sign out</button>
       {:else}
-        <a href="/scan" class="header-btn">Sign in</a>
+        <a href="/login" class="header-btn">Sign in</a>
       {/if}
     </div>
   </header>
