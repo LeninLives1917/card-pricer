@@ -1,0 +1,47 @@
+services:
+  - type: web
+    name: card-pricer-v2
+    env: node
+    region: frankfurt
+    plan: starter
+    autoDeploy: true
+    branch: main
+    rootDir: v2
+    buildCommand: pnpm install --frozen-lockfile && pnpm build
+    startCommand: node apps/web/build/index.js
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_VERSION
+        value: 20.10.0
+      - key: PNPM_VERSION
+        value: 9.7.0
+      - key: PUBLIC_SUPABASE_URL
+        sync: false
+      - key: PUBLIC_SUPABASE_ANON_KEY
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: POKEMON_TCG_API_KEY
+        sync: false
+      - key: STRIPE_SECRET_KEY
+        sync: false
+      - key: STRIPE_WEBHOOK_SECRET
+        sync: false
+      - key: BREVO_API_KEY
+        sync: false
+      - key: BREVO_SENDER_EMAIL
+        sync: false
+      - key: BREVO_NEWSLETTER_LIST_ID
+        sync: false
+      - key: SHOP_EMAIL
+        sync: false
+      - key: SHOP_NAME
+        sync: false
+      - key: IP_HASH_SALT
+        generateValue: true
+      - key: DATABASE_URL
+        sync: false

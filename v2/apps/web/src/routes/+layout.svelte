@@ -16,6 +16,7 @@
   const tabs = [
     { href: '/scan', label: 'Scan' },
     { href: '/log', label: 'Log' },
+    { href: '/inventory', label: 'Inventory' },
     { href: '/settings', label: 'Settings' },
     { href: '/admin', label: 'Admin', adminOnly: true },
   ];
