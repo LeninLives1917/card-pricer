@@ -11,11 +11,13 @@
     "test": "vitest run --passWithNoTests"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.92.0",
+    "@card-pricer/api-client": "workspace:*",
+    "@card-pricer/db": "workspace:*",
     "@card-pricer/design": "workspace:*",
     "@card-pricer/shared": "workspace:*",
-    "@card-pricer/db": "workspace:*",
-    "@card-pricer/api-client": "workspace:*",
     "@supabase/supabase-js": "^2.104.0",
+    "sharp": "^0.34.5",
     "zod": "^3.23.8"
   },
   "devDependencies": {

@@ -5,7 +5,7 @@
 import { json, error } from '@sveltejs/kit';
 import { z } from 'zod';
 import { getSupabase } from '$lib/server/supabase.js';
-import { getCached, setCached, type ShopConfig } from '$lib/server/shop-config-cache.js';
+import { getCached, setCached } from '$lib/server/shop-config-cache.js';
 import type { RequestHandler } from './$types';
 
 const SLUG_RE = /^[a-z0-9][a-z0-9-]*[a-z0-9]$/;
@@ -19,7 +19,7 @@ const ShopConfigSchema = z.object({
   credit_pct: z.number().nullable(),
   active: z.boolean(),
   newsletter_show: z.boolean().nullable().default(true),
-}) satisfies z.ZodType<ShopConfig>;
+});
 
 export const GET: RequestHandler = async ({ params, setHeaders }) => {
   const slug = String(params.slug ?? '').toLowerCase();

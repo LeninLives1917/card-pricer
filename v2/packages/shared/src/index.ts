@@ -32,7 +32,21 @@ export type { QuoteCardRow, QuoteEmailArgs } from './email/templates.js';
 
 export { hashIp } from './hash.js';
 
+// Identify pipeline.
+export {
+  PKM_SET_ALIASES,
+  POKEMONTCG_UNRELIABLE,
+  SET_TOTALS,
+  resolveSetCode,
+  scoreCandidate,
+  extractPokemonSuffix,
+  prefetchRefImage,
+  verifyPokemon,
+} from './identify/index.js';
+export type { IdCard, PtcgCandidate, VerifyResult, VerifyOptions } from './identify/index.js';
+
 // Namespaced for callers that prefer dot-notation.
 export * as arbitrage from './arbitrage/index.js';
 export * as email from './email/index.js';
 export * as emailTemplates from './email/templates.js';
+export * as identify from './identify/index.js';

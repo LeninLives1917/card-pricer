@@ -1,18 +1,42 @@
 <script lang="ts">
-  // Vendor app shell — week 3 fills this in (tab nav + scan/log/settings/admin).
+  // Root — sends signed-in users to /scan, signed-out to a marketing page.
+  import { onMount } from 'svelte';
+  import { goto } from '$app/navigation';
+  import type { PageData } from './$types';
+  let { data }: { data: PageData } = $props();
+
+  onMount(() => {
+    if (data.user) {
+      goto('/scan', { replaceState: true });
+    }
+  });
 </script>
 
 <svelte:head>
   <title>Card Pricer</title>
 </svelte:head>
 
-<main style="padding: 48px 24px; max-width: 720px; margin: 0 auto;">
-  <h1 class="display" style="font-size: 36px; margin-bottom: 8px;">Card Pricer</h1>
-  <p style="color: var(--paper-300); font-size: 14px; line-height: 1.6;">
-    v2.0 staging. Vendor app surfaces ship in week 3. See <code class="figure" style="background: var(--ink-300); padding: 2px 6px; border-radius: var(--r-1);">V2_PLAN.md</code> for the timeline.
+<div style="padding: 48px 0; max-width: 720px;">
+  <h1 class="display" style="font-size: 40px; line-height: 1.1; margin-bottom: 12px;">
+    Real-time pricing for trading-card shops.
+  </h1>
+  <p style="color: var(--paper-200); font-size: 15px; line-height: 1.55; max-width: 56ch;">
+    Scan a card, get cash + credit offers in under a second. Track inventory through to sale. Embed a customer quote tool on your website.
   </p>
-  <ul style="margin-top: 24px; list-style: none; padding: 0; display: flex; flex-direction: column; gap: 8px;">
-    <li><a href="/quote">/quote — customer quote tool (week 2)</a></li>
-    <li><a href="/api/health">/api/health</a></li>
-  </ul>
-</main>
+  <div style="display: flex; gap: 12px; margin-top: 24px;">
+    <a href="/scan" class="header-btn" style="font-size: 14px; font-weight: 600; padding: 10px 16px; background: var(--accent); color: var(--ink-100); border: 0;">Open the app</a>
+    <a href="/quote" class="header-btn" style="font-size: 14px; padding: 10px 16px;">See the customer flow →</a>
+  </div>
+</div>
+
+<style>
+  .header-btn {
+    background: var(--ink-300);
+    border: 1px solid var(--hairline);
+    color: var(--paper-100);
+    border-radius: var(--r-2);
+    text-decoration: none;
+    transition: background var(--t-fast) var(--ease);
+  }
+  .header-btn:hover { background: var(--ink-400); }
+</style>
