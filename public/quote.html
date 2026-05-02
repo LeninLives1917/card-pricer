@@ -3,34 +3,62 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
-  <meta name="theme-color" content="#0f172a" />
+  <meta name="theme-color" content="#1c1917" />
   <title>Get a Quote for Your Cards — Board & Brewed</title>
   <meta name="description" content="Enter your trading card details and get an instant indicative cash or store-credit offer." />
   <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 56 56'%3E%3Crect width='56' height='56' rx='12' fill='%231c1917'/%3E%3Crect x='14' y='10' width='28' height='36' rx='4' fill='none' stroke='%23d97706' stroke-width='2'/%3E%3C/svg%3E" />
 
+  <!-- Editorial-terminal type system: Fraunces (display) + IBM Plex Sans (UI) + IBM Plex Mono (figures). Same as the vendor app — one product, one type system. -->
   <link rel="preconnect" href="https://fonts.googleapis.com" crossorigin />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Nunito+Sans:wght@400;600;700;900&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,500;0,9..144,600;1,9..144,600&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" />
 
   <style>
+    /* Tokens — see DESIGN_BRIEF.md. Identical to index.html's :root.
+       Page-local aliases (--bg-deep, --cash, --credit, --cream) retained
+       as derivations until Phase E so existing classes don't break. */
     :root {
-      --bg: #1c1917;
-      --bg-deep: #0c0a09;
-      --panel: #292524;
-      --panel-2: #44403c;
-      --text: #fafaf9;
-      --text-dim: #a8a29e;
-      --accent: #b45309;
-      --accent-hover: #d97706;
-      --yellow: #facc15;
+      --ink-100: #0c0a09;
+      --ink-200: #1c1917;
+      --ink-300: #292524;
+      --ink-400: #44403c;
+      --ink-500: #57534e;
+      --hairline: rgba(120,113,108,0.18);
+      --paper-100: #fafaf9;
+      --paper-200: #d6d3d1;
+      --paper-300: #a8a29e;
+      --paper-400: #78716c;
+      --accent: #d97706;
+      --accent-soft: #fbbf24;
+      --accent-mute: rgba(217,119,6,0.12);
+      --up: #16a34a;
+      --down: #dc2626;
+      --rare: #eab308;
+      --r-1: 6px; --r-2: 8px; --r-3: 12px;
+      --ease: cubic-bezier(.2,0,0,1);
+      --t-fast: 120ms; --t-mid: 180ms;
+
+      /* legacy aliases (Phase A — removed in Phase E) */
+      --bg: var(--ink-200);
+      --bg-deep: var(--ink-100);
+      --panel: var(--ink-300);
+      --panel-2: var(--ink-400);
+      --text: var(--paper-100);
+      --text-dim: var(--paper-300);
+      --accent-hover: var(--accent-soft);
+      --yellow: var(--rare);
       --cream: #f5f5f4;
       --cash: #f59e0b;
-      --credit: #facc15;
-      --border: #44403c;
+      --credit: var(--rare);
+      --border: var(--hairline);
       --shadow: 0 4px 20px rgba(0,0,0,0.5);
     }
     * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
-    html, body { margin: 0; padding: 0; background: var(--bg-deep); color: var(--text); font-family: 'Nunito Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; min-height: 100vh; }
+    /* Type utility classes — same names as index.html so a copy-paste from one file to the other always works. */
+    .display { font-family: 'Fraunces', Georgia, 'Times New Roman', serif; font-weight: 600; font-style: italic; letter-spacing: -0.01em; }
+    .figure  { font-family: 'IBM Plex Mono', ui-monospace, 'SF Mono', 'Fira Code', Consolas, monospace; font-variant-numeric: tabular-nums; font-feature-settings: 'tnum' 1, 'zero' 1; }
+    .label   { font-family: 'IBM Plex Sans', system-ui, sans-serif; font-size: 11px; font-weight: 500; letter-spacing: 0.06em; text-transform: uppercase; color: var(--paper-300); }
+    html, body { margin: 0; padding: 0; background: var(--bg-deep); color: var(--text); font-family: 'IBM Plex Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; min-height: 100vh; }
     body { overflow-x: hidden; }
     .wrap { max-width: 780px; margin: 0 auto; padding: 20px 16px 80px; }
     .brand { display: flex; align-items: center; gap: 14px; padding: 8px 0 24px; }

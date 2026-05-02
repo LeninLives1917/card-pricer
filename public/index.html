@@ -14,6 +14,11 @@
   <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
   <link rel="preconnect" href="https://vecbaewlxodqnevduoiy.supabase.co" crossorigin>
   <link rel="dns-prefetch" href="https://unpkg.com">
+  <!-- Editorial-terminal type system: Fraunces (display, italic) + IBM Plex Sans (UI) + IBM Plex Mono (figures). -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" crossorigin>
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,500;0,9..144,600;1,9..144,600&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='18' fill='%231c1917'/%3E%3Crect x='12' y='12' width='76' height='76' rx='12' fill='none' stroke='%23d97706' stroke-width='3'/%3E%3Ctext x='50' y='62' text-anchor='middle' font-size='32' font-family='-apple-system,BlinkMacSystemFont,Segoe UI,system-ui,sans-serif' font-weight='800' letter-spacing='-1' fill='%23fafaf9'%3ECP%3C/text%3E%3C/svg%3E">
   <title>Card Pricer</title>
   <!-- Supabase JS SDK — auth + user data (Phase B). Loaded synchronously so
        window.supabase is available before the main inline script runs. -->
@@ -955,36 +960,88 @@
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
 
+    /* ============================================================
+       DESIGN TOKENS — see DESIGN_BRIEF.md for the rules.
+       ink/paper/accent/up/down/rare are the canonical names.
+       The legacy aliases below keep existing classes working
+       through Phase A while we methodically rebuild primitives
+       in Phase B; they will be removed in Phase E.
+       ============================================================ */
     :root {
-      --bg: #0c0a09;
-      --surface: #1c1917;
-      --surface2: #292524;
-      --border: #3a3531;
-      --text: #fafaf9;
-      --text-dim: #a8a29e;
+      /* surfaces — warm dark */
+      --ink-100: #0c0a09;
+      --ink-200: #1c1917;
+      --ink-300: #292524;
+      --ink-400: #44403c;
+      --ink-500: #57534e;
+      --hairline: rgba(120,113,108,0.18);
+      /* type levels */
+      --paper-100: #fafaf9;
+      --paper-200: #d6d3d1;
+      --paper-300: #a8a29e;
+      --paper-400: #78716c;
+      /* brand */
       --accent: #d97706;
-      --accent-light: #fbbf24;
-      --green: #16a34a;
-      --green-dim: #15803d;
-      --red: #dc2626;
-      --yellow: #facc15;
-      --orange: #ea580c;
-      --radius: 12px;
-      --radius-lg: 18px;
+      --accent-soft: #fbbf24;
+      --accent-mute: rgba(217,119,6,0.12);
+      /* semantic — finance convention */
+      --up: #16a34a;
+      --down: #dc2626;
+      --up-soft: rgba(22,163,74,0.14);
+      --down-soft: rgba(220,38,38,0.14);
+      /* premium signal */
+      --rare: #eab308;
+      --rare-soft: rgba(234,179,8,0.14);
+      /* radius — three values, picked deliberately */
+      --r-1: 6px;
+      --r-2: 8px;
+      --r-3: 12px;
+      /* motion */
+      --ease: cubic-bezier(.2,0,0,1);
+      --t-fast: 120ms;
+      --t-mid: 180ms;
       --safe-bottom: env(safe-area-inset-bottom, 0px);
       --shadow-elevated: 0 20px 60px rgba(0,0,0,0.55), 0 1px 0 rgba(255,255,255,0.03) inset;
       --shadow-card: 0 4px 16px rgba(0,0,0,0.32), inset 0 1px 0 rgba(255,255,255,0.03);
-      --panel: rgba(28, 25, 23, 0.96);   /* solid surface, replaces --glass */
-      --grad-accent: linear-gradient(135deg, #d97706 0%, #f59e0b 100%);
+      --panel: rgba(28, 25, 23, 0.96);
+
+      /* ── Phase-A compatibility aliases (removed in Phase E) ── */
+      --bg: var(--ink-100);
+      --surface: var(--ink-200);
+      --surface2: var(--ink-300);
+      --border: var(--hairline);
+      --text: var(--paper-100);
+      --text-dim: var(--paper-300);
+      --accent-light: var(--accent-soft);
+      --green: var(--up);
+      --green-dim: #15803d;
+      --red: var(--down);
+      --yellow: var(--rare);
+      --orange: var(--accent);
+      --radius: var(--r-2);
+      --radius-lg: var(--r-3);
+      --grad-accent: var(--accent);   /* gradient retired; solid accent everywhere */
     }
     body.amoled {
+      --ink-100: #000000;
+      --ink-200: #0a0807;
+      --ink-300: #1a1614;
+      /* aliases follow automatically */
       --bg: #000000;
       --surface: #0a0807;
       --surface2: #1a1614;
     }
 
+    /* ── Type utility classes — see DESIGN_BRIEF.md
+       .display — Fraunces italic, for card names + hero moments
+       .figure  — IBM Plex Mono with tabular figures, for prices/ratios
+       .label   — uppercase Plex Sans 11px, for column headers + caps  */
+    .display { font-family: 'Fraunces', Georgia, 'Times New Roman', serif; font-weight: 600; font-style: italic; letter-spacing: -0.01em; font-feature-settings: 'ss01' 1; }
+    .figure  { font-family: 'IBM Plex Mono', ui-monospace, 'SF Mono', 'Fira Code', Consolas, monospace; font-variant-numeric: tabular-nums; font-feature-settings: 'tnum' 1, 'zero' 1; }
+    .label   { font-family: 'IBM Plex Sans', system-ui, sans-serif; font-size: 11px; font-weight: 500; letter-spacing: 0.06em; text-transform: uppercase; color: var(--paper-300); }
+
     body {
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+      font-family: 'IBM Plex Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
       background: var(--bg);
       color: var(--text);
       min-height: 100dvh;
