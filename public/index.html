@@ -373,12 +373,13 @@
           } else {
             body.innerHTML = users.map(u => {
               const date = u.created_at ? new Date(u.created_at).toLocaleDateString() : '—';
-              const planBadge = `<span style="text-transform:capitalize; padding:2px 8px; border-radius:4px; font-size:11px; font-weight:700; background:${u.has_subscription ? 'rgba(0,230,118,0.15)' : 'rgba(124,124,149,0.15)'}; color:${u.has_subscription ? 'var(--green)' : 'var(--text-dim)'};">${u.plan}${u.plan_interval ? ' · ' + u.plan_interval[0] : ''}</span>`;
-              return `<tr style="border-bottom:1px solid var(--border);">
-                <td style="padding:6px; word-break:break-all;">${u.email || '(no email)'}${u.is_admin ? ' <span style="color:var(--orange); font-size:10px;">ADMIN</span>' : ''}</td>
-                <td style="padding:6px;">${planBadge}</td>
-                <td style="padding:6px; text-align:right;">${u.scans_this_month}</td>
-                <td style="padding:6px; color:var(--text-dim);">${date}</td>
+              const paid = u.has_subscription;
+              const planBadge = `<span style="font-family:'IBM Plex Sans',system-ui,sans-serif; text-transform:uppercase; letter-spacing:0.06em; padding:2px 8px; border-radius:var(--r-1); font-size:10px; font-weight:600; background:${paid ? 'var(--up-soft)' : 'var(--ink-300)'}; color:${paid ? 'var(--up)' : 'var(--paper-300)'};">${u.plan}${u.plan_interval ? ' · ' + u.plan_interval[0] : ''}</span>`;
+              return `<tr style="border-bottom:1px solid var(--hairline);">
+                <td style="padding:8px 6px; word-break:break-all; color:var(--paper-200);">${u.email || '<span style=\"color:var(--paper-400);\">(no email)</span>'}${u.is_admin ? ' <span style="font-family:\'IBM Plex Sans\',system-ui,sans-serif; color:var(--accent); font-size:9px; font-weight:600; letter-spacing:0.08em; text-transform:uppercase;">ADMIN</span>' : ''}</td>
+                <td style="padding:8px 6px;">${planBadge}</td>
+                <td class="figure" style="padding:8px 6px; text-align:right; color:var(--paper-100);">${u.scans_this_month}</td>
+                <td class="figure" style="padding:8px 6px; color:var(--paper-300); font-size:11px;">${date}</td>
               </tr>`;
             }).join('');
           }
@@ -423,6 +424,13 @@
       const usCls = buySide === 'us' ? 'arb-buy' : 'arb-sell';
       const euCls = buySide === 'eu' ? 'arb-buy' : 'arb-sell';
       const spreadCcy = r.spreadCurrency === 'USD' ? '$' : '€';
+      // 30-day trend microcopy (data-driven; only render when both sides exist).
+      let trendHtml = '';
+      if (r.cmAvg30 && r.eur && Math.abs(r.eur - r.cmAvg30) > 0.01) {
+        const up = r.eur > r.cmAvg30;
+        const pct = Math.round(Math.abs((r.eur - r.cmAvg30) / r.cmAvg30) * 100);
+        trendHtml = `<span class="arb-trend ${up ? 'arb-trend-up' : 'arb-trend-down'}">${up ? '↑' : '↓'} ${pct}% vs 30d</span>`;
+      }
       // Liquidity badge — same logic, rebuilt as a status-badge.
       const cmAvg7 = r.cmAvg7 || 0;
       const tcgTight = r.tcgLowMarketRatio || 0;
@@ -440,6 +448,7 @@
         <div class="arb-prices">
           <div class="arb-price ${usCls} figure">$${r.usd.toFixed(2)}</div>
           <div class="arb-price ${euCls} figure">€${r.eur.toFixed(2)}</div>
+          ${trendHtml}
         </div>
         <div class="arb-ratio-cell">
           <span class="arb-ratio figure">×${r.ratio.toFixed(2)}</span>
@@ -529,14 +538,14 @@
         if (/[",\n\r]/.test(s)) return '"' + s.replace(/"/g, '""') + '"';
         return s;
       };
-      const header = ['Name','Set name','Set code','Number','Rarity','Variant','USD','EUR','USD in EUR','Ratio','Spread','Spread currency','Direction','EU avg7 (EUR)','US low/market','TCGplayer URL','Cardmarket URL'];
+      const header = ['Name','Set name','Set code','Number','Rarity','Variant','USD','EUR','USD in EUR','Ratio','Spread','Spread currency','Direction','EU avg7 (EUR)','EU avg30 (EUR)','US low/market','TCGplayer URL','Cardmarket URL'];
       const lines = [header.map(csvEscape).join(',')];
       for (const r of _arbLastResults) {
         lines.push([
           r.name, r.setName, r.setCode, r.number, r.rarity,
           r.variant, r.usd, r.eur, r.usdInEur, r.ratio, r.spread, r.spreadCurrency || 'EUR',
           r.direction || _arbLastDirection,
-          r.cmAvg7 ?? 0, r.tcgLowMarketRatio ?? 0,
+          r.cmAvg7 ?? 0, r.cmAvg30 ?? 0, r.tcgLowMarketRatio ?? 0,
           r.tcgplayerUrl, r.cardmarketUrl
         ].map(csvEscape).join(','));
       }
@@ -1041,15 +1050,8 @@
       --radius-lg: var(--r-3);
       --grad-accent: var(--accent);   /* gradient retired; solid accent everywhere */
     }
-    body.amoled {
-      --ink-100: #000000;
-      --ink-200: #0a0807;
-      --ink-300: #1a1614;
-      /* aliases follow automatically */
-      --bg: #000000;
-      --surface: #0a0807;
-      --surface2: #1a1614;
-    }
+    /* AMOLED variant retired — was dead code with no toggle.
+       Tokens cascade through the standard :root values. */
 
     /* ── Type utility classes — see DESIGN_BRIEF.md
        .display — Fraunces italic, for card names + hero moments
@@ -1437,10 +1439,13 @@
     .arb-sub .figure { color: var(--paper-200); font-size: 11px; letter-spacing: 0.04em; }
     .arb-sub-num { color: var(--paper-300) !important; }
     .arb-variant { font-family: 'IBM Plex Sans', system-ui, sans-serif; font-size: 9px; font-weight: 500; letter-spacing: 0.08em; color: var(--paper-300); padding: 1px 6px; border: 1px solid var(--hairline); border-radius: var(--r-1); background: var(--ink-300); }
-    .arb-prices { display: flex; flex-direction: column; gap: 2px; text-align: right; min-width: 70px; }
+    .arb-prices { display: flex; flex-direction: column; gap: 2px; text-align: right; min-width: 86px; }
     .arb-price { font-size: 13px; line-height: 1.3; }
     .arb-price.arb-buy { color: var(--paper-300); }
     .arb-price.arb-sell { color: var(--paper-100); font-weight: 500; }
+    .arb-trend { font-family: 'IBM Plex Sans', system-ui, sans-serif; font-size: 10px; font-weight: 500; letter-spacing: 0.02em; margin-top: 2px; }
+    .arb-trend-up { color: var(--up); }
+    .arb-trend-down { color: var(--down); }
     .arb-ratio-cell { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; padding: 4px 10px; background: var(--up-soft); border-radius: var(--r-1); min-width: 76px; }
     .arb-ratio { font-size: 15px; font-weight: 500; color: var(--up); letter-spacing: -0.02em; }
     .arb-spread { font-size: 10px; color: var(--paper-300); letter-spacing: 0.02em; }
@@ -3455,13 +3460,13 @@
       <div class="setting-group">
         <h3>Recent users</h3>
         <div style="overflow-x:auto;">
-          <table id="adminUserTable" style="width:100%; border-collapse:collapse; font-size:12px;">
+          <table id="adminUserTable" style="width:100%; border-collapse:collapse; font-size:13px;">
             <thead>
-              <tr style="text-align:left; color:var(--text-dim); border-bottom:1px solid var(--border);">
-                <th style="padding:6px;">Email</th>
-                <th style="padding:6px;">Plan</th>
-                <th style="padding:6px; text-align:right;">Scans</th>
-                <th style="padding:6px;">Signed up</th>
+              <tr style="text-align:left; border-bottom:1px solid var(--hairline);">
+                <th class="label" style="padding:8px 6px; text-align:left;">Email</th>
+                <th class="label" style="padding:8px 6px; text-align:left;">Plan</th>
+                <th class="label" style="padding:8px 6px; text-align:right;">Scans</th>
+                <th class="label" style="padding:8px 6px;">Signed up</th>
               </tr>
             </thead>
             <tbody id="adminUserTableBody">

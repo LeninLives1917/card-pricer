@@ -414,20 +414,23 @@ function arbitrageVariants(entry, usdToEurRate, direction = 'us_to_eu') {
   const pairs = [];
   const cmNormalEur = cm.lowPriceExPlus || cm.lowPrice || cm.trendPrice || 0;
   const cmAvg7 = cm.avg7 || 0;     // EU 7-day rolling average — > 0 means recent sales
+  const cmAvg30 = cm.avg30 || 0;   // EU 30-day average — used to flag trend direction
   for (const k of ['normal', 'holofoil', '1stEditionNormal', '1stEditionHolofoil', 'unlimitedHolofoil']) {
     const v = tcg[k];
     const usd = v?.market;
-    if (usd && cmNormalEur) pairs.push({ variant: k, usd, eur: cmNormalEur, tcgLow: v?.low || 0, cmAvg7 });
+    if (usd && cmNormalEur) pairs.push({ variant: k, usd, eur: cmNormalEur, tcgLow: v?.low || 0, cmAvg7, cmAvg30 });
   }
   const cmReverseEur = cm.reverseHoloLow || cm.reverseHoloTrend || 0;
   const cmReverseAvg7 = cm.reverseHoloAvg7 || 0;
+  const cmReverseAvg30 = cm.reverseHoloAvg30 || 0;
   if (tcg.reverseHolofoil?.market && cmReverseEur) {
     pairs.push({
       variant: 'reverseHolofoil',
       usd: tcg.reverseHolofoil.market,
       eur: cmReverseEur,
       tcgLow: tcg.reverseHolofoil.low || 0,
-      cmAvg7: cmReverseAvg7
+      cmAvg7: cmReverseAvg7,
+      cmAvg30: cmReverseAvg30
     });
   }
 
@@ -465,25 +468,26 @@ function singleVariantArbitrage(entry, variant, usdToEurRate, direction = 'us_to
   if (!entry?.tcg || !entry?.cm) return null;
   const tcg = entry.tcg;
   const cm = entry.cm;
-  let usd = 0, eur = 0, tcgLow = 0, cmAvg7 = 0;
+  let usd = 0, eur = 0, tcgLow = 0, cmAvg7 = 0, cmAvg30 = 0;
   if (variant === 'reverseHolofoil') {
     usd = tcg.reverseHolofoil?.market || 0;
     eur = cm.reverseHoloLow || cm.reverseHoloTrend || 0;
     tcgLow = tcg.reverseHolofoil?.low || 0;
     cmAvg7 = cm.reverseHoloAvg7 || 0;
+    cmAvg30 = cm.reverseHoloAvg30 || 0;
   } else {
-    // 'normal' or 'holofoil' both compare against the non-reverse cm price
     usd = tcg[variant]?.market || 0;
     eur = cm.lowPriceExPlus || cm.lowPrice || cm.trendPrice || 0;
     tcgLow = tcg[variant]?.low || 0;
     cmAvg7 = cm.avg7 || 0;
+    cmAvg30 = cm.avg30 || 0;
   }
   if (!usd || !eur) return null;
   const usdInEur = usd * usdToEurRate;
   if (usdInEur <= 0) return null;
   const ratio = direction === 'eu_to_us' ? (usdInEur / eur) : (eur / usdInEur);
   const tcgLowMarketRatio = tcgLow > 0 && usd > 0 ? +(tcgLow / usd).toFixed(3) : 0;
-  return { variant, usd, eur, usdInEur, ratio, cmAvg7, tcgLowMarketRatio };
+  return { variant, usd, eur, usdInEur, ratio, cmAvg7, cmAvg30, tcgLowMarketRatio };
 }
 
 // POST /api/admin/arbitrage — scan CARD_PRICES with the given filters.
@@ -547,6 +551,7 @@ app.post('/api/admin/arbitrage', requireAuth, requireAdmin, (req, res) => {
         spreadCurrency: dir === 'eu_to_us' ? 'USD' : 'EUR',
         direction: dir,
         cmAvg7: +(arb.cmAvg7 || 0).toFixed(2),
+        cmAvg30: +(arb.cmAvg30 || 0).toFixed(2),
         tcgLowMarketRatio: arb.tcgLowMarketRatio,
         tcgplayerUrl: e.tcgplayerUrl,
         cardmarketUrl: e.cardmarketUrl,
