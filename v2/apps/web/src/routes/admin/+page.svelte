@@ -9,7 +9,8 @@
 <h1 class="display" style="font-size: 26px; margin-bottom: 16px;">Admin</h1>
 <ul style="list-style: none; padding: 0; display: flex; flex-direction: column; gap: 6px;">
   <li><a href="/admin/arbitrage" class="link">US↔EU arbitrage finder</a></li>
-  <li><span style="color: var(--paper-400);">Overview, users, plan breakdown — week 4</span></li>
+  <li><a href="/admin/offers" class="link">Send offer to a customer</a></li>
+  <li><span style="color: var(--paper-400);">Overview, users, plan breakdown — later</span></li>
 </ul>
 
 <style>

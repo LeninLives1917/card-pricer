@@ -22,7 +22,7 @@ export const GET: RequestHandler = async ({ locals }) => {
   if (!locals.user) throw error(401, 'auth required');
   const sb = getSupabase();
   const { data, error: dbErr } = await sb
-    .from('sessions')
+    .from('live_sessions')
     .select('*')
     .eq('owner_user_id', locals.user.id)
     .is('closed_at', null)
@@ -48,7 +48,7 @@ export const POST: RequestHandler = async ({ locals, request }) => {
   for (let i = 0; i < 5; i++) {
     const pairCode = generatePairCode();
     const { data, error: dbErr } = await sb
-      .from('sessions')
+      .from('live_sessions')
       .insert({
         owner_user_id: locals.user.id,
         name: parsed.data.name ?? `Session ${new Date().toLocaleDateString()}`,

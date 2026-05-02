@@ -68,6 +68,53 @@ export function customerQuoteHtml(args: QuoteEmailArgs): string {
   </div>`;
 }
 
+/** Customer-facing offer email — includes accept/decline link. */
+export interface OfferEmailArgs {
+  shopName: string;
+  customerName?: string | null;
+  lineItems: Array<{ name: string; price: number }>;
+  totalEur: number;
+  acceptUrl: string;
+  expiresAt?: string | null;
+}
+
+export function offerEmailHtml(args: OfferEmailArgs): string {
+  const { shopName, customerName, lineItems, totalEur, acceptUrl, expiresAt } = args;
+  const rows = lineItems
+    .map(
+      (li) => `<tr>
+        <td style="padding:8px; border-bottom:1px solid #eee;">${escape(li.name)}</td>
+        <td style="padding:8px; border-bottom:1px solid #eee; text-align:right;">€${fmt(li.price)}</td>
+      </tr>`,
+    )
+    .join('');
+  const greeting = customerName ? `Hi ${escape(customerName)}, ` : 'Hi, ';
+  const expiry = expiresAt
+    ? `<p style="font-size:13px; color:#888;">This offer expires ${escape(expiresAt)}.</p>`
+    : '';
+  return `<div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,system-ui,sans-serif; max-width:640px; margin:0 auto; padding:24px; color:#222;">
+    <h2 style="color:#1a1a1a; margin-bottom:4px;">Offer from ${escape(shopName)}</h2>
+    <p style="color:#666; margin-top:0;">${greeting}we've put together the following offer for your cards.</p>
+    <table style="width:100%; border-collapse:collapse; margin:16px 0;">
+      <thead><tr style="background:#f5f5f5;">
+        <th style="padding:8px; text-align:left;">Item</th>
+        <th style="padding:8px; text-align:right;">Price</th>
+      </tr></thead>
+      <tbody>${rows}</tbody>
+      <tfoot><tr style="font-weight:700; background:#fafafa;">
+        <td style="padding:8px;">Total</td>
+        <td style="padding:8px; text-align:right;">€${fmt(totalEur)}</td>
+      </tr></tfoot>
+    </table>
+    ${expiry}
+    <p style="margin:28px 0; text-align:center;">
+      <a href="${escape(acceptUrl)}" style="display:inline-block; background:#16a34a; color:#fff; padding:14px 28px; text-decoration:none; border-radius:6px; font-weight:600;">Review & respond</a>
+    </p>
+    <p style="font-size:12px; color:#888;">Or paste this URL into your browser: ${escape(acceptUrl)}</p>
+    <p style="color:#888; font-size:12px; margin-top:32px;">${escape(shopName)}</p>
+  </div>`;
+}
+
 /** Shop-internal "new lead" notification email. */
 export function shopLeadHtml(
   args: QuoteEmailArgs & {

@@ -27,8 +27,8 @@ export type {
   SubscribeResult,
 } from './email/index.js';
 
-export { customerQuoteHtml, shopLeadHtml } from './email/templates.js';
-export type { QuoteCardRow, QuoteEmailArgs } from './email/templates.js';
+export { customerQuoteHtml, shopLeadHtml, offerEmailHtml } from './email/templates.js';
+export type { QuoteCardRow, QuoteEmailArgs, OfferEmailArgs } from './email/templates.js';
 
 export { hashIp } from './hash.js';
 

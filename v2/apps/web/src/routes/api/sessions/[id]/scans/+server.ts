@@ -17,14 +17,14 @@ export const GET: RequestHandler = async ({ locals, params }) => {
   const sb = getSupabase();
   // Membership check via session ownership.
   const { data: session } = await sb
-    .from('sessions')
+    .from('live_sessions')
     .select('id')
     .eq('id', params.id)
     .eq('owner_user_id', locals.user.id)
     .maybeSingle();
   if (!session) throw error(404, 'session not found');
   const { data } = await sb
-    .from('session_scans')
+    .from('live_session_scans')
     .select('*')
     .eq('session_id', params.id)
     .order('created_at', { ascending: false })
@@ -45,7 +45,7 @@ export const POST: RequestHandler = async ({ locals, params, request }) => {
 
   const sb = getSupabase();
   const { data: session } = await sb
-    .from('sessions')
+    .from('live_sessions')
     .select('id')
     .eq('id', params.id)
     .eq('owner_user_id', locals.user.id)
@@ -53,7 +53,7 @@ export const POST: RequestHandler = async ({ locals, params, request }) => {
   if (!session) throw error(404, 'session not found');
 
   const { data, error: dbErr } = await sb
-    .from('session_scans')
+    .from('live_session_scans')
     .insert({
       session_id: params.id,
       scanned_by_user_id: locals.user.id,
@@ -67,7 +67,7 @@ export const POST: RequestHandler = async ({ locals, params, request }) => {
     // 23505 unique violation = idempotency dedupe — return the existing row.
     if (dbErr.code === '23505') {
       const { data: existing } = await sb
-        .from('session_scans')
+        .from('live_session_scans')
         .select('*')
         .eq('session_id', params.id)
         .eq('idempotency_key', parsed.data.idempotency_key)

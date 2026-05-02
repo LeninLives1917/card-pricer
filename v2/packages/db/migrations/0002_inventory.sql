@@ -77,7 +77,7 @@ CREATE POLICY "owner mutates own listings" ON public.listings
 
 CREATE OR REPLACE FUNCTION public.touch_inventory_updated_at() RETURNS trigger AS $$
 BEGIN NEW.updated_at = now(); RETURN NEW; END;
-$$ LANGUAGE plpgsql;
+$$ LANGUAGE plpgsql SET search_path = public, pg_temp;
 DROP TRIGGER IF EXISTS inventory_items_touch ON public.inventory_items;
 CREATE TRIGGER inventory_items_touch
   BEFORE UPDATE ON public.inventory_items

@@ -27,5 +27,6 @@ CREATE INDEX IF NOT EXISTS card_prices_set_id_idx
 CREATE INDEX IF NOT EXISTS card_prices_fetched_at_idx
   ON public.card_prices (fetched_at DESC);
 
--- RLS off — admin-only access via service role through /api/admin/arbitrage.
-ALTER TABLE public.card_prices DISABLE ROW LEVEL SECURITY;
+-- RLS on with no policies — anon/authenticated locked out by default,
+-- service role bypasses RLS so admin endpoints still work.
+ALTER TABLE public.card_prices ENABLE ROW LEVEL SECURITY;

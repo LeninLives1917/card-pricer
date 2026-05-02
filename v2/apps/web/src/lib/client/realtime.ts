@@ -1,4 +1,4 @@
-// Supabase Realtime helper — subscribe to session_scans inserts on a
+// Supabase Realtime helper — subscribe to live_session_scans inserts on a
 // specific session channel. Replaces v1's bespoke /api/room/:id SSE.
 
 import type { SupabaseClient } from '@supabase/supabase-js';
@@ -30,7 +30,7 @@ export function subscribeToSessionScans(
       {
         event: 'INSERT',
         schema: 'public',
-        table: 'session_scans',
+        table: 'live_session_scans',
         filter: `session_id=eq.${sessionId}`,
       },
       (payload) => {

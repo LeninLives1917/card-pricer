@@ -33,6 +33,16 @@ ls v2/packages/db/migrations/
 
 For automated runs once the team grows, swap to `pnpm --filter @card-pricer/db migrate`.
 
+## First-run seed: card_prices
+
+The `card_prices` table starts empty after migration. The arbitrage scan reads from it, so seed before using:
+
+1. Sign in as an admin user (profiles.is_admin = true).
+2. Open `/admin/arbitrage`.
+3. Click **Refresh prices**. The button kicks off `/api/admin/refresh-prices` — a fire-and-forget job that pulls all sets from pokemontcg.io and upserts into `card_prices`.
+4. With a `POKEMON_TCG_API_KEY` set, the throttle is 5x batches; without one, ~25 req/min.
+5. Refresh status polls `/api/admin/refresh-status`; the page surfaces it automatically.
+
 ## Cutover from v1
 
 1. Push v2 to staging Render service. Confirm `/api/health` returns 200.
