@@ -1,0 +1,16 @@
+node_modules
+.pnpm-store
+.svelte-kit
+build
+dist
+.turbo
+coverage
+*.tsbuildinfo
+.env
+.env.local
+.env.*.local
+.DS_Store
+.expo
+.eas
+ios
+android
