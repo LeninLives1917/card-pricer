@@ -7,7 +7,9 @@
   "scripts": {
     "prestart": "node --check server.js",
     "start": "node server.js",
-    "dev": "node server.js"
+    "dev": "node server.js",
+    "test": "node --test --test-reporter=spec \"tests/**/*.spec.js\"",
+    "test:watch": "node --test --watch --test-reporter=spec \"tests/**/*.spec.js\""
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.39.0",
