@@ -10,6 +10,10 @@ Source-of-truth schema for the live Supabase project (`vecbaewlxodqnevduoiy`). E
 | 2 | `20260426_shops.sql` | `shops`, `quote_leads` + RLS | Used by V1 (multi-tenant embed) |
 | 3 | `20260427_shops_newsletter.sql` | `shops` newsletter columns | Used by V1 |
 | 4 | `20260502221125_v2_carryover.sql` | `card_prices`, `inventory_*`, `listings`, `live_session*`, `customer_accounts`, `quote_offers` | **Carryover** — present in DB, NOT used by V1 server.js. See note below. |
+| 5 | `20260504120000_scan_events_data.sql` | `scan_events.data jsonb` + `scan_events_ocr_first_idx` partial index | **V2 / S1** — additive column for OCR-first telemetry payload (F24, V2_ARCHITECTURE §3.7) |
+| 6 | `20260504120100_sessions_indexes.sql` | secondary indexes on `sessions(user_id, created_at)`, `session_cards(session_id, created_at)`, `session_cards(user_id)` | **V2 / S1** — performance prerequisite for the F17 dual-write reader/writer |
+
+Each forward-migration above timestamped `…_rollback.sql` is the operator's undo path. Per `CARD_PRICER_V2_PROMPT.md` §2.4 — never edit data in place without a backup.
 
 ## Carryover tables (V2 decision)
 
@@ -20,7 +24,14 @@ V2 sub-agent A3 (Persistence) decides:
 - **(b) refactor into a fresh schema**, then `drop table` the carryover in a follow-up migration once nothing reads from it, or
 - **(c) leave them sleeping** and revisit later.
 
-Document the choice in `docs/V2_ARCHITECTURE.md` before phase 3 starts.
+**Decision (locked in `docs/V2_ARCHITECTURE.md` §4):** option **(a) adopt and extend** for every carryover table. Mapping:
+- `card_prices` → F16 (A2 + A3, S10): backs `data/card-prices.json`.
+- `sessions` / `session_cards` → F17 (A3, S16/S24): replaces the `user_state` JSONB blob via dual-write then read-flip.
+- `inventory_items` / `inventory_events` / `listings` → F18 (A9, S18/S19).
+- `live_sessions` / `live_session_scans` → F15 (A1 + A3, S11).
+- `customer_accounts` / `quote_offers` → F19 (A10 + A1, S20/S21).
+
+Per-table column-level details, RLS policy summaries, and owner-module mapping live in `db/schema.md`.
 
 ## Conventions for new migrations
 
