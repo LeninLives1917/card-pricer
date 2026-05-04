@@ -1,3 +1,135 @@
-# V2 placeholder — see docs/V2_ARCHITECTURE.md §1
+# Card-Pricer V2 — Render service definition
 # Owner: A8 | Slice: S4
-# Purpose: Starter plan + persistent disk + full env var list (Q2)
+#
+# Per docs/V2_ARCHITECTURE.md §1 + Q2 (Render Starter $7/mo + persistent disk).
+# Per V2_AUDIT.md §4 — V1 render.yaml only declared 6 of 19+ env vars; this
+# file lists every var the code references plus V2-new flags (Q3, Q5).
+#
+# IMPORTANT: This file lives at infra/render.yaml. The V1 render.yaml at the
+# repo root is the LIVE production deploy spec — DO NOT MODIFY IT until
+# phase-5 cutover (per Q6 in-place deploy runbook). At cutover the orchestrator
+# replaces /render.yaml with this file's contents in a single commit.
+#
+# Region rationale: Supabase project is eu-west-1 (Ireland). Render's nearest
+# region is `frankfurt`; that keeps round-trip from Express to Postgres in
+# the same continent. London (`oregon` is US, `singapore` is APAC, `ohio`
+# is US, etc.) — frankfurt wins on latency to a Dublin-region Supabase.
+
+services:
+  - type: web
+    name: card-pricer
+    runtime: node
+    plan: starter
+    region: frankfurt
+    buildCommand: npm install && node --check server.js
+    startCommand: node server.js
+    healthCheckPath: /api/health
+
+    # Persistent disk (Q2). data/card-db.json + data/card-prices.json + logs/
+    # all survive redeploys. Mount path matches Render's documented default
+    # for the project workspace so existing `data/` writes land here without
+    # path edits in server code.
+    disk:
+      name: card-pricer-data
+      mountPath: /opt/render/project/data
+      sizeGB: 1
+
+    envVars:
+      # ---------------- Anthropic (REQUIRED) ----------------
+      - key: ANTHROPIC_API_KEY
+        sync: false
+
+      # ---------------- Supabase (REQUIRED) ----------------
+      # Without these, every /api/* that requires auth returns 503.
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+
+      # ---------------- Stripe (OPTIONAL but production needs them) ----------------
+      - key: STRIPE_SECRET_KEY
+        sync: false
+      - key: STRIPE_WEBHOOK_SECRET
+        sync: false
+      - key: STRIPE_PRICE_SOLO_MONTHLY
+        sync: false
+      - key: STRIPE_PRICE_SOLO_YEARLY
+        sync: false
+      - key: STRIPE_PRICE_VENDOR_MONTHLY
+        sync: false
+      - key: STRIPE_PRICE_VENDOR_YEARLY
+        sync: false
+      - key: STRIPE_PRICE_SHOP_MONTHLY
+        sync: false
+      - key: STRIPE_PRICE_SHOP_YEARLY
+        sync: false
+
+      # ---------------- Brevo (OPTIONAL — emails + newsletter) ----------------
+      - key: BREVO_API_KEY
+        sync: false
+      - key: BREVO_SENDER_EMAIL
+        sync: false
+      - key: BREVO_NEWSLETTER_LIST_ID
+        sync: false
+
+      # ---------------- eBay sold-comps (OPTIONAL) ----------------
+      - key: EBAY_APP_ID
+        sync: false
+      - key: EBAY_CERT_ID
+        sync: false
+
+      # ---------------- Third-party pricing APIs (OPTIONAL) ----------------
+      - key: JUSTTCG_API_KEY
+        sync: false
+      - key: RAPIDAPI_KEY
+        sync: false
+      - key: POKEMON_TCG_API_KEY
+        sync: false
+
+      # ---------------- Card DB source-of-truth (OPTIONAL) ----------------
+      - key: CARD_DB_SHEET_URL
+        sync: false
+
+      # ---------------- Single-tenant fallbacks (OPTIONAL) ----------------
+      - key: SHOP_NAME
+        sync: false
+      - key: SHOP_EMAIL
+        sync: false
+
+      # ---------------- Privacy / quote-leads ip hash (OPTIONAL) ----------------
+      - key: IP_HASH_SALT
+        sync: false
+
+      # ---------------- V2-NEW feature flags (Q3) ----------------
+      # OCR-first scan path; OFF by default, flip to true once telemetry
+      # confirms FP rate < OCR_FIRST_FP_THRESHOLD.
+      - key: OCR_FIRST_ENABLED
+        value: "false"
+      # Sessions cutover (F17). Reads prefer relational store when true.
+      # Stays false through the dual-write window; flipped near end of phase 4.
+      - key: READ_FROM_RELATIONAL
+        value: "false"
+
+      # ---------------- V2-NEW observability (Q5) ----------------
+      - key: SENTRY_DSN_SERVER
+        sync: false
+      - key: SENTRY_DSN_BROWSER
+        sync: false
+      - key: SENTRY_ENVIRONMENT
+        value: production
+      # Wired by the build pipeline; if blank the /api/version endpoint
+      # falls back to "unknown".
+      - key: GIT_SHA
+        sync: false
+      - key: LOG_LEVEL
+        value: info
+
+      # ---------------- Runtime (NON-SECRET) ----------------
+      - key: NODE_VERSION
+        value: 20.10.0
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: "3000"
+      - key: DEFAULT_BUY_PERCENTAGE
+        value: "60"
