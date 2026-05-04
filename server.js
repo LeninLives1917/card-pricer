@@ -2097,8 +2097,11 @@ app.get('/api/card-db-export', (req, res) => {
   res.send(csv);
 });
 
-// Manual rebuild endpoint — re-download from pokemontcg.io
-app.post('/api/card-db-rebuild', (req, res) => {
+// Manual rebuild endpoint — re-download from pokemontcg.io.
+// Admin-only: clears CARD_DB and triggers a ~5-min full re-pull, so an
+// unauthenticated abuser could DoS the pricing pipeline (during the pull,
+// every scan sees an empty CARD_DB).
+app.post('/api/card-db-rebuild', requireAuth, requireAdmin, (req, res) => {
   if (cardDbLoading) return res.json({ status: 'already loading', count: CARD_DB.size });
   CARD_DB.clear();
   cardDbReady = false;
@@ -2204,8 +2207,10 @@ async function importUnreliableSetsFromTCGGO() {
   unreliableImportDone = true;
 }
 
-// Manual trigger endpoint
-app.post('/api/card-db-import-unreliable', (req, res) => {
+// Manual trigger endpoint.
+// Admin-only: this burns RapidAPI quota across all unreliable sets and
+// must not be reachable anonymously.
+app.post('/api/card-db-import-unreliable', requireAuth, requireAdmin, (req, res) => {
   unreliableImportDone = false; // allow re-run
   importUnreliableSetsFromTCGGO();
   res.json({ status: 'import started', sets: [...POKEMONTCG_UNRELIABLE].filter(s => PKM_SET_NAMES[s]) });
@@ -2862,7 +2867,11 @@ app.post('/api/report-bad-id', express.json({ limit: '15mb' }), async (req, res)
 // User taps a wrong card name and types the correct one.
 // Overwrites the entry in the local DB with source 'manual' (highest trust).
 // Persists through restarts via the JSON file.
-app.post('/api/correct-card', express.json(), (req, res) => {
+// requireAuth (not requireAdmin) — corrections are written from the result
+// sheet by any logged-in vendor when they spot a wrong identification. The
+// auth gate exists so anonymous abusers can't globally rename cards in the
+// shared local DB; the user_id is logged below for attribution.
+app.post('/api/correct-card', requireAuth, express.json(), (req, res) => {
   try {
     const { set_code, card_number, correct_name } = req.body || {};
     if (!set_code || !card_number || !correct_name) {
@@ -2890,7 +2899,7 @@ app.post('/api/correct-card', express.json(), (req, res) => {
     cardDbCount = CARD_DB.size;
     saveCardDbToFile();
 
-    console.log(`[CORRECT] ${key}: "${existing.name || '?'}" → "${correct_name.trim()}" (manual override)`);
+    console.log(`[CORRECT] ${key}: "${existing.name || '?'}" → "${correct_name.trim()}" (manual override by ${req.user?.id || 'unknown'})`);
     res.json({ ok: true, key, oldName: existing.name || null, newName: correct_name.trim() });
   } catch (err) {
     console.error('[CORRECT] error:', err.message);
