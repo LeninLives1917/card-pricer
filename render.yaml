@@ -1,21 +1,13 @@
-# Card Pricer v2 — production deploy.
-# Cut over from v1 (server.js / public/index.html) on 2026-05-02.
-# v1 backup: tag v1-final at commit 80448c0; original yaml in commit f77d3a4.
 services:
   - type: web
     name: card-pricer
     runtime: node
     plan: free
-    rootDir: v2
-    buildCommand: pnpm install --frozen-lockfile && pnpm build
-    startCommand: node apps/web/build/index.js
-    healthCheckPath: /api/health
+    buildCommand: npm install && node --check server.js
+    startCommand: node server.js
     envVars:
       - key: NODE_VERSION
-        value: 20.10.0
-      - key: PNPM_VERSION
-        value: 9.7.0
-      # Carried over from v1 — already set on the existing service.
+        value: 20
       - key: ANTHROPIC_API_KEY
         sync: false
       - key: EBAY_APP_ID
@@ -26,31 +18,5 @@ services:
         sync: false
       - key: RAPIDAPI_KEY
         sync: false
-      - key: SUPABASE_URL
-        sync: false
-      - key: SUPABASE_SERVICE_ROLE_KEY
-        sync: false
-      # New for v2 — must be added in the Render dashboard before first boot.
-      - key: PUBLIC_SUPABASE_URL
-        sync: false
-      - key: PUBLIC_SUPABASE_ANON_KEY
-        sync: false
-      # Optional — features gracefully degrade if absent.
-      - key: POKEMON_TCG_API_KEY
-        sync: false
-      - key: BREVO_API_KEY
-        sync: false
-      - key: BREVO_SENDER_EMAIL
-        sync: false
-      - key: BREVO_NEWSLETTER_LIST_ID
-        sync: false
-      - key: STRIPE_SECRET_KEY
-        sync: false
-      - key: STRIPE_WEBHOOK_SECRET
-        sync: false
-      - key: SHOP_EMAIL
-        sync: false
-      - key: SHOP_NAME
-        sync: false
-      - key: IP_HASH_SALT
-        generateValue: true
+      - key: DEFAULT_BUY_PERCENTAGE
+        value: "60"
