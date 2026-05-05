@@ -121,8 +121,30 @@ services:
       # falls back to "unknown".
       - key: GIT_SHA
         sync: false
+      # Optional Prometheus scraper bearer token. When set + matching
+      # Authorization: Bearer <token>, /api/metrics scrapes without
+      # round-tripping Supabase auth. Unset → admin-JWT-only access.
+      - key: METRICS_TOKEN
+        sync: false
+      # Build timestamp for /api/version. Wired by the Render build step
+      # (e.g. `date -u +%Y-%m-%dT%H:%M:%SZ > .built_at`). null on prod
+      # if the build step doesn't set it — /api/version returns null.
+      - key: BUILT_AT
+        sync: false
       - key: LOG_LEVEL
         value: info
+
+      # ---------------- V2-NEW sealed pricing (S17) ----------------
+      # TCGPlayer Pro is a paid tier. When TCGPLAYER_PRO_API_KEY is unset
+      # AND TCGPLAYER_PRO_MOCK is not 'true', /api/v2/price-sealed returns
+      # 503 cleanly. Set TCGPLAYER_PRO_MOCK=true on staging to exercise
+      # the sealed pipeline without a real subscription.
+      - key: TCGPLAYER_PRO_API_KEY
+        sync: false
+      - key: TCGPLAYER_PRO_BASE_URL
+        value: https://api.tcgplayer.com/
+      - key: TCGPLAYER_PRO_MOCK
+        value: "false"
 
       # ---------------- Runtime (NON-SECRET) ----------------
       - key: NODE_VERSION
