@@ -46,6 +46,25 @@
       : null;
     console.log('[APP] Card Pricer V2 client loaded');
   </script>
+
+  <!--
+    Sentry browser SDK CDN bundle (per S14 hand-off, infra/observability/sentry-browser.js).
+    Pinned to 10.51.0 with SRI hash; bumping the version requires a new hash
+    (curl -sSL https://browser.sentry-cdn.com/<v>/bundle.tracing.min.js | openssl dgst -sha384 -binary | openssl base64 -A).
+    Vendor surface initSentryBrowser({ surface: 'vendor' }) is wired in main.js.
+  -->
+  <script src="https://browser.sentry-cdn.com/10.51.0/bundle.tracing.min.js"
+          integrity="sha384-PLfi4Yv8UxpzFBe4XEbS8M1qAx+z/qs3jf7AY1XQorhPeW9SM5VarsX3+Is0NPNf"
+          crossorigin="anonymous" defer></script>
+  <script>
+    // Sentry browser config. Empty DSN = Sentry no-ops cleanly. Set the DSN
+    // here (or substitute via Render build step) to enable browser error
+    // tracking. beforeSend filters in sentry-browser.js scrub auth headers,
+    // base64 image data, and customer emails (replaced with SHA-256 hash).
+    window.__SENTRY_DSN_BROWSER__ = '';
+    window.__SENTRY_ENVIRONMENT__ = 'production';
+    window.__GIT_SHA__ = '';
+  </script>
 </head>
 <body>
 

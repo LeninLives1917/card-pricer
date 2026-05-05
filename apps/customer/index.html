@@ -29,10 +29,21 @@
 
   <!--
     Sentry browser SDK CDN bundle (per S14 hand-off, infra/observability/sentry-browser.js).
-    TODO(S22): Replace VERSION + integrity hash at deploy time. Customer surface
-    initSentryBrowser({ surface: 'customer' }) is wired in main.js.
+    Pinned to 10.51.0 with SRI hash; bumping the version requires a new hash
+    (curl -sSL https://browser.sentry-cdn.com/<v>/bundle.tracing.min.js | openssl dgst -sha384 -binary | openssl base64 -A).
+    Customer surface initSentryBrowser({ surface: 'customer' }) is wired in main.js.
   -->
-  <!-- <script src="https://browser.sentry-cdn.com/8.55.0/bundle.tracing.min.js" integrity="sha384-TODO" crossorigin="anonymous" defer></script> -->
+  <script src="https://browser.sentry-cdn.com/10.51.0/bundle.tracing.min.js"
+          integrity="sha384-PLfi4Yv8UxpzFBe4XEbS8M1qAx+z/qs3jf7AY1XQorhPeW9SM5VarsX3+Is0NPNf"
+          crossorigin="anonymous" defer></script>
+  <script>
+    // Sentry browser config — populated by Render env vars at request time
+    // is the cleanest pattern, but for V2 we hardcode here. Empty string
+    // disables Sentry (initSentryBrowser no-ops). Set the DSN to enable.
+    window.__SENTRY_DSN_BROWSER__ = '';
+    window.__SENTRY_ENVIRONMENT__ = 'production';
+    window.__GIT_SHA__ = '';
+  </script>
 </head>
 <body>
   <div class="wrap">
