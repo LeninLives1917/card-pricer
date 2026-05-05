@@ -15,6 +15,7 @@
 
 import { postJson } from '../api-client.js';
 import { state, currentSession, saveAllSessions, getSetting } from '../state.js';
+import { parseTextEntryLines } from '../text-parse.js';
 import {
   initBulk, handleBulkFiles, removeBulkItem, clearBulkQueue,
   retryBulkFailed, startBulkProcess, bulkStatus,
@@ -163,21 +164,6 @@ function wireTextEntry() {
   });
 }
 
-function parseTextEntryLines(raw) {
-  return (raw || '').split('\n').map((line) => {
-    const trimmed = line.trim();
-    if (!trimmed) return null;
-    // Try "SET NUM" or "SET NUM Name" or just "NUM"
-    const m = trimmed.match(/^([A-Z0-9]{2,5})\s+([A-Z0-9/]+)\s*(.*)$/i);
-    if (m) {
-      return { set_code: m[1].toUpperCase(), card_number: m[2], name: m[3] || undefined };
-    }
-    const m2 = trimmed.match(/^([0-9/]+)\s*(.*)$/);
-    if (m2) return { card_number: m2[1], name: m2[2] || undefined };
-    return { name: trimmed };
-  }).filter(Boolean);
-}
-
 async function startTextEntry() {
   const ta = document.getElementById('textEntryArea');
   if (!ta) return;
@@ -194,8 +180,27 @@ async function startTextEntry() {
     if (label) label.textContent = `${i + 1} / ${lines.length}`;
     if (bar) bar.style.width = ((i + 1) / lines.length * 100) + '%';
     const row = lines[i];
-    const r = await postJson('/api/identify-manual', { game, ...row });
-    if (!r.ok || !r.body?.cards?.length) continue;
+
+    // Bare-name lines (parser pattern 5) can't hit /api/identify-manual —
+    // it requires card_number. Surface as an error row rather than dropping
+    // silently, so the user knows that line couldn't be priced.
+    if (!row.card_number) {
+      state.currentResults.push(makeErrorRow(row, 'Need set + number'));
+      continue;
+    }
+
+    const payload = {
+      game,
+      set_code: row.set_code,
+      card_number: row.card_number,
+      name: row.name,
+    };
+    const r = await postJson('/api/identify-manual', payload);
+    if (!r.ok || !r.body?.cards?.length) {
+      const msg = r.body?.error || (r.status ? `HTTP ${r.status}` : 'no match');
+      state.currentResults.push(makeErrorRow(row, msg));
+      continue;
+    }
     const card = r.body.cards[0];
     const priced = await postJson('/api/price', {
       card,
@@ -214,6 +219,20 @@ async function startTextEntry() {
   window.dispatchEvent(new CustomEvent('cp:log-changed'));
   window.dispatchEvent(new CustomEvent('cp:nav', { detail: { tab: 'results' } }));
   if (progress) progress.classList.add('hidden');
+}
+
+// Build a result-shaped row that signals "this line could not be priced".
+// results.js renders entry.error rows with a red tint instead of a price.
+function makeErrorRow(parsed, errMsg) {
+  return {
+    card: {
+      name: parsed.name || parsed.raw || 'Unknown',
+      set_code: parsed.set_code || '',
+      card_number: parsed.card_number || '',
+    },
+    error: errMsg || 'no match',
+    _parsed_line: parsed.raw,
+  };
 }
 
 // ============================================================
