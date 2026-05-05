@@ -22,7 +22,11 @@
 import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
-import { axios } from './_clients.js';
+import { axios, supabase } from './_clients.js';
+import {
+  bulkSaveCardPrices,
+  loadAllCardPrices,
+} from '../../db/price-snapshot/store.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -255,6 +259,11 @@ function loadCardDbFromFile() {
 }
 
 function savePriceDbToFile() {
+  // Dual-write: JSON file (V2 backup, deprecated per V2_ARCHITECTURE §4.2,
+  // dropped in a follow-up release) AND Postgres card_prices (primary).
+  // The file write happens synchronously; the Postgres bulk-upsert is
+  // fire-and-forget so a slow/unavailable DB doesn't block the in-memory
+  // refresh path.
   try {
     const dataDir = join(REPO_ROOT, 'data');
     if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
@@ -266,6 +275,39 @@ function savePriceDbToFile() {
   } catch (e) {
     console.error(`[PRICE-DB] Failed to save: ${e.message}`);
   }
+
+  // Postgres dual-write. Reconstruct rows from the Map values (which are
+  // camelCase per V1 shape) into the snake_case columns the table expects.
+  if (!supabase || CARD_PRICES.size === 0) return;
+  const rows = [];
+  for (const val of CARD_PRICES.values()) {
+    if (!val?.setId || !val?.number || !val?.name) continue;
+    rows.push({
+      set_id: val.setId,
+      number: String(val.number),
+      name: val.name,
+      set_name: val.setName || null,
+      set_code: val.setCode || null,
+      rarity: val.rarity || null,
+      image: val.image || null,
+      cardmarket_url: val.cardmarketUrl || null,
+      tcgplayer_url: val.tcgplayerUrl || null,
+      tcg: val.tcg || null,
+      cm: val.cm || null,
+      fetched_at: val.fetchedAt ? new Date(val.fetchedAt).toISOString() : new Date().toISOString(),
+    });
+  }
+  bulkSaveCardPrices(rows)
+    .then((res) => {
+      if (!res.ok) {
+        console.warn(`[PRICE-DB] Postgres dual-write completed with errors (${res.errors.length}): first=${res.errors[0]}`);
+      } else {
+        console.log(`[PRICE-DB] Postgres dual-write upserted ${res.inserted} rows`);
+      }
+    })
+    .catch((err) => {
+      console.warn('[PRICE-DB] Postgres dual-write threw:', err?.message || err);
+    });
 }
 
 function loadPriceDbFromFile() {
@@ -388,6 +430,12 @@ export async function downloadCardDatabase({ force = false } = {}) {
 }
 
 function processPageData(cards) {
+  // Buffer rows that map to card_prices Postgres columns. After populating
+  // the in-memory Map (the runtime hot path for arbitrage), fire-and-forget
+  // a bulk upsert. We never await it — admin.js reads the Map, not the
+  // table, so Postgres latency must not gate the in-memory population.
+  const priceRowsForPg = [];
+
   for (const c of cards) {
     const setId = c.set?.id || '';
     const num = c.number || '';
@@ -424,7 +472,32 @@ function processPageData(cards) {
         cm: c.cardmarket?.prices || null,
         fetchedAt: Date.now()
       });
+
+      priceRowsForPg.push({
+        set_id: setId,
+        number: c.number,
+        name: c.name,
+        set_name: c.set?.name || null,
+        set_code: (c.set?.ptcgoCode || setId).toUpperCase(),
+        rarity: c.rarity || null,
+        image: c.images?.small || c.images?.large || null,
+        cardmarket_url: c.cardmarket?.url || null,
+        tcgplayer_url: c.tcgplayer?.url || null,
+        tcg: c.tcgplayer?.prices || null,
+        cm: c.cardmarket?.prices || null,
+        fetched_at: new Date().toISOString(),
+      });
     }
+  }
+
+  // Fire-and-forget Postgres dual-write. bulkSaveCardPrices is failsafe —
+  // it returns { ok:true, inserted:0 } when supabase is null, and chunks
+  // 1000 rows per call internally. processPageData runs ~92 times during
+  // a fresh download (250 cards/page × ~92 pages).
+  if (priceRowsForPg.length > 0 && supabase) {
+    bulkSaveCardPrices(priceRowsForPg).catch((err) => {
+      console.warn(`[PRICE-DB] Postgres dual-write failed for page (${priceRowsForPg.length} rows):`, err?.message || err);
+    });
   }
 }
 
@@ -629,6 +702,32 @@ export async function importUnreliableSetsFromTCGGO() {
   unreliableImportDone = true;
 }
 
+/**
+ * Warm CARD_PRICES from the Postgres `card_prices` table (V2 primary).
+ * Failsafe: returns false on null client / empty / error so the caller can
+ * fall through to the file backup. See db/price-snapshot/store.js.
+ */
+async function loadPriceDbFromPostgres() {
+  if (!supabase) return false;
+  try {
+    const map = await loadAllCardPrices();
+    if (!map || map.size === 0) return false;
+    for (const [key, val] of map) CARD_PRICES.set(key, val);
+    // Best-effort fetched_at watermark — pick the newest entry's timestamp
+    // so /api/admin/refresh-status shows something sensible after a warm-up.
+    let newest = 0;
+    for (const v of CARD_PRICES.values()) {
+      if (v.fetchedAt && v.fetchedAt > newest) newest = v.fetchedAt;
+    }
+    if (newest > 0) _lastPriceRefreshAt = newest;
+    console.log(`[PRICE-DB] Loaded ${CARD_PRICES.size} priced cards from Postgres card_prices`);
+    return true;
+  } catch (e) {
+    console.warn('[PRICE-DB] Postgres warm-up failed:', e?.message || e);
+    return false;
+  }
+}
+
 export async function initCardDb() {
   const fromSheet = await loadCardDbFromSheet();
   if (!fromSheet) {
@@ -641,7 +740,18 @@ export async function initCardDb() {
   applyPokellectorCorrections();
   saveCardDbToFile();
 
-  if (CARD_PRICES.size === 0) loadPriceDbFromFile();
+  // Boot order for CARD_PRICES (V2 F16 / S10):
+  //   1. Postgres card_prices (primary) — survives Render free-tier sleep
+  //      and redeploys; populated by both processPageData() and
+  //      savePriceDbToFile() dual-writes.
+  //   2. JSON file (backup, deprecated — dropped in a follow-up release).
+  //   3. Otherwise rely on the pokemontcg.io download path that ran above
+  //      (downloadCardDatabase populates CARD_PRICES inline) or wait for an
+  //      admin-triggered refresh-prices.
+  if (CARD_PRICES.size === 0) {
+    const fromPg = await loadPriceDbFromPostgres();
+    if (!fromPg) loadPriceDbFromFile();
+  }
 }
 // Card DB initialisation is now EXPLICIT — apps/server/server.js calls
 // initCardDb() before app.listen. Removed the eager-import auto-boot
