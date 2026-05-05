@@ -1,5 +1,168 @@
-<!--
-  V2 placeholder — see docs/V2_ARCHITECTURE.md §1
-  Owner: A5 | Slice: S8
-  Purpose: shell only
--->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+  <meta name="theme-color" content="#1c1917" />
+  <title>Get a Quote for Your Cards — Board &amp; Brewed</title>
+  <meta name="description" content="Enter your trading card details and get an instant indicative cash or store-credit offer." />
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 56 56'%3E%3Crect width='56' height='56' rx='12' fill='%231c1917'/%3E%3Crect x='14' y='10' width='28' height='36' rx='4' fill='none' stroke='%23d97706' stroke-width='2'/%3E%3C/svg%3E" />
+
+  <!-- Editorial-terminal type system: Fraunces (display) + IBM Plex Sans (UI) + IBM Plex Mono (figures). Same as the vendor app — one product, one type system. -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" crossorigin />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,500;0,9..144,600;1,9..144,600&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" />
+
+  <!-- Tokens first, components second — load order matters. -->
+  <link rel="preload" as="style" href="styles/tokens.css" />
+  <link rel="stylesheet" href="styles/tokens.css" />
+  <link rel="stylesheet" href="styles/components.css" />
+</head>
+<body>
+  <div class="wrap">
+    <div class="brand">
+      <div class="brand-logo" aria-hidden="true">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 56 56" width="56" height="56">
+          <rect width="56" height="56" rx="12" fill="#1c1917"/>
+          <rect x="14" y="10" width="28" height="36" rx="4" fill="none" stroke="#d97706" stroke-width="2"/>
+        </svg>
+      </div>
+      <div>
+        <div class="brand-name">Board &amp; Brewed</div>
+        <div class="brand-tag">Card Buying Desk</div>
+      </div>
+    </div>
+
+    <h1>Get an <span class="accent">instant quote</span> on your cards</h1>
+    <p class="sub">Type the set code and card number from each card you'd like to sell or trade in. We'll price them against live market data and email you an offer.</p>
+
+    <!-- How-to panel with card diagram -->
+    <div class="panel">
+      <div class="how-to">
+        <div class="card-diagram">
+          <svg width="160" height="224" viewBox="0 0 160 224" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+            <rect x="2" y="2" width="156" height="220" rx="10" fill="#1a1a22" stroke="#44403c" stroke-width="2"/>
+            <rect x="14" y="42" width="132" height="88" rx="4" fill="#292524" stroke="#57534e" stroke-width="1"/>
+            <rect x="14" y="14" width="100" height="16" rx="3" fill="#44403c"/>
+            <text x="20" y="26" font-size="10" fill="#a8a29e" font-family="sans-serif">Bulbasaur</text>
+            <rect x="120" y="14" width="26" height="16" rx="3" fill="#44403c"/>
+            <text x="124" y="26" font-size="9" fill="#a8a29e" font-family="sans-serif">HP80</text>
+            <text x="80" y="92" text-anchor="middle" font-size="28" fill="#57534e">&#x1F5BC;</text>
+            <rect x="14" y="140" width="132" height="40" rx="3" fill="#292524" stroke="#57534e" stroke-width="0.5"/>
+            <rect x="20" y="148" width="80" height="6" rx="2" fill="#3a3a44"/>
+            <rect x="20" y="160" width="60" height="6" rx="2" fill="#3a3a44"/>
+            <rect x="20" y="172" width="90" height="4" rx="2" fill="#3a3a44" opacity="0.5"/>
+            <rect x="10" y="190" width="140" height="24" rx="4" fill="rgba(180,83,9,0.15)" stroke="#b45309" stroke-width="1.5" stroke-dasharray="4 2"/>
+            <text x="18" y="206" font-size="11" fill="#facc15" font-weight="bold" font-family="monospace">MEG 133/132</text>
+            <line x1="140" y1="206" x2="105" y2="206" stroke="#b45309" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+            <defs>
+              <marker id="arrowhead" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto">
+                <polygon points="0 0, 6 3, 0 6" fill="#b45309"/>
+              </marker>
+            </defs>
+            <text x="80" y="222" text-anchor="middle" font-size="8" fill="#b45309" font-family="sans-serif">LOOK HERE</text>
+          </svg>
+        </div>
+        <div class="how-to-text">
+          <h3>Where to find the info</h3>
+          <div class="step">
+            <div class="step-num">1</div>
+            <div class="step-text">Look at the <strong>bottom-left</strong> corner of the card. You'll see a code like <code>MEG 133/132</code> or <code>TWM 200/167</code>.</div>
+          </div>
+          <div class="step">
+            <div class="step-num">2</div>
+            <div class="step-text">The <strong>letters</strong> are the set code (e.g. <code>MEG</code>, <code>PFL</code>, <code>TWM</code>). The <strong>number before the /</strong> is the card number.</div>
+          </div>
+          <div class="step">
+            <div class="step-num">3</div>
+            <div class="step-text">Type one card per line below: <code>MEG 133</code>. You can ignore the part after the slash.</div>
+          </div>
+          <p style="margin-top:8px; font-size:12px; color:var(--paper-300);">For Magic cards, the set code is 3 letters at the bottom (e.g. <code>MKM</code>, <code>OTJ</code>).</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Input panel -->
+    <div class="panel" id="inputPanel">
+      <div class="entry-section">
+        <label for="gameSelect">Game</label>
+        <select id="gameSelect">
+          <option value="pokemon">Pokémon</option>
+          <option value="magic">Magic: The Gathering</option>
+          <option value="yugioh">Yu-Gi-Oh!</option>
+          <option value="lorcana">Lorcana</option>
+          <option value="onepiece">One Piece</option>
+          <option value="starwars">Star Wars Unlimited</option>
+          <option value="digimon">Digimon</option>
+          <option value="fleshandblood">Flesh and Blood</option>
+          <option value="dragonball">Dragon Ball Super</option>
+        </select>
+      </div>
+
+      <div class="entry-section">
+        <label for="cardInput">Your cards (one per line, up to 20)</label>
+        <textarea id="cardInput" placeholder="MEG 133&#10;PFL 94&#10;TWM 200&#10;POR 100&#10;PFL 102"></textarea>
+        <div class="format-hint">
+          Format: <code>SET NUMBER</code> — e.g. <code>MEG 133</code> or <code>TWM 200</code><br />
+          Don't know the set? Just enter the number: <code>133</code><br />
+          Optionally add the name: <code>MEG 133 Bulbasaur</code>
+        </div>
+      </div>
+
+      <div id="progressWrap" style="display:none;">
+        <div class="progress-wrap"><div class="progress-bar" id="progressBar"></div></div>
+        <div class="progress-label" id="progressLabel">0 / 0</div>
+      </div>
+
+      <div class="btn-row">
+        <button class="btn primary" id="startBtn" type="button">Get my quote</button>
+        <button class="btn secondary btn-clear" id="clearBtn" type="button">Clear</button>
+      </div>
+
+      <p class="note">Prices shown are indicative and assume Near Mint condition. Final offer depends on in-person condition check. Cash offer is 55% of market value, store credit is 70%. We price off Cardmarket (EU) and Scryfall live data.</p>
+    </div>
+
+    <!-- Results -->
+    <div class="panel results" id="resultsPanel">
+      <h2>Your quote</h2>
+
+      <div class="results-wrap locked" id="resultsWrap">
+        <div class="totals">
+          <div class="stat"><div class="stat-label">Market</div><div class="stat-value" id="totalMarket">&euro;0.00</div></div>
+          <div class="stat cash"><div class="stat-label">Cash offer</div><div class="stat-value" id="totalCash">&euro;0.00</div></div>
+          <div class="stat credit"><div class="stat-label">Store credit</div><div class="stat-value" id="totalCredit">&euro;0.00</div></div>
+        </div>
+        <div class="card-list" id="cardList"></div>
+
+        <!-- Gate overlay -->
+        <div class="gate" id="gate">
+          <div class="gate-inner">
+            <div class="gate-title">Enter your email to see your quote</div>
+            <p class="gate-sub">We'll reveal your prices here and email you a copy so you don't lose it. Bring the cards in to the shop for a firm offer.</p>
+            <div class="lead-form">
+              <input type="text" id="leadName" placeholder="Your name (optional)" autocomplete="name" />
+              <input type="email" id="leadEmail" placeholder="you@example.com" autocomplete="email" required />
+            </div>
+            <div class="checkbox-row">
+              <input type="checkbox" id="leadNewsletter" />
+              <label for="leadNewsletter">Keep me posted on new arrivals, tournaments &amp; card buying offers at Board &amp; Brewed.</label>
+            </div>
+            <button class="btn primary" id="leadSubmit" type="button">Unlock my quote</button>
+            <p class="gate-small">No spam. Unsubscribe anytime.</p>
+          </div>
+        </div>
+      </div>
+
+      <div id="leadSuccess" class="success-banner" style="display:none; margin-top:14px;">
+        Sent! Check your inbox for a copy of your quote.
+      </div>
+    </div>
+
+    <footer>
+      <p>Powered by live Cardmarket &amp; Scryfall pricing &middot; <a href="mailto:dave@boardandbrewed.ie">Contact us</a></p>
+    </footer>
+  </div>
+
+  <script type="module" src="modules/main.js"></script>
+</body>
+</html>
