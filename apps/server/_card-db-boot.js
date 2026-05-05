@@ -447,11 +447,16 @@ export function cacheCardResult(setId, cardNumber, cardData) {
 }
 
 // V1 server.js:1982-1986 — periodic save of dirty entries.
-setInterval(() => {
-  if (cardDbDirty && CARD_DB.size > 0) {
-    saveCardDbToFile();
-  }
-}, 5 * 60 * 1000);
+// Wrapped behind a start function so test imports don't leave an open
+// interval handle keeping Node alive. apps/server/server.js calls this
+// explicitly on boot, alongside initCardDb().
+export function startCardDbDirtySaveInterval() {
+  return setInterval(() => {
+    if (cardDbDirty && CARD_DB.size > 0) {
+      saveCardDbToFile();
+    }
+  }, 5 * 60 * 1000);
+}
 
 async function loadCardDbFromSheet() {
   const sheetUrl = process.env.CARD_DB_SHEET_URL;
@@ -638,5 +643,9 @@ export async function initCardDb() {
 
   if (CARD_PRICES.size === 0) loadPriceDbFromFile();
 }
-// Boot the DB on module load — same behaviour as V1 (server.js:2242).
-initCardDb();
+// Card DB initialisation is now EXPLICIT — apps/server/server.js calls
+// initCardDb() before app.listen. Removed the eager-import auto-boot
+// because pricing/adapters/pokemontcg.js imports lookupLocalDb from this
+// module, and tests that import the adapter were inadvertently kicking
+// off a 5-minute pokemontcg.io download. V1 root server.js keeps its
+// own auto-boot at line 2237 — this change only affects the V2 path.

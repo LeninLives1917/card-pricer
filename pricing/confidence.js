@@ -198,32 +198,61 @@ export const DOUBLE_CHECK_MODEL = 'claude-sonnet-4-6';
 export const OCR_FIRST_VALIDATE_MODEL = 'claude-sonnet-4-6';
 
 // =============================================================================
-// scoreCandidate weights — DEFERRED to slice S6.
+// scoreCandidate weights — hoisted in slice S6.
 // =============================================================================
 //
-// V1 server.js:3413 has scoreCandidate as a 90-line function with weights
-// inlined as +50 / +40 / +80 / +35 / -40 / -50 / -100 etc. Pulling those
-// into a config object here would either:
-//   (a) duplicate the function body (drift risk), or
-//   (b) require importing scoreCandidate's full set of helpers
-//       (extractPokemonSuffix, regMarkMatchesEra) which live in
-//       server.js and aren't yet extracted.
+// V1 server.js:3413 had scoreCandidate as a 90-line function with weights
+// inlined. S6 extracts scoreCandidate into pricing/adapters/pokemontcg.js as
+// a pure function of (card, isPromo, d, weights) and centralises the weights
+// here so a single regression (RG-08, RG-09, RG-29) catches drift.
 //
-// Both options expand S2's scope beyond "land the contract + constants".
-// The weights migrate cleanly when slice S6 (pricing engine extraction)
-// moves scoreCandidate into pricing/verify.js. At that point a
-// SCORE_WEIGHTS object lives here and scoreCandidate reads from it.
-//
-// TODO(S6): export const SCORE_WEIGHTS = {
-//   NAME_EXACT: 50, NAME_SUBSTRING: 20,
-//   HP_EXACT: 40, HP_NEAR: 20,
-//   NUMBER_EXACT: 80, NUMBER_SV_STRIPPED: 70,
-//   NUMBER_PROMO_MISMATCH: -40, NUMBER_MISMATCH: -10,
-//   ABILITY_PER_MATCH: 15,
-//   SET_TOTAL_EXACT: 50, SET_TOTAL_NEAR: 20,
-//   SET_TOTAL_DIFF_MEDIUM: -30, SET_TOTAL_DIFF_LARGE: -80,
-//   SET_CODE_MATCH: 25, SET_NAME_EXACT: 25, SET_NAME_FUZZY: 15,
-//   ATTACK_NAME_PER_MATCH: 15,
-//   SUFFIX_MATCH: 35, SUFFIX_MISMATCH: -50,
-//   REG_MARK_ERA_FAIL: -100,
-// };
+// Mutating any value here REQUIRES updating those fixture tests in lockstep.
+// The defaults below match V1 verbatim — no behaviour change in S6.
+
+/**
+ * scoreCandidate weights for the Pokemon adapter race-and-score loop.
+ * See pricing/adapters/pokemontcg.js → scoreCandidate for the consumer.
+ *
+ * Sign convention: positive weights are evidence FOR the candidate;
+ * negative weights are evidence AGAINST. The threshold pair
+ * RACE_THRESHOLD / MIN_ACCEPT_SCORE both interpret the cumulative sum.
+ */
+export const SCORE_WEIGHTS = Object.freeze({
+  // Name match
+  NAME_EXACT: 50,
+  NAME_SUBSTRING: 20,
+
+  // HP match
+  HP_EXACT: 40,
+  HP_NEAR: 20,                // |aiHp - dbHp| <= 10
+
+  // Card number — strongest signal
+  NUMBER_EXACT: 80,
+  NUMBER_SV_STRIPPED: 70,     // Hidden Fates SV-prefix stripped match
+  NUMBER_PROMO_MISMATCH: -40, // promo-shape numbers mismatch
+  NUMBER_MISMATCH: -10,       // any other number mismatch
+
+  // Abilities
+  ABILITY_PER_MATCH: 15,
+
+  // Set total (printed denominator)
+  SET_TOTAL_EXACT: 50,
+  SET_TOTAL_NEAR: 20,         // diff <= 2
+  SET_TOTAL_DIFF_MEDIUM: -30, // diff <= 10
+  SET_TOTAL_DIFF_LARGE: -80,  // diff > 10
+
+  // Set hint matches
+  SET_CODE_MATCH: 25,
+  SET_NAME_EXACT: 25,
+  SET_NAME_FUZZY: 15,
+
+  // Attack name overlap (separate from abilities; attacks weighted equally)
+  ATTACK_NAME_PER_MATCH: 15,
+
+  // Suffix (ex / GX / V / VMAX / VSTAR / EX / LV.X)
+  SUFFIX_MATCH: 35,
+  SUFFIX_MISMATCH: -50,
+
+  // Regulation mark vs era — hard reject signal
+  REG_MARK_ERA_FAIL: -100,
+});

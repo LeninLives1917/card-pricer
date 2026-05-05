@@ -65,8 +65,13 @@ async function refreshFxRate() {
     console.warn(`[FX] Refresh failed — keeping ${_usdToEur}: ${e.message}`);
   }
 }
-refreshFxRate();
-setInterval(refreshFxRate, 24 * 60 * 60 * 1000);
+// Wrapped behind a start function so test imports don't leave an open
+// interval handle keeping Node alive. The pricing/fx.js extraction will
+// supersede this — until then, apps/server/server.js calls it on boot.
+export function startLegacyFxRefreshInterval() {
+  refreshFxRate();
+  return setInterval(refreshFxRate, 24 * 60 * 60 * 1000);
+}
 
 // ============================================================
 // CARD_ID_SYSTEM_PROMPT (V1 server.js:896-1050)
