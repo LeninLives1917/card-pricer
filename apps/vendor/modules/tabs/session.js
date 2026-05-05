@@ -19,7 +19,7 @@ import {
   newSession, switchSession, deleteCurrentSession, renameCurrentSession,
 } from '../state.js';
 import { openResultSheet } from '../result-sheet.js';
-import { exportSessionPdf } from '../pdf-export.js';
+import { exportSessionPdf, showPdfOverlay } from '../pdf-export.js';
 
 let _filter = '';
 let _editMode = false;
@@ -385,14 +385,79 @@ function exportXlsx() {
 // Customer-facing PDF — renders a print-friendly sheet with images, market
 // price, and our cash/credit offers. Implementation lives in
 // modules/pdf-export.js so it stays self-contained.
+//
+// Before exporting, we top up any session entries that are missing the
+// official catalogue image (entry.reference_image / card.image_url /
+// card.reference_image) by re-firing /api/price for them in parallel.
+// The cascade strategy: option 3 (client refetch via /api/price) first; if
+// that still leaves rows imageless the operator falls back to option 2
+// (server-side harder fetch) in a follow-up. The Pokéball spinner from
+// pdf-export.js stays visible the whole time so the operator sees that
+// something is happening.
 async function exportPdfForCustomer() {
   const sess = currentSession();
   if (!sess) return;
-  await exportSessionPdf(sess, {
-    cashPct: state.cashPct,
-    creditPct: state.creditPct,
-    sellMarkup: parseFloat(getSetting('sellMarkup', '110')) || 110,
-  });
+  // Show the Pokéball spinner up front so it covers the (potentially
+  // slow) image top-up too. exportSessionPdf will reuse and tear down
+  // this overlay when the print dialog opens.
+  const overlay = showPdfOverlay();
+  try {
+    await topUpMissingImages(sess);
+  } catch (e) {
+    console.warn('[PDF] image top-up failed, exporting anyway:', e);
+  }
+  try {
+    await exportSessionPdf(sess, {
+      cashPct: state.cashPct,
+      creditPct: state.creditPct,
+      sellMarkup: parseFloat(getSetting('sellMarkup', '110')) || 110,
+    });
+  } finally {
+    overlay.hide();
+  }
+}
+
+async function topUpMissingImages(sess) {
+  if (!sess || !Array.isArray(sess.log)) return;
+  const missing = sess.log.filter(needsImage);
+  if (!missing.length) return;
+  console.log(`[PDF] re-fetching prices for ${missing.length} entr${missing.length === 1 ? 'y' : 'ies'} missing images`);
+  // Parallel — /api/price is idempotent and the server cache will absorb
+  // the load. Limit concurrency by chunking; 6 at a time is comfortable
+  // for Render Starter without bursting rate limits.
+  const CHUNK = 6;
+  for (let i = 0; i < missing.length; i += CHUNK) {
+    const slice = missing.slice(i, i + CHUNK);
+    await Promise.all(slice.map(async (entry) => {
+      if (!entry.card) return;
+      const r = await postJson('/api/price', {
+        card: entry.card,
+        buyPercentage: state.buyPercentage,
+      });
+      if (!r.ok || !r.body) return;
+      // Merge — preserve operator-set fields (custom_buy, status, notes,
+      // duplicate_count, ts) and only adopt the new pricing/image data.
+      const fresh = r.body;
+      if (fresh.reference_image && !entry.reference_image) {
+        entry.reference_image = fresh.reference_image;
+      }
+      if (fresh.cardmarket && (!entry.cardmarket || !entry.cardmarket.url)) {
+        entry.cardmarket = { ...fresh.cardmarket, ...(entry.cardmarket || {}) };
+        if (fresh.cardmarket.url && !entry.cardmarket.url) {
+          entry.cardmarket.url = fresh.cardmarket.url;
+        }
+      }
+      if (!entry.market_value && fresh.market_value) {
+        entry.market_value = fresh.market_value;
+      }
+    }));
+  }
+  saveAllSessions();
+}
+
+function needsImage(entry) {
+  const card = entry?.card || {};
+  return !entry?.reference_image && !card.image_url && !card.reference_image;
 }
 
 function exportCsvTcgPowerTools() {

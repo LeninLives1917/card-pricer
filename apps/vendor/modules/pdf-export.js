@@ -58,7 +58,10 @@ export async function exportSessionPdf(session, pricing, opts = {}) {
     alert('Nothing to export — this session is empty.');
     return;
   }
-  const overlay = showPokeballOverlay();
+  // Re-use the caller's overlay if they already showed one (covers the
+  // top-up step in session.js); otherwise show our own.
+  const ownOverlay = !document.getElementById('cp-pdf-overlay');
+  const overlay = ownOverlay ? showPokeballOverlay() : { hide: () => {} };
   try {
     return await _exportInner(session, pricing, opts);
   } catch (err) {
@@ -66,7 +69,19 @@ export async function exportSessionPdf(session, pricing, opts = {}) {
     alert('Could not generate PDF: ' + (err?.message || 'unknown error'));
   } finally {
     overlay.hide();
+    // Always clean up any overlay (own or borrowed) once export finishes.
+    const stray = document.getElementById('cp-pdf-overlay');
+    if (stray) stray.remove();
   }
+}
+
+// Public wrapper so callers can show the Pokéball spinner during work that
+// happens BEFORE exportSessionPdf (e.g. fetching missing card images).
+// Returns a handle with .hide() — though exportSessionPdf will tear down
+// any overlay it finds when it completes, so callers normally don't need
+// to hide it themselves.
+export function showPdfOverlay() {
+  return showPokeballOverlay();
 }
 
 // Spinning-Pokéball overlay shown while we compose the printable doc and
