@@ -15,7 +15,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { _test_internals } from '../../apps/vendor/modules/pdf-export.js';
-const { buildRow, renderPrintHtml, euro, round2 } = _test_internals;
+const { buildRow, renderPrintHtml, euro, round2, deriveCardmarketSearchUrl } = _test_internals;
 
 // ── buildRow ───────────────────────────────────────────────────────────────
 
@@ -205,13 +205,61 @@ test('buildRow uses cardmarket.url first, falls back to filtered/search/card.car
     cardmarket: { search_url: 'https://www.cardmarket.com/en/Pokemon/Products/Search?q=pikachu' },
   }, 50, 70).cardmarketUrl, 'https://www.cardmarket.com/en/Pokemon/Products/Search?q=pikachu');
 
-  // Last: manual-entry's card.cardmarket_url.
+  // card.cardmarket_url (manual-entry) wins over the derived fallback.
   assert.equal(buildRow({
     card: { cardmarket_url: 'https://www.cardmarket.com/en/Pokemon/Products/Pikachu' },
   }, 50, 70).cardmarketUrl, 'https://www.cardmarket.com/en/Pokemon/Products/Pikachu');
 
-  // Empty when nothing set.
+  // Last-resort: derived search URL when nothing else is available. Every
+  // row with a name MUST get a clickable link.
+  assert.match(
+    buildRow({ card: { name: 'Pikachu', game: 'pokemon', card_number: '172/132' } }, 50, 70).cardmarketUrl,
+    /^https:\/\/www\.cardmarket\.com\/en\/Pokemon\/Products\/Search\?searchString=Pikachu/,
+  );
+
+  // Empty only when even the name is missing.
   assert.equal(buildRow({ card: {} }, 50, 70).cardmarketUrl, '');
+});
+
+test('deriveCardmarketSearchUrl: pokemon -> /Pokemon/Products/Search, with numeric card #', () => {
+  assert.equal(
+    deriveCardmarketSearchUrl({ name: 'Pikachu', game: 'pokemon', card_number: '172/132' }),
+    'https://www.cardmarket.com/en/Pokemon/Products/Search?searchString=Pikachu%20172',
+  );
+});
+
+test('deriveCardmarketSearchUrl: magic -> /Magic/Products/Search', () => {
+  assert.equal(
+    deriveCardmarketSearchUrl({ name: 'Black Lotus', game: 'magic', card_number: '232' }),
+    'https://www.cardmarket.com/en/Magic/Products/Search?searchString=Black%20Lotus%20232',
+  );
+});
+
+test('deriveCardmarketSearchUrl: unknown game -> generic /en/Search', () => {
+  assert.equal(
+    deriveCardmarketSearchUrl({ name: 'Dragonsteel', game: 'lorcana' }),
+    'https://www.cardmarket.com/en/Search?searchString=Dragonsteel',
+  );
+});
+
+test('deriveCardmarketSearchUrl: leading zeros are stripped from card_number', () => {
+  assert.equal(
+    deriveCardmarketSearchUrl({ name: 'Wugtrio', game: 'pokemon', card_number: '004' }),
+    'https://www.cardmarket.com/en/Pokemon/Products/Search?searchString=Wugtrio%204',
+  );
+});
+
+test('deriveCardmarketSearchUrl: name-only when card_number missing', () => {
+  assert.equal(
+    deriveCardmarketSearchUrl({ name: 'Pikachu', game: 'pokemon' }),
+    'https://www.cardmarket.com/en/Pokemon/Products/Search?searchString=Pikachu',
+  );
+});
+
+test('deriveCardmarketSearchUrl: empty when name missing', () => {
+  assert.equal(deriveCardmarketSearchUrl({}), '');
+  assert.equal(deriveCardmarketSearchUrl(null), '');
+  assert.equal(deriveCardmarketSearchUrl({ name: '   ' }), '');
 });
 
 test('buildRow rejects non-http URLs (javascript:, data:, etc.)', () => {

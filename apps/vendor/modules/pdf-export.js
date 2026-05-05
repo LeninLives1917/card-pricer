@@ -197,11 +197,23 @@ function buildRow(entry, cashPct, creditPct) {
   const creditRaw = round2(market * (creditPct / 100));
   const qty = (entry.duplicate_count || 0) + 1;
   const image = entry.reference_image || card.image_url || card.reference_image || '';
-  // Cardmarket link priority: the priced entry's product URL (best — direct
-  // to the card page), then its filtered / search fallback, then the URL
-  // captured during manual identify. Only include http(s) links so we
-  // don't render `javascript:` or other schemes from a malformed entry.
-  const rawLink = cm.url || cm.filtered_url || cm.search_url || card.cardmarket_url || '';
+  // Cardmarket link priority:
+  //   1. cm.url               — direct product page (rapidapi_cm path)
+  //   2. cm.filtered_url      — filtered search (lang=en + condition)
+  //   3. cm.search_url        — name+number search
+  //   4. card.cardmarket_url  — manual-identify capture
+  //   5. derived search URL   — always-on fallback built from card name + set
+  //                              + game, so every row gets a clickable link
+  //                              even if /api/price never set the cardmarket
+  //                              fields (legacy / unpriced entries).
+  // Only http(s) URLs survive — never render javascript: or data: schemes
+  // from a malformed entry.
+  const rawLink =
+    (cm.url) ||
+    (cm.filtered_url) ||
+    (cm.search_url) ||
+    (card.cardmarket_url) ||
+    deriveCardmarketSearchUrl(card);
   const cardmarketUrl = /^https?:\/\//i.test(rawLink) ? rawLink : '';
   return {
     name: card.name || 'Unknown card',
@@ -222,6 +234,27 @@ function buildRow(entry, cashPct, creditPct) {
 
 function round2(n) {
   return Math.round(Number(n || 0) * 100) / 100;
+}
+
+// Build a Cardmarket search URL from card data. Mirrors
+// pricing/adapters/cardmarket-html.js#buildCardmarketUrl on the server so
+// the PDF can always produce a link even for entries that never went
+// through /api/price (legacy data, manual-identify-only rows, etc.).
+function deriveCardmarketSearchUrl(card) {
+  const name = (card?.name || '').trim();
+  if (!name) return '';
+  // Tighten the search by appending the numeric part of card_number when
+  // we have one — gets the customer to the right printing instead of a
+  // page of every Pikachu ever printed.
+  const num = String(card?.card_number || '').replace(/\/.*/, '').replace(/^0+/, '');
+  const term = num ? `${name} ${num}` : name;
+  const slug = (card?.game === 'pokemon') ? 'Pokemon'
+             : (card?.game === 'magic')   ? 'Magic'
+             : '';
+  const base = slug
+    ? `https://www.cardmarket.com/en/${slug}/Products/Search`
+    : `https://www.cardmarket.com/en/Search`;
+  return `${base}?searchString=${encodeURIComponent(term)}`;
 }
 
 function euro(n) {
@@ -597,6 +630,6 @@ function openPrintFrame(html) {
 // Pure-function escape hatches for regression tests
 // (tests/regression/pdf-export.spec.js). Not part of the public API — the
 // vendor app uses exportSessionPdf only.
-export const _test_internals = { buildRow, renderPrintHtml, euro, round2 };
+export const _test_internals = { buildRow, renderPrintHtml, euro, round2, deriveCardmarketSearchUrl };
 
 export default { exportSessionPdf };
