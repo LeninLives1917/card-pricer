@@ -284,6 +284,169 @@ router.get('/api/admin/refresh-status', requireAuth, requireAdmin, (req, res) =>
   });
 });
 
+// ----- /api/admin/analytics (V2 S13 / F8) -----
+//
+// Vendor analytics dashboard. Computes:
+//   - quotes_per_day      — daily quote-lead counts (sparkline source)
+//   - totals              — total quotes/leads, avg basket (market/cash/credit),
+//                           avg cards/quote
+//   - top_cards           — most-requested card singles, flattened from
+//                           quote_leads.cards_json arrays in JS (top-10)
+//   - conversion_pct      — % of quotes that produced an emailed lead. We
+//                           write a quote_leads row only when the user submits
+//                           the form, so this is ~100% in V2 today; the field
+//                           is kept for future "soft quote" rows that don't
+//                           include an email.
+//
+// Optional filters:
+//   ?shop_slug=brewed     — scope to a single shop (string match on shop_slug)
+//   ?shop_id=<uuid>       — scope to a single shop by id (preferred)
+//   ?window=7d|30d|90d    — default 30d
+//
+// Row scan capped at MAX_ROWS to keep response fast even when a busy
+// shop accumulates leads. Top-cards aggregation happens in JS because
+// jsonb_array_elements aggregation in supabase-js is awkward; the cap
+// keeps the JS pass O(n) bounded.
+const ANALYTICS_MAX_ROWS = 5000;
+
+export function parseAnalyticsWindow(raw) {
+  // Accept '7d' / '30d' / '90d'. Default 30d. Returns { days, label }.
+  const v = String(raw || '').trim().toLowerCase();
+  if (v === '7d') return { days: 7, label: '7d' };
+  if (v === '90d') return { days: 90, label: '90d' };
+  return { days: 30, label: '30d' };
+}
+
+export function aggregateTopCards(leads, limit = 10) {
+  // Flatten leads[*].cards_json arrays, group by (set_code, card_number, name),
+  // sum the count, average the market value. Returns rows sorted by count desc,
+  // then avg_market desc as a tiebreaker.
+  const acc = new Map();
+  for (const lead of leads || []) {
+    const cards = Array.isArray(lead?.cards_json) ? lead.cards_json : [];
+    for (const c of cards) {
+      if (!c) continue;
+      const setCode = String(c.set_code ?? c.setCode ?? '').toUpperCase();
+      const cardNumber = String(c.card_number ?? c.number ?? '').trim();
+      const name = String(c.name ?? '').trim();
+      const market = Number(c.market ?? c.market_value ?? c.price ?? 0) || 0;
+      // Group key: set+number when present (deduplicates spelling/casing of name);
+      // fall back to name-only so cards without set still aggregate sanely.
+      const key = (setCode || cardNumber)
+        ? `${setCode}|${cardNumber}|${name.toLowerCase()}`
+        : `name:${name.toLowerCase()}`;
+      const cur = acc.get(key) || { name, set_code: setCode, card_number: cardNumber, count: 0, total_market: 0, market_n: 0 };
+      cur.count += 1;
+      if (market > 0) { cur.total_market += market; cur.market_n += 1; }
+      // Prefer the most recently seen non-empty name so we don't end up with ''.
+      if (!cur.name && name) cur.name = name;
+      acc.set(key, cur);
+    }
+  }
+  const rows = Array.from(acc.values()).map((r) => ({
+    name: r.name || '—',
+    set_code: r.set_code || '',
+    card_number: r.card_number || '',
+    count: r.count,
+    avg_market: r.market_n > 0 ? +(r.total_market / r.market_n).toFixed(2) : 0
+  }));
+  rows.sort((a, b) => (b.count - a.count) || (b.avg_market - a.avg_market));
+  return rows.slice(0, Math.max(1, limit | 0));
+}
+
+export function computeAnalyticsTotals(leads) {
+  // Returns { quotes, leads, avg_basket_market, avg_basket_cash,
+  // avg_basket_credit, avg_card_count, conversion_pct }.
+  const n = leads.length;
+  if (!n) {
+    return {
+      quotes: 0, leads: 0,
+      avg_basket_market: 0, avg_basket_cash: 0, avg_basket_credit: 0,
+      avg_card_count: 0, conversion_pct: 0
+    };
+  }
+  let mSum = 0, cSum = 0, crSum = 0, ccSum = 0;
+  let mN = 0, cN = 0, crN = 0, ccN = 0;
+  let withEmail = 0;
+  for (const l of leads) {
+    if (Number.isFinite(+l.total_market)) { mSum += +l.total_market; mN++; }
+    if (Number.isFinite(+l.total_cash))   { cSum += +l.total_cash;   cN++; }
+    if (Number.isFinite(+l.total_credit)) { crSum += +l.total_credit; crN++; }
+    if (Number.isFinite(+l.card_count))   { ccSum += +l.card_count;   ccN++; }
+    if (l.email) withEmail++;
+  }
+  const avg = (sum, count) => count > 0 ? +(sum / count).toFixed(2) : 0;
+  return {
+    quotes: n,
+    leads: withEmail,
+    avg_basket_market: avg(mSum, mN),
+    avg_basket_cash: avg(cSum, cN),
+    avg_basket_credit: avg(crSum, crN),
+    avg_card_count: avg(ccSum, ccN),
+    conversion_pct: n > 0 ? Math.round((withEmail / n) * 100) : 0
+  };
+}
+
+export function bucketQuotesPerDay(leads, days) {
+  // Returns [{date:'YYYY-MM-DD', count:n}] for every day in the window,
+  // including zero-count days so the sparkline renders a continuous axis.
+  const buckets = new Map();
+  const today = new Date();
+  // Walk from oldest → newest, UTC dates.
+  for (let i = days - 1; i >= 0; i--) {
+    const d = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate() - i));
+    buckets.set(d.toISOString().slice(0, 10), 0);
+  }
+  for (const l of leads || []) {
+    const ts = l?.created_at;
+    if (!ts) continue;
+    const day = String(ts).slice(0, 10);
+    if (buckets.has(day)) buckets.set(day, buckets.get(day) + 1);
+  }
+  return Array.from(buckets.entries()).map(([date, count]) => ({ date, count }));
+}
+
+router.get('/api/admin/analytics', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const win = parseAnalyticsWindow(req.query.window);
+    const since = new Date(Date.now() - win.days * 24 * 60 * 60 * 1000).toISOString();
+
+    let q = supabase
+      .from('quote_leads')
+      .select('id, shop_id, shop_slug, email, card_count, total_market, total_cash, total_credit, cards_json, created_at')
+      .gte('created_at', since)
+      .order('created_at', { ascending: false })
+      .limit(ANALYTICS_MAX_ROWS);
+
+    if (req.query.shop_id)   q = q.eq('shop_id', req.query.shop_id);
+    if (req.query.shop_slug) q = q.eq('shop_slug', req.query.shop_slug);
+
+    const { data: leads, error } = await q;
+    if (error) throw error;
+
+    const rows = leads || [];
+    const totals = computeAnalyticsTotals(rows);
+    const top_cards = aggregateTopCards(rows, 10);
+    const quotes_per_day = bucketQuotesPerDay(rows, win.days);
+
+    res.json({
+      window: win.label,
+      since,
+      shop_id: req.query.shop_id || null,
+      shop_slug: req.query.shop_slug || null,
+      quotes_per_day,
+      totals,
+      top_cards,
+      conversion_pct: totals.conversion_pct,
+      row_cap: ANALYTICS_MAX_ROWS,
+      truncated: rows.length >= ANALYTICS_MAX_ROWS
+    });
+  } catch (e) {
+    console.error('[ADMIN] analytics failed:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ----- /api/metrics -----
 //
 // Prometheus exposition format. Auth model:

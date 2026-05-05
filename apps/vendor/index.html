@@ -404,6 +404,76 @@
         <div id="adminPlanBreakdown" style="display:flex; flex-direction:column; gap:var(--p-1);"></div>
       </div>
 
+      <!-- ANALYTICS (S13 / F8) — quotes/day sparkline + stat tiles + top cards. -->
+      <div class="setting-group" id="adminAnalytics">
+        <h3>Analytics</h3>
+        <div class="analytics-window-row">
+          <button class="btn ghost" data-analytics-window="7d">7d</button>
+          <button class="btn primary" data-analytics-window="30d">30d</button>
+          <button class="btn ghost" data-analytics-window="90d">90d</button>
+          <span id="adminAnalyticsStatus" class="figure" style="font-size:11px; color:var(--paper-300); margin-left:auto; align-self:center;">&mdash;</span>
+        </div>
+
+        <div class="label">Quotes per day</div>
+        <div id="adminAnalyticsSparkline" style="margin-bottom:var(--p-3);">
+          <div class="skeleton" style="height:80px;"></div>
+        </div>
+
+        <div class="analytics-stat-grid" style="margin-bottom:var(--p-3);">
+          <div class="surface">
+            <div class="label">Total quotes</div>
+            <div id="analyticsQuotes" class="figure" style="font-size:22px; margin-top:6px;">&mdash;</div>
+          </div>
+          <div class="surface">
+            <div class="label">Leads emailed</div>
+            <div id="analyticsLeads" class="figure" style="font-size:22px; margin-top:6px;">&mdash;</div>
+          </div>
+          <div class="surface">
+            <div class="label">Conversion</div>
+            <div id="analyticsConversion" class="figure" style="font-size:22px; color:var(--up); margin-top:6px;">&mdash;</div>
+          </div>
+          <div class="surface">
+            <div class="label">Avg cards / quote</div>
+            <div id="analyticsAvgCardCount" class="figure" style="font-size:22px; margin-top:6px;">&mdash;</div>
+          </div>
+          <div class="surface">
+            <div class="label">Avg basket (market)</div>
+            <div id="analyticsAvgMarket" class="figure" style="font-size:18px; margin-top:6px;">&mdash;</div>
+          </div>
+          <div class="surface">
+            <div class="label">Avg basket (cash)</div>
+            <div id="analyticsAvgCash" class="figure" style="font-size:18px; color:var(--accent-soft); margin-top:6px;">&mdash;</div>
+          </div>
+          <div class="surface">
+            <div class="label">Avg basket (credit)</div>
+            <div id="analyticsAvgCredit" class="figure" style="font-size:18px; color:var(--accent-soft); margin-top:6px;">&mdash;</div>
+          </div>
+          <div class="surface" style="display:flex; align-items:center; justify-content:center; color:var(--paper-300); font-size:11px;">
+            (more soon)
+          </div>
+        </div>
+
+        <div class="label" style="margin-top:var(--p-2);">Top cards quoted</div>
+        <div style="overflow-x:auto;">
+          <table class="top-cards-table">
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>Name</th>
+                <th>Set</th>
+                <th>Quoted</th>
+                <th>Avg market</th>
+              </tr>
+            </thead>
+            <tbody id="adminAnalyticsTopCardsBody">
+              <tr><td colspan="5"><div class="skeleton skel-line"></div></td></tr>
+              <tr><td colspan="5"><div class="skeleton skel-line"></div></td></tr>
+              <tr><td colspan="5"><div class="skeleton skel-line"></div></td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
       <div class="setting-group">
         <h3>API health</h3>
         <div id="apiStatus"><div class="setting-row"><span class="setting-label">Checking&hellip;</span></div></div>

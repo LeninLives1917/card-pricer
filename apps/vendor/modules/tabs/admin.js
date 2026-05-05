@@ -13,6 +13,8 @@ let _arbLastResults = [];
 let _arbLastDirection = 'us_to_eu';
 let _arbPoll = null;
 
+let _analyticsWindow = '30d';
+
 export function init() {
   // First-time render only when the tab is shown — saves a request roundtrip
   // until the operator actually opens it.
@@ -20,13 +22,14 @@ export function init() {
     if (ev.detail?.tab === 'admin') firstRender();
   });
   wireArbitrage();
+  wireAnalytics();
 }
 
 let _firstRendered = false;
 async function firstRender() {
   if (_firstRendered) return;
   _firstRendered = true;
-  await Promise.all([loadOverview(), loadUsers(), loadHealth()]);
+  await Promise.all([loadOverview(), loadUsers(), loadHealth(), loadAnalytics()]);
 }
 
 async function loadOverview() {
@@ -296,6 +299,123 @@ async function refreshArbitragePrices() {
       setArbStatus(`Refresh complete: ${(s.cardsPriced || 0).toLocaleString()} priced · USD→EUR ${(s.rate || 0).toFixed(4)}${ageMin == null ? '' : ' · ' + (ageMin < 1 ? 'just now' : ageMin + ' min ago')}.`, 'var(--up)');
     }
   }, 5000);
+}
+
+// ============================================================
+// Analytics (V2 S13 / F8)
+// ============================================================
+//
+// Renders quotes/day sparkline + stat tiles + top-cards table.
+// All numbers use .figure (Plex Mono + tabular-nums). Sparkline is
+// inline SVG — DESIGN_BRIEF bans chart libraries.
+
+function wireAnalytics() {
+  document.querySelectorAll('[data-analytics-window]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const win = btn.getAttribute('data-analytics-window') || '30d';
+      if (win === _analyticsWindow) return;
+      _analyticsWindow = win;
+      updateAnalyticsWindowButtons();
+      loadAnalytics();
+    });
+  });
+  updateAnalyticsWindowButtons();
+}
+
+function updateAnalyticsWindowButtons() {
+  document.querySelectorAll('[data-analytics-window]').forEach((btn) => {
+    const win = btn.getAttribute('data-analytics-window');
+    btn.classList.toggle('primary', win === _analyticsWindow);
+    btn.classList.toggle('ghost', win !== _analyticsWindow);
+  });
+}
+
+async function loadAnalytics() {
+  const root = document.getElementById('adminAnalytics');
+  if (!root) return;
+  const status = document.getElementById('adminAnalyticsStatus');
+  if (status) status.textContent = 'Loading…';
+  const r = await getJson(`/api/admin/analytics?window=${encodeURIComponent(_analyticsWindow)}`);
+  if (!r.ok) {
+    if (status) {
+      status.textContent = r.error || ('Analytics failed (' + r.status + ')');
+      status.style.color = 'var(--down)';
+    }
+    return;
+  }
+  const data = r.body || {};
+  if (status) {
+    status.textContent = `${data.window || _analyticsWindow} · ${(data.totals?.quotes || 0).toLocaleString()} quotes${data.truncated ? ' (capped at ' + (data.row_cap || 5000) + ')' : ''}`;
+    status.style.color = 'var(--paper-300)';
+  }
+  renderAnalyticsSparkline(data.quotes_per_day || []);
+  renderAnalyticsTotals(data.totals || {}, data.conversion_pct ?? 0);
+  renderAnalyticsTopCards(data.top_cards || []);
+}
+
+function renderAnalyticsSparkline(points) {
+  const wrap = document.getElementById('adminAnalyticsSparkline');
+  if (!wrap) return;
+  if (!points.length) {
+    wrap.innerHTML = '<div class="empty-state" style="padding:var(--p-3); font-size:12px;">No quotes in this window.</div>';
+    return;
+  }
+  const W = 600, H = 80, padX = 4, padY = 6;
+  const max = Math.max(1, ...points.map((p) => p.count));
+  const xStep = (W - padX * 2) / Math.max(1, points.length - 1);
+  const yScale = (v) => H - padY - ((v / max) * (H - padY * 2));
+  const xAt = (i) => padX + i * xStep;
+  const linePoints = points.map((p, i) => `${xAt(i).toFixed(1)},${yScale(p.count).toFixed(1)}`).join(' ');
+  // 4 horizontal hairline gridlines (0, 1/3 max, 2/3 max, max).
+  const gridY = [0, max / 3, (2 * max) / 3, max].map((v) => yScale(v));
+  const gridLines = gridY.map((y) =>
+    `<line class="sparkline-grid" x1="${padX}" x2="${W - padX}" y1="${y.toFixed(1)}" y2="${y.toFixed(1)}" />`
+  ).join('');
+  // Inline tooltip dots — one circle per point with a <title> for hover.
+  const dots = points.map((p, i) =>
+    `<circle cx="${xAt(i).toFixed(1)}" cy="${yScale(p.count).toFixed(1)}" r="2" fill="var(--accent)"><title>${escapeHtml(p.date)} · ${p.count}</title></circle>`
+  ).join('');
+  const first = points[0]?.date || '';
+  const last  = points[points.length - 1]?.date || '';
+  wrap.innerHTML = `
+    <svg class="sparkline" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img" aria-label="Quotes per day">
+      ${gridLines}
+      <polyline class="sparkline-line" points="${linePoints}" />
+      ${dots}
+    </svg>
+    <div class="sparkline-axis figure">
+      <span>${escapeHtml(first)}</span>
+      <span>peak ${max}</span>
+      <span>${escapeHtml(last)}</span>
+    </div>`;
+}
+
+function renderAnalyticsTotals(t, conversionPct) {
+  const set = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
+  set('analyticsQuotes', String(t.quotes || 0));
+  set('analyticsLeads', String(t.leads || 0));
+  set('analyticsAvgMarket', '€' + (t.avg_basket_market || 0).toFixed(2));
+  set('analyticsAvgCash',   '€' + (t.avg_basket_cash   || 0).toFixed(2));
+  set('analyticsAvgCredit', '€' + (t.avg_basket_credit || 0).toFixed(2));
+  set('analyticsAvgCardCount', (t.avg_card_count || 0).toFixed(1));
+  set('analyticsConversion', (conversionPct || 0) + '%');
+}
+
+function renderAnalyticsTopCards(cards) {
+  const tbody = document.getElementById('adminAnalyticsTopCardsBody');
+  if (!tbody) return;
+  if (!cards.length) {
+    tbody.innerHTML = '<tr><td colspan="5" style="text-align:center; color:var(--paper-300);">No cards quoted yet.</td></tr>';
+    return;
+  }
+  tbody.innerHTML = cards.map((c, i) => `
+    <tr>
+      <td class="num">${i + 1}</td>
+      <td>${escapeHtml(c.name || '—')}</td>
+      <td><span class="data-badge">${escapeHtml((c.set_code || '').toUpperCase())}${c.card_number ? ' · #' + escapeHtml(c.card_number) : ''}</span></td>
+      <td class="num">${c.count || 0}</td>
+      <td class="num">€${(c.avg_market || 0).toFixed(2)}</td>
+    </tr>`).join('');
 }
 
 function escapeHtml(s) {

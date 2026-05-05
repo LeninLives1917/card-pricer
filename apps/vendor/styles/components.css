@@ -870,3 +870,79 @@ table tbody td.num {
 
 .usage-bar-fill.warn { background: var(--rare); }
 .usage-bar-fill.over { background: var(--down); }
+
+/* ============================================================
+   ANALYTICS — sparkline + top-cards table (S13 / F8)
+   ============================================================
+   Inline SVG sparkline (no chart library, per DESIGN_BRIEF §"Charts").
+   Hairline grid + accent line + small dots with <title> tooltips. */
+
+.sparkline {
+  display: block;
+  width: 100%;
+  height: 80px;
+  background: var(--ink-200);
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-2);
+  padding: var(--p-1);
+}
+
+.sparkline-line {
+  stroke: var(--accent);
+  stroke-width: 1.5;
+  fill: none;
+  vector-effect: non-scaling-stroke;
+}
+
+.sparkline-grid {
+  stroke: var(--hairline);
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+
+.sparkline-axis {
+  display: flex;
+  justify-content: space-between;
+  font-size: 10px;
+  color: var(--paper-300);
+  margin-top: var(--p-1);
+  padding: 0 var(--p-1);
+}
+
+/* Top-cards table — inherits global table styles (hairline rows, no zebra,
+   tabular-nums on .num cells). Adds a fixed first column for rank so the
+   numbers align cleanly even on narrow screens. */
+.top-cards-table th:first-child,
+.top-cards-table td:first-child {
+  width: 32px;
+  color: var(--paper-300);
+}
+
+.top-cards-table th:nth-child(4),
+.top-cards-table th:nth-child(5),
+.top-cards-table td:nth-child(4),
+.top-cards-table td:nth-child(5) {
+  text-align: right;
+  font-family: var(--ff-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Stat tile grid — reused for analytics totals. Dense 2-up on mobile, 4-up
+   on wider screens. Inherits .surface for the card frame. */
+.analytics-stat-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: var(--p-2);
+}
+
+@media (min-width: 720px) {
+  .analytics-stat-grid {
+    grid-template-columns: repeat(4, 1fr);
+  }
+}
+
+.analytics-window-row {
+  display: flex;
+  gap: var(--p-1);
+  margin-bottom: var(--p-3);
+}
