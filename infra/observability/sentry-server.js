@@ -1,10 +1,24 @@
 // infra/observability/sentry-server.js
-// Owner: A8 | Slice: S4 (skeleton) → S14 (wired by A1 in server bootstrap)
+// Owner: A8 | Slice: S14 (final)
 //
 // Sentry Node SDK init wrapper per Q5 in docs/V2_ARCHITECTURE.md.
 //
-// Per CARD_PRICER_V2_PROMPT.md and the audit's privacy posture, beforeSend
-// MUST scrub:
+// IMPORTANT — Sentry Node v10 API change:
+// In Sentry v8+ the legacy Sentry.Handlers.{requestHandler,tracingHandler,errorHandler}
+// are gone. v10 uses OpenTelemetry under the hood — request + tracing
+// instrumentation is automatic when initSentry() is called BEFORE express()
+// is constructed. Express integration is registered automatically.
+//
+// We expose `requestHandler`, `tracingHandler`, `errorHandler` Express
+// middleware factories so apps/server/index.js stays declarative. Under
+// the hood:
+//   - requestHandler / tracingHandler are NO-OP pass-throughs (kept for
+//     wiring symmetry; v10 hooks via OTel).
+//   - errorHandler delegates to Sentry.expressErrorHandler() — which
+//     captures unhandled errors and forwards to Sentry, then `next(err)`s
+//     to the existing application errorHandler sink.
+//
+// beforeSend MUST scrub:
 //   1. event.request.headers.authorization
 //   2. event.request.headers.cookie
 //   3. any breadcrumb data field that looks like a base64 image
@@ -15,25 +29,24 @@
 //      body almost always contains a base64 card image)
 //
 // USAGE (apps/server/index.js):
-//     import { initSentry } from '../infra/observability/sentry-server.js';
+//     import { initSentry, requestHandler, tracingHandler, errorHandler as sentryError }
+//       from '../infra/observability/sentry-server.js';
 //     initSentry({
 //       dsn: process.env.SENTRY_DSN_SERVER,
 //       environment: process.env.SENTRY_ENVIRONMENT || 'production',
 //       release: process.env.GIT_SHA || 'unknown',
 //     });
+//     // BEFORE express() is built, ideally at the top of the entrypoint.
 //     // …later, after express() is built…
-//     app.use(Sentry.Handlers.requestHandler());
-//     app.use(Sentry.Handlers.tracingHandler());
+//     app.use(requestHandler());
+//     app.use(tracingHandler());
 //     // …after all routes…
-//     app.use(Sentry.Handlers.errorHandler());
-//
-// NOTE FOR S5 OWNER (A1): @sentry/node is NOT yet declared in
-// package.json. Add it when wiring this into the server bootstrap:
-//     npm install @sentry/node
-// Until then, importing this module will throw at module-load time.
+//     app.use(sentryError());
 
 import * as Sentry from '@sentry/node';
 import { createHash } from 'node:crypto';
+
+let initialised = false;
 
 // Hash an email so we keep per-user grouping in Sentry without storing
 // the actual address. Salted with a build-time constant so dumps are
@@ -47,7 +60,6 @@ function hashEmail(email) {
 function scrubHeaders(headers) {
   if (!headers || typeof headers !== 'object') return headers;
   const cleaned = { ...headers };
-  // Header keys can arrive case-mixed depending on the framework.
   for (const key of Object.keys(cleaned)) {
     const lower = key.toLowerCase();
     if (lower === 'authorization' || lower === 'cookie' || lower === 'set-cookie') {
@@ -86,8 +98,8 @@ function isIdentifyBreadcrumb(breadcrumb) {
  */
 export function initSentry({ dsn, environment, release } = {}) {
   if (!dsn) {
-    // Cleanly no-op so dev/test doesn't ship phantom events. Caller
-    // logs this fact via getLogger if it wants visibility.
+    // Cleanly no-op so dev/test doesn't ship phantom events.
+    initialised = false;
     return false;
   }
 
@@ -95,12 +107,10 @@ export function initSentry({ dsn, environment, release } = {}) {
     dsn,
     environment: environment || process.env.SENTRY_ENVIRONMENT || 'production',
     release: release || process.env.GIT_SHA || 'unknown',
-    // Sample at 10% to stay under the free-tier quota; bump to 100% if
-    // a regression hunt is in flight (set via SENTRY_TRACES_SAMPLE_RATE
-    // override here in a follow-up if needed).
-    tracesSampleRate: 0.1,
-    // Profile only when sampled traces are sampled.
+    // 10% trace sample to stay under the free-tier quota.
+    tracesSampleRate: Number(process.env.SENTRY_TRACES_SAMPLE_RATE) || 0.1,
     profilesSampleRate: 0.0,
+    // v10 enables OTel integrations automatically; we keep the default set.
 
     beforeSend(event /*, hint */) {
       // (1) + (2): scrub auth + cookie headers
@@ -108,8 +118,7 @@ export function initSentry({ dsn, environment, release } = {}) {
         event.request.headers = scrubHeaders(event.request.headers);
       }
 
-      // (5): drop request body for any /api/identify event entirely;
-      // it is almost certainly a base64 card image.
+      // (5): drop request body for any /api/identify event entirely
       if (event.request?.url && event.request.url.includes('/api/identify')) {
         if (event.request.data) {
           event.request.data = '[REDACTED identify request body]';
@@ -131,8 +140,6 @@ export function initSentry({ dsn, environment, release } = {}) {
             next.data = scrubBreadcrumbData(next.data);
           }
           if (isIdentifyBreadcrumb(next)) {
-            // For identify breadcrumbs, drop the body but keep the URL
-            // + status so the breadcrumb stays diagnostic.
             if (next.data) {
               next.data = {
                 ...next.data,
@@ -141,7 +148,7 @@ export function initSentry({ dsn, environment, release } = {}) {
               };
             }
             if (next.message && next.message.length > 200) {
-              next.message = next.message.slice(0, 100) + '…[REDACTED]';
+              next.message = next.message.slice(0, 100) + '...[REDACTED]';
             }
           }
           return next;
@@ -153,8 +160,6 @@ export function initSentry({ dsn, environment, release } = {}) {
 
     beforeBreadcrumb(breadcrumb /*, hint */) {
       if (!breadcrumb) return breadcrumb;
-      // Prophylactic strip on the breadcrumb data BEFORE it is buffered
-      // into the event, so we don't even hold an in-process base64 blob.
       if (breadcrumb.data) {
         breadcrumb.data = scrubBreadcrumbData(breadcrumb.data);
       }
@@ -165,7 +170,51 @@ export function initSentry({ dsn, environment, release } = {}) {
     },
   });
 
+  initialised = true;
   return true;
+}
+
+/**
+ * Express request handler. v10 has no explicit request handler — OTel
+ * instrumentation hooks the Express integration automatically. We return
+ * a pass-through middleware so the wiring in apps/server/index.js stays
+ * symmetrical with the documented architecture.
+ */
+export function requestHandler() {
+  return function sentryRequestHandler(_req, _res, next) {
+    next();
+  };
+}
+
+/**
+ * Express tracing handler. Same rationale as requestHandler — v10 traces
+ * via OTel automatically once initSentry() runs.
+ */
+export function tracingHandler() {
+  return function sentryTracingHandler(_req, _res, next) {
+    next();
+  };
+}
+
+/**
+ * Express error handler. Delegates to Sentry.expressErrorHandler() (v10)
+ * if Sentry is initialised; otherwise a pass-through.
+ *
+ * IMPORTANT: this middleware reports the error to Sentry then forwards
+ * with next(err) so the application's terminal errorHandler (the one
+ * that returns the JSON 500 response) still runs.
+ */
+export function errorHandler() {
+  if (!initialised) {
+    return function sentryErrorHandlerNoOp(err, _req, _res, next) {
+      next(err);
+    };
+  }
+  return Sentry.expressErrorHandler();
+}
+
+export function isInitialised() {
+  return initialised;
 }
 
 // Re-export Sentry so callers don't need a second import.

@@ -23,6 +23,7 @@ import {
   downloadCardDatabase,
 } from '../_card-db-boot.js';
 import { getUsdToEur } from '../../../pricing/fx.js';
+import { register as metricsRegister } from '../../../infra/observability/metrics.js';
 
 const router = express.Router();
 
@@ -281,6 +282,48 @@ router.get('/api/admin/refresh-status', requireAuth, requireAdmin, (req, res) =>
     lastRefreshAt: getLastPriceRefreshAt() || null,
     rate: getUsdToEur()
   });
+});
+
+// ----- /api/metrics -----
+//
+// Prometheus exposition format. Auth model:
+//   - PRIMARY: requireAuth + requireAdmin (vendor admin can scrape via UI / cURL).
+//   - BYPASS:  if METRICS_TOKEN env is set AND the request carries a matching
+//              `Authorization: Bearer <token>` header, skip Supabase auth.
+//              This is for an external Prometheus scraper that has no
+//              user account. The token is opaque + rotated separately
+//              from Supabase JWTs.
+//
+// Rationale for choosing the dual-mode over pure requireAdmin:
+// the admin gate requires a Supabase round-trip on every scrape (every 15s
+// in a typical Prometheus deployment) — that's wasteful and ties metrics
+// availability to Supabase uptime. METRICS_TOKEN gives us a sealed
+// scrape path. If METRICS_TOKEN is unset, only the requireAdmin path
+// works, which is the safe default.
+function metricsTokenOrAdmin(req, res, next) {
+  const token = process.env.METRICS_TOKEN;
+  if (token) {
+    const auth = req.headers.authorization || '';
+    if (auth.startsWith('Bearer ') && auth.slice(7) === token) {
+      return next();
+    }
+  }
+  // Fall through to the standard admin gate (chained below).
+  return requireAuth(req, res, (err) => {
+    if (err) return next(err);
+    return requireAdmin(req, res, next);
+  });
+}
+
+router.get('/api/metrics', metricsTokenOrAdmin, async (req, res) => {
+  try {
+    res.set('Content-Type', 'text/plain; version=0.0.4; charset=utf-8');
+    const body = await metricsRegister.metrics();
+    res.end(body);
+  } catch (e) {
+    console.error('[METRICS] export failed:', e.message);
+    res.status(500).json({ error: e.message });
+  }
 });
 
 export default router;

@@ -1,30 +1,52 @@
 // apps/server/index.js
-// Owner: A1 | Slice: S5
+// Owner: A1 | Slice: S5 (extraction); S14 wires observability (pino, Sentry, metrics).
 //
 // Express app wiring. Mounts every V1 route via routers in the same order
 // as V1 server.js so behaviour-preservation is path-by-path verifiable.
 //
 // CRITICAL ORDERING (V2_AUDIT §5.11, §5.12, §1a):
-//   1. app.set('trust proxy', 1) — required for express-rate-limit per-IP
+//   1. initSentry() — BEFORE express() is constructed so OTel auto-instrumentation
+//      hooks the Express integration on import.
+//   2. app.set('trust proxy', 1) — required for express-rate-limit per-IP
 //      bucketing behind Render's edge proxy.
-//   2. cors() before express.json — same as V1.
-//   3. express.json({limit:'50mb', verify}) — the verify callback captures
+//   3. Sentry.requestHandler() + Sentry.tracingHandler() — first in the chain
+//      so every request enters a Sentry hub/scope (no-ops on v10; kept for
+//      wiring symmetry).
+//   4. cors() before express.json — same as V1.
+//   5. express.json({limit:'50mb', verify}) — the verify callback captures
 //      req.rawBody for /api/stripe-webhook ONLY. Stripe signature
 //      verification breaks if this is dropped.
-//   4. /api/* routers (rate-limit → auth → quota → handler chains live
+//   6. metricsMiddleware — observes api_request_duration_ms per route.
+//   7. /api/* routers (rate-limit → auth → quota → handler chains live
 //      inside each router file).
-//   5. Early static (/service-worker.js, /, /index.html, /widget.js, /quote)
+//   8. Early static (/service-worker.js, /, /index.html, /widget.js, /quote)
 //      mounted BEFORE express.static so widget.js's 5-min Cache-Control
 //      override wins.
-//   6. express.static('public', {etag:false, maxAge:0}).
-//   7. SPA fallback ('*') — MUST be last so it doesn't eat /api/* routes.
-//   8. errorHandler — final safety net.
+//   9. express.static('public', {etag:false, maxAge:0}).
+//  10. SPA fallback ('*') — MUST be last so it doesn't eat /api/* routes.
+//  11. Sentry.errorHandler() — captures unhandled errors before terminal sink.
+//  12. errorHandler — final safety net (returns JSON 500).
 //
 // This file does NOT call app.listen — that's apps/server/server.js's job.
-// It's also not yet wired into package.json; root server.js stays the
-// entrypoint until phase-5 cutover. S5 is a behaviour-preserving extraction.
 
 import 'dotenv/config';
+
+// Sentry init MUST run BEFORE express is imported / constructed so the v10
+// OTel auto-instrumentation hooks Express on require(). It's safe to call
+// even when SENTRY_DSN_SERVER is unset (initSentry no-ops).
+import {
+  initSentry,
+  requestHandler as sentryRequestHandler,
+  tracingHandler as sentryTracingHandler,
+  errorHandler as sentryErrorHandler,
+} from '../../infra/observability/sentry-server.js';
+
+initSentry({
+  dsn: process.env.SENTRY_DSN_SERVER,
+  environment: process.env.SENTRY_ENVIRONMENT || process.env.NODE_ENV || 'production',
+  release: process.env.GIT_SHA || 'unknown',
+});
+
 import express from 'express';
 import cors from 'cors';
 
@@ -33,30 +55,13 @@ import cors from 'cors';
 import './_clients.js';
 
 // Boot-time side effects (initCardDb, FX refresh, dirty-save interval) are
-// fired explicitly from apps/server/server.js before app.listen. Importing
-// this module no longer triggers them — tests + tooling can import the
-// app builder without kicking off network calls. See V2 commit 215afb3
-// (S6) for the rationale.
+// fired explicitly from apps/server/server.js before app.listen.
 
-// Telemetry. S5 imports the logger to anchor the wiring point; real
-// logging is wired by S14 (A8). pino isn't yet in package.json so the
-// import is wrapped — see infra/observability/logger.js for the contract.
-let log;
-try {
-  const { default: getLogger } = await import('../../infra/observability/logger.js');
-  log = getLogger('server');
-} catch (e) {
-  // pino not installed yet (declared deferred in logger.js header). Fall
-  // back to a console shim so S5 can boot before S14 lands the dependency.
-  log = {
-    info:  (...a) => console.log('[server]', ...a),
-    warn:  (...a) => console.warn('[server]', ...a),
-    error: (...a) => console.error('[server]', ...a),
-    debug: () => {},
-    child: () => log,
-  };
-  console.warn('[server] pino not installed — falling back to console logger (S14 wires this up)');
-}
+// Telemetry. S14 wires the real pino logger — no defensive fallback.
+import getLogger from '../../infra/observability/logger.js';
+import { metricsMiddleware } from '../../infra/observability/metrics.js';
+
+const log = getLogger('server');
 
 import { errorHandler } from './middleware/error-handler.js';
 
@@ -75,10 +80,20 @@ import staticRoutes from './routes/static.js';
 
 const app = express();
 
+// Expose the logger to route handlers that want it via app.locals.log.
+app.locals.log = log;
+
 // ============================================================
 // CORE MIDDLEWARE — order matters; see file header.
 // ============================================================
 app.set('trust proxy', 1);
+
+// Sentry request + tracing handlers go FIRST so every request is inside
+// a hub/scope. v10 makes these effectively no-ops (OTel auto-instruments)
+// but the wiring is preserved for clarity + forward-compat.
+app.use(sentryRequestHandler());
+app.use(sentryTracingHandler());
+
 app.use(cors());
 
 app.use(express.json({
@@ -90,12 +105,16 @@ app.use(express.json({
   }
 }));
 
+// Per-request metrics (api_request_duration_ms histogram). Mounted BEFORE
+// the route handlers so res.on('finish') captures the full handler latency.
+app.use(metricsMiddleware);
+
 // ============================================================
 // API ROUTES — mounted in V1 order so a behaviour diff is grep-able
 // against the surface map in docs/V2_AUDIT.md §1a.
 // ============================================================
 app.use(accountRouter);     // /api/usage, /api/welcome-email, /api/me, /api/state
-app.use(adminRouter);       // /api/admin/*
+app.use(adminRouter);       // /api/admin/*, /api/metrics
 app.use(billingRouter);     // /api/checkout, /api/portal, /api/stripe-webhook
 app.use(staticRoutes.earlyStatic);  // /service-worker.js, /, /index.html, /widget.js, /quote (BEFORE express.static)
 app.use(staticRoutes.staticAssets); // express.static('public', etag:false, maxAge:0)
@@ -103,7 +122,7 @@ app.use(identifyRouter);    // /api/identify*, /api/identify-stream, /api/identi
 app.use(cardDbRouter);      // /api/card-db-*
 app.use(priceRouter);       // /api/price
 app.use(searchRouter);      // /api/search
-app.use(healthRouter);      // /api/health
+app.use(healthRouter);      // /api/health, /api/version, /api/widget/loaded
 app.use(roomRouter);        // /api/room/:id/*
 app.use(quoteLeadRouter);   // /api/quote-lead
 app.use(shopRouter);        // /api/shop, /api/shop-config/:slug
@@ -111,7 +130,12 @@ app.use(shopRouter);        // /api/shop, /api/shop-config/:slug
 // SPA fallback MUST be last (V2_AUDIT §1 — line 5707 in V1).
 app.use(staticRoutes.spaFallback);
 
-// Error handler is the very last middleware in the chain.
+// Sentry error handler runs BEFORE the terminal application errorHandler.
+// It captures the exception, then forwards via next(err) so the JSON 500
+// response still goes out from middleware/error-handler.js.
+app.use(sentryErrorHandler());
+
+// Application's terminal error sink. Always last.
 app.use(errorHandler);
 
 log.info({ phase: 'boot' }, 'apps/server/index.js wired — routes mounted');
