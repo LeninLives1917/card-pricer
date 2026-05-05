@@ -23,9 +23,16 @@ export const PLAN_LIMITS = {
 
 // Fire-and-forget scan logging. Phase C uses this to enforce monthly
 // quotas for free-plan users. Failure to log must NEVER block a scan.
-export function logScanEvent(userId, endpoint) {
+//
+// S15 (OCR-first telemetry): the 3rd arg is OPTIONAL and writes to the
+// `data jsonb` column added by 20260504120000_scan_events_data.sql. The
+// 2-arg form is unchanged — `data` simply omitted from the insert payload,
+// which the schema accepts as NULL. Backward-compat-preserving.
+export function logScanEvent(userId, endpoint, data) {
   if (!supabase || !userId) return;
-  supabase.from('scan_events').insert({ user_id: userId, endpoint }).then(
+  const row = { user_id: userId, endpoint };
+  if (data !== undefined && data !== null) row.data = data;
+  supabase.from('scan_events').insert(row).then(
     () => {},
     (e) => console.warn('[AUTH] scan_events insert failed:', e?.message || e)
   );

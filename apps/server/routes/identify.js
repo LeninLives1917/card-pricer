@@ -27,6 +27,10 @@ import { axios, anthropic, supabase } from '../_clients.js';
 import { requireAuth } from '../middleware/auth.js';
 import { enforceQuota, logScanEvent } from '../middleware/quota.js';
 import { identifyLimiter, quoteLeadLimiter } from '../middleware/rate-limit.js';
+// S15 (OCR-first): pipeline + collaborators. Only the route handler at
+// /api/v2/identify-ocr-first reaches into these — the rest of the file is
+// V1-shape preserved.
+import { runOcrFirst } from '../../../pricing/ocr-first/pipeline.js';
 // S6 import-flip — these used to live in apps/server/_legacy-pricing.js;
 // pricing/ now owns them. See V2_ARCHITECTURE §1 and S6 commit message.
 import {
@@ -145,15 +149,32 @@ router.post('/api/identify-stream', identifyLimiter, requireAuth, enforceQuota, 
 // V1 server.js:2447-2672 — manual identify body, extracted to a shared
 // helper so both the auth'd V1 path and the public V2 quote path share
 // identical lookup logic. See S8.5 fix below.
-async function handleManualIdentify(req, res) {
+//
+// S15 refactor: split the route-shaped wrapper from the pure-function
+// core so the OCR-first pipeline (pricing/ocr-first/pipeline.js) can call
+// the lookup logic without a synthetic req/res. Behaviour preserved 1:1 —
+// the wrapper translates the structured envelope back to res.status/json.
+
+/**
+ * Pure async function: take normalised inputs, return either
+ *   { cards: [<card>] }
+ *   { error: '...', status: 400|404|500 }
+ * No req/res, no rate-limit, no quota, no telemetry. Caller owns those.
+ *
+ * Inputs accepted:
+ *   - game        (REQUIRED) 'pokemon' | 'magic' | <other> — case-sensitive
+ *   - set_code    optional set abbreviation; aliases resolved internally
+ *   - card_number REQUIRED; "/total" suffix stripped, leading zeros trimmed
+ *   - name        optional name hint (helps disambiguate)
+ */
+async function manualIdentifyCore({ game, set_code, card_number, name } = {}) {
+  if (!game) return { error: 'game is required', status: 400 };
+  if (!card_number) return { error: 'card_number is required', status: 400 };
+
+  const cleanNum = String(card_number).replace(/\/.*/, '').replace(/^0+/, '') || String(card_number);
+  let card = null;
+
   try {
-    const { game, set_code, card_number, name } = req.body || {};
-    if (!game) return res.status(400).json({ error: 'game is required' });
-    if (!card_number) return res.status(400).json({ error: 'card_number is required' });
-
-    const cleanNum = String(card_number).replace(/\/.*/, '').replace(/^0+/, '') || String(card_number);
-    let card = null;
-
     if (game === 'pokemon') {
       const resolved = set_code ? resolveSetCode(set_code) : { setId: null, ptcgoCode: null };
 
@@ -161,7 +182,7 @@ async function handleManualIdentify(req, res) {
         card = lookupLocalDb(resolved.setId, cleanNum);
         if (card) {
           console.log(`[MANUAL-PKM] Local DB hit: ${card.name} (${resolved.setId}-${cleanNum})`);
-          return res.json({ cards: [card] });
+          return { cards: [card] };
         }
       }
 
@@ -327,7 +348,7 @@ async function handleManualIdentify(req, res) {
     }
 
     if (!card) {
-      return res.status(404).json({ error: 'No card found for that set/number combination. Double-check the set code and number.' });
+      return { error: 'No card found for that set/number combination. Double-check the set code and number.', status: 404 };
     }
 
     if (card.game === 'pokemon' && set_code) {
@@ -337,11 +358,22 @@ async function handleManualIdentify(req, res) {
       }
     }
 
-    res.json({ cards: [card] });
+    return { cards: [card] };
   } catch (err) {
     console.error('[MANUAL] Error:', err.message);
-    res.status(500).json({ error: err.message });
+    return { error: err.message, status: 500 };
   }
+}
+
+// Thin route-shaped wrapper. Translates the manualIdentifyCore envelope
+// back to res.status/res.json. Existing tests (S8.5
+// quote-public-paths.spec.js) call this with (req, res) — preserved.
+async function handleManualIdentify(req, res) {
+  const result = await manualIdentifyCore(req.body || {});
+  if (result && result.error) {
+    return res.status(result.status || 500).json({ error: result.error });
+  }
+  return res.json({ cards: result.cards });
 }
 
 // V1 auth'd manual-identify (vendor-side). Logs scan event against the
@@ -365,52 +397,17 @@ router.post('/api/v2/quote/identify-manual', quoteLeadLimiter, async (req, res) 
   return handleManualIdentify(req, res);
 });
 
-// V1 server.js:2681-2830 — /api/read-set-code.
-router.post('/api/read-set-code', identifyLimiter, requireAuth, enforceQuota, async (req, res) => {
-  logScanEvent(req.user.id, '/api/read-set-code');
-  try {
-    const dataUrl = req.body?.image;
-    if (!dataUrl) {
-      return res.status(400).json({ error: 'No image provided' });
-    }
+// =============================================================================
+// READ-SET-CODE — V1 server.js:2681-2830.
+//
+// S15 split: the OCR work (sharp resize → Sonnet 4.6 → post-process)
+// is now a pure helper `readSetCodeFromImage({buffer, mediaType})` that
+// the OCR-first pipeline (pricing/ocr-first/pipeline.js) calls directly,
+// bypassing the data-URL decoding and HTTP layer. Public endpoint shape
+// is preserved 1:1.
+// =============================================================================
 
-    const match = dataUrl.match(/^data:(image\/[a-zA-Z]+);base64,(.+)$/);
-    if (!match) {
-      return res.status(400).json({ error: 'Invalid image data URL' });
-    }
-
-    const rawBuffer = Buffer.from(match[2], 'base64');
-    let imageBase64, mediaType;
-    if (rawBuffer.length > 4 * 1024 * 1024) {
-      const resized = await sharp(rawBuffer)
-        .resize({ width: 3200, withoutEnlargement: true })
-        .jpeg({ quality: 98 })
-        .toBuffer();
-      imageBase64 = resized.toString('base64');
-      mediaType = 'image/jpeg';
-      console.log(`[READ-SET-CODE] Resized (too large): ${(rawBuffer.length/1024).toFixed(0)}KB → ${(resized.length/1024).toFixed(0)}KB`);
-    } else {
-      imageBase64 = match[2];
-      mediaType = match[1];
-      console.log(`[READ-SET-CODE] Passthrough: ${(rawBuffer.length/1024).toFixed(0)}KB (${mediaType})`);
-    }
-
-    console.log('[READ-SET-CODE] Sending to Claude Sonnet 4.6...');
-    const t0 = Date.now();
-
-    const response = await anthropic.messages.create({
-      model: READ_SET_CODE_MODEL,
-      max_tokens: 20,
-      messages: [{
-        role: 'user',
-        content: [
-          {
-            type: 'image',
-            source: { type: 'base64', media_type: mediaType, data: imageBase64 }
-          },
-          {
-            type: 'text',
-            text: `Read the set code and card number printed on this Pokemon card. Look near the bottom of the card for small text.
+const READ_SET_CODE_PROMPT = `Read the set code and card number printed on this Pokemon card. Look near the bottom of the card for small text.
 
 CRITICAL — PRESERVE LEADING ZEROS. If the printed number is "027", report "027". NOT "27" and NOT "2". Dropping zeros sends this card to the wrong entry in our database and returns a completely different card. "003/165" is NOT "3/165". This is the #1 failure mode — treat every digit you see as load-bearing, including leading zeros.
 
@@ -442,8 +439,71 @@ MEG = /132, PFL = /094, POR = /088, MEP has no total, WHT = /086, BBT = /086,
 DRI = /182, SSP = /191, SVI = /198, MEW = /165, SVP has no total, DIA = /182
 If the total doesn't match the set code, re-read the set code letters more carefully.
 
-Return ONLY the set code and number. If you cannot read any set code, respond: NONE`
-          }
+Return ONLY the set code and number. If you cannot read any set code, respond: NONE`;
+
+// SET_TOTALS lookup for the post-processing cross-check
+// (corrects MEP→MEG when the printed total /132 matches MEG, not MEP).
+const READ_SET_CODE_TOTALS = {
+  'MEG':'132','PFL':'094','POR':'088','WHT':'086','BBT':'086',
+  'DRI':'182','SSP':'191','SVI':'198','MEW':'165','DIA':'182',
+  'PAL':'198','OBF':'197','PAR':'182','PAF':'091','TEF':'162',
+  'TWM':'167','SFA':'064','SCR':'156','PRE':'175','JTG':'182',
+  'SSH':'202','RCL':'192','DAA':'189','VIV':'185','BST':'163',
+  'CRE':'198','EVS':'203','FST':'264','BRS':'172','ASR':'189',
+  'LOR':'196','SIT':'195','CRZ':'230',
+};
+
+/**
+ * Pure-function OCR pass that returns the printed set code + card number.
+ * Resizes large images via sharp before sending to Sonnet 4.6 (matches V1
+ * 4MB threshold + 3200px / q98 settings). Post-processing strips markdown
+ * and runs the set-total cross-check — both verbatim from V1.
+ *
+ * Used by:
+ *   - POST /api/read-set-code  (route handler below)
+ *   - POST /api/v2/identify-ocr-first  (via runOcrFirst)
+ *
+ * Returns:
+ *   { text: 'MEP 027' }   — happy path
+ *   { error: 'Could not read set code from image' }
+ *   { error: <message> }  — Sonnet/sharp failure
+ *
+ * @param {object} args
+ * @param {Buffer} args.buffer     Raw image bytes.
+ * @param {string} args.mediaType  'image/jpeg' | 'image/png' | ...
+ */
+export async function readSetCodeFromImage({ buffer, mediaType } = {}) {
+  if (!buffer) return { error: 'No image provided' };
+  try {
+    let imageBase64, sendMediaType;
+    if (buffer.length > 4 * 1024 * 1024) {
+      const resized = await sharp(buffer)
+        .resize({ width: 3200, withoutEnlargement: true })
+        .jpeg({ quality: 98 })
+        .toBuffer();
+      imageBase64 = resized.toString('base64');
+      sendMediaType = 'image/jpeg';
+      console.log(`[READ-SET-CODE] Resized (too large): ${(buffer.length/1024).toFixed(0)}KB → ${(resized.length/1024).toFixed(0)}KB`);
+    } else {
+      imageBase64 = buffer.toString('base64');
+      sendMediaType = mediaType || 'image/jpeg';
+      console.log(`[READ-SET-CODE] Passthrough: ${(buffer.length/1024).toFixed(0)}KB (${sendMediaType})`);
+    }
+
+    console.log('[READ-SET-CODE] Sending to Claude Sonnet 4.6...');
+    const t0 = Date.now();
+
+    const response = await anthropic.messages.create({
+      model: READ_SET_CODE_MODEL,
+      max_tokens: 20,
+      messages: [{
+        role: 'user',
+        content: [
+          {
+            type: 'image',
+            source: { type: 'base64', media_type: sendMediaType, data: imageBase64 }
+          },
+          { type: 'text', text: READ_SET_CODE_PROMPT }
         ]
       }]
     });
@@ -466,21 +526,12 @@ Return ONLY the set code and number. If you cannot read any set code, respond: N
     }
     raw = raw.replace(/^([A-Z]{2,4})(EN)\s/, '$1 ');
 
-    const SET_TOTALS = {
-      'MEG':'132','PFL':'094','POR':'088','WHT':'086','BBT':'086',
-      'DRI':'182','SSP':'191','SVI':'198','MEW':'165','DIA':'182',
-      'PAL':'198','OBF':'197','PAR':'182','PAF':'091','TEF':'162',
-      'TWM':'167','SFA':'064','SCR':'156','PRE':'175','JTG':'182',
-      'SSH':'202','RCL':'192','DAA':'189','VIV':'185','BST':'163',
-      'CRE':'198','EVS':'203','FST':'264','BRS':'172','ASR':'189',
-      'LOR':'196','SIT':'195','CRZ':'230',
-    };
     const totalMatch = raw.match(/^([A-Z]{2,4})\s+(\d+)\s*\/\s*(\d+)$/);
     if (totalMatch) {
       const [, readCode, cardNum, total] = totalMatch;
-      const expectedTotal = SET_TOTALS[readCode];
+      const expectedTotal = READ_SET_CODE_TOTALS[readCode];
       if (expectedTotal && expectedTotal !== total) {
-        const correctCode = Object.entries(SET_TOTALS).find(([, t]) => t === total)?.[0];
+        const correctCode = Object.entries(READ_SET_CODE_TOTALS).find(([, t]) => t === total)?.[0];
         if (correctCode) {
           const corrected = `${correctCode} ${cardNum}/${total}`;
           console.log(`[READ-SET-CODE] CORRECTED: "${raw}" → "${corrected}" (total /${total} matches ${correctCode}, not ${readCode})`);
@@ -492,14 +543,36 @@ Return ONLY the set code and number. If you cannot read any set code, respond: N
     console.log(`[READ-SET-CODE] ${elapsed}ms → final "${raw}"`);
 
     if (!raw || raw === 'NONE') {
-      return res.status(404).json({ error: 'Could not read set code from image' });
+      return { error: 'Could not read set code from image' };
     }
-
-    res.json({ text: raw });
+    return { text: raw };
   } catch (err) {
     console.error('[READ-SET-CODE] Error:', err.message, err.status || '', err.error?.message || '');
-    res.status(500).json({ error: err.message });
+    return { error: err.message };
   }
+}
+
+// V1 endpoint: thin shim around readSetCodeFromImage. Decodes the data URL
+// from req.body.image, then delegates. Response shape preserved 1:1.
+router.post('/api/read-set-code', identifyLimiter, requireAuth, enforceQuota, async (req, res) => {
+  logScanEvent(req.user.id, '/api/read-set-code');
+  const dataUrl = req.body?.image;
+  if (!dataUrl) {
+    return res.status(400).json({ error: 'No image provided' });
+  }
+  const match = dataUrl.match(/^data:(image\/[a-zA-Z]+);base64,(.+)$/);
+  if (!match) {
+    return res.status(400).json({ error: 'Invalid image data URL' });
+  }
+  const rawBuffer = Buffer.from(match[2], 'base64');
+  const result = await readSetCodeFromImage({ buffer: rawBuffer, mediaType: match[1] });
+  if (result.error) {
+    // V1 mapped 'Could not read set code from image' to 404, anything else
+    // (sharp/anthropic failures) to 500. Preserve the split.
+    const status = /Could not read set code/.test(result.error) ? 404 : 500;
+    return res.status(status).json({ error: result.error });
+  }
+  return res.json({ text: result.text });
 });
 
 // V1 server.js:2920-3052 — /api/lookup-by-number.
@@ -695,7 +768,75 @@ router.post('/api/correct-card', requireAuth, express.json(), (req, res) => {
   }
 });
 
-// Named export for tests (S8.5 — quote-public-paths.spec.js).
-export { handleManualIdentify };
+// =============================================================================
+// /api/v2/identify-ocr-first — S15 OCR-first scan path (Q3, F24).
+//
+// Server-side kill switch: if OCR_FIRST_ENABLED !== 'true' the route returns
+// 503 immediately, no Anthropic call, no telemetry write. Default off per
+// infra/render.yaml + infra/env.example.
+//
+// On any non-503 outcome the pipeline writes one scan_events row with
+// endpoint='ocr-first' (telemetry honest regardless of validated/fell
+// through outcome) and increments cardpricer_ocr_first_total.
+//
+// The client treats {validated:false} as "go run /api/identify-stream the
+// slow way" — same UX as today. The OCR-first path is purely a fast happy
+// path. The logScanEvent at the top of the handler keeps the V1 quota
+// accounting honest (one scan = one quota tick, regardless of which path
+// served it).
+// =============================================================================
+router.post('/api/v2/identify-ocr-first',
+  identifyLimiter,
+  requireAuth,
+  enforceQuota,
+  upload.single('image'),
+  async (req, res) => {
+    if (process.env.OCR_FIRST_ENABLED !== 'true') {
+      return res.status(503).json({
+        error: 'ocr_first_disabled',
+        enable_with: 'OCR_FIRST_ENABLED=true',
+      });
+    }
+
+    // Per-attempt quota tick + classic scan_events row (no `data` payload).
+    // The pipeline writes a SECOND row with endpoint='ocr-first' + data jsonb;
+    // the V1 row keeps quota accounting consistent with /api/identify.
+    logScanEvent(req.user.id, '/api/v2/identify-ocr-first');
+
+    try {
+      const buffer = extractImageBuffer(req);
+      // multer / data URL paths both decode bytes; we don't have a strict
+      // media-type from multer for raw uploads, so default to JPEG (matches
+      // identifyCore's behaviour for the client-resized data URL path).
+      const mediaType = req.file?.mimetype || 'image/jpeg';
+      const hint = req.body?.hint || '';
+
+      const out = await runOcrFirst({
+        buffer,
+        mediaType,
+        hint,
+        ctx: { userId: req.user.id },
+        deps: {
+          readSetCodeFromImage,
+          manualIdentifyCore,
+        },
+      });
+
+      return res.json(out);
+    } catch (err) {
+      if (err.status === 400) return res.status(400).json({ error: err.message });
+      console.error('[OCR-FIRST] error:', err.message);
+      return res.status(500).json({ error: 'Failed to run OCR-first identify', details: err.message });
+    }
+  }
+);
+
+// Named exports for tests + the OCR-first pipeline:
+//   - handleManualIdentify     (S8.5 — quote-public-paths.spec.js)
+//   - manualIdentifyCore       (S15 — pricing/ocr-first/pipeline.js calls
+//                               this directly via the deps object)
+//   - readSetCodeFromImage     (already exported inline above; here for
+//                               documentation symmetry).
+export { handleManualIdentify, manualIdentifyCore };
 
 export default router;
