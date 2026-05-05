@@ -3,11 +3,11 @@
   "version": "1.0.0",
   "description": "Real-time trading card pricing app for shows — AI-powered card identification with Cardmarket & eBay pricing",
   "type": "module",
-  "main": "server.js",
+  "main": "apps/server/server.js",
   "scripts": {
-    "prestart": "node --check server.js",
-    "start": "node server.js",
-    "dev": "node server.js",
+    "prestart": "node --check apps/server/server.js",
+    "start": "node apps/server/server.js",
+    "dev": "node apps/server/server.js",
     "test": "node --test --test-reporter=spec \"tests/**/*.spec.js\"",
     "test:watch": "node --test --watch --test-reporter=spec \"tests/**/*.spec.js\""
   },
