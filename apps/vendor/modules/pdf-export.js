@@ -16,13 +16,21 @@
 // fall out of CSS. The trade-off is a manual "Save as PDF" step in the
 // print dialog — acceptable for an operator-driven action.
 //
-// Image source: card.image_url → card.reference_image. These are the
-// official card art served by pokemontcg.io / scryfall — the same image
-// Cardmarket displays on its product pages. We deliberately do NOT fall
-// back to entry.image (the operator's scan photo): a customer-facing
-// quote should show the catalogue card, not a phone snap of the cards
-// they brought in. Cards that never got a verified DB hit print without
-// an image rather than with a low-quality scan.
+// Image source priority (all official catalogue art — same image
+// Cardmarket displays on its product pages):
+//   1. entry.reference_image   — set by /api/price (apps/server/routes/price.js)
+//                                from the rapidapi_cm or scryfall/pokemontcg
+//                                game-API result; this is the primary path
+//                                for priced session entries.
+//   2. card.image_url          — older code paths that store the image on
+//                                the card object directly.
+//   3. card.reference_image    — set by manualIdentifyCore for the manual /
+//                                text-entry path before pricing runs.
+// We deliberately DO NOT fall back to entry.image (the operator's scan
+// photo): a customer-facing quote should show the catalogue card, not a
+// phone snap of the cards they brought in. Cards that never got a
+// verified DB hit print without an image rather than with a low-quality
+// scan.
 
 import { getSetting } from './state.js';
 
@@ -188,7 +196,7 @@ function buildRow(entry, cashPct, creditPct) {
   const cashRaw = entry.custom_buy ?? round2(market * (cashPct / 100));
   const creditRaw = round2(market * (creditPct / 100));
   const qty = (entry.duplicate_count || 0) + 1;
-  const image = card.image_url || card.reference_image || '';
+  const image = entry.reference_image || card.image_url || card.reference_image || '';
   return {
     name: card.name || 'Unknown card',
     setLabel: [card.set_code, card.card_number].filter(Boolean).join(' '),
@@ -428,9 +436,10 @@ function renderPrintHtml(ctx) {
 
   <p class="intro">
     Buy quote for ${rows.length} card${rows.length === 1 ? '' : 's'}.
-    Market values are sourced from Cardmarket trend prices on the day of quote.
-    Offers reflect our current cash and store-credit percentages and are
-    valid for 7 days subject to inspection of the physical cards.
+    Market values are the lowest Near-Mint English listing on Cardmarket
+    at the time of quote. Offers reflect our current cash and store-credit
+    percentages and are valid for 7 days subject to inspection of the
+    physical cards.
   </p>
 
   <section class="grid">${cardsHtml}</section>

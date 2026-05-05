@@ -76,14 +76,22 @@ test('buildRow multiplies all three figures by quantity (duplicate_count + 1)', 
   assert.equal(r.creditRaw, 21);
 });
 
-test('buildRow image priority: card.image_url > card.reference_image (no scan-photo fallback)', () => {
-  // image_url wins.
+test('buildRow image priority: entry.reference_image > card.image_url > card.reference_image', () => {
+  // entry.reference_image wins (this is what /api/price actually sets —
+  // the primary path for priced session entries).
+  assert.equal(buildRow({
+    reference_image: 'TOP',
+    card: { image_url: 'A', reference_image: 'B' },
+    image: 'C',
+  }, 50, 70).image, 'TOP');
+
+  // card.image_url next.
   assert.equal(buildRow({
     card: { image_url: 'A', reference_image: 'B' },
     image: 'C',
   }, 50, 70).image, 'A');
 
-  // reference_image when image_url missing.
+  // card.reference_image when image_url missing.
   assert.equal(buildRow({
     card: { reference_image: 'B' },
     image: 'C',
@@ -175,6 +183,13 @@ test('renderPrintHtml renders the row image, name, set label, and prices', () =>
   assert.match(html, /€10\.00/);
   assert.match(html, /€5\.00/);
   assert.match(html, /€7\.00/);
+});
+
+test('renderPrintHtml disclaimer says "Near-Mint English" not "trend"', () => {
+  const html = renderPrintHtml(sampleCtx());
+  assert.match(html, /Near-Mint English/);
+  assert.match(html, /lowest/i);
+  assert.doesNotMatch(html, /trend price/i);
 });
 
 test('renderPrintHtml shows totals footer with market/cash/credit', () => {
