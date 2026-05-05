@@ -101,35 +101,41 @@ test('RG-15: persistLead is robust to supabase failure (catches the insert error
   );
 });
 
-test('RG-15 NOTE: post-S12 ordering — persistLead is awaited AFTER sendOne on the happy path', () => {
-  // S12 (commit 1073552 — "v2: quote persistence — stable URL + recoverable")
-  // reordered the success path so the response can return the quote_url.
-  // The reorder means that on the BREVO_API_KEY-set happy path:
+test('RG-15: happy path persists the lead BEFORE attempting Brevo send (V2.0.1 fix)', () => {
+  // S12 (commit 1073552) originally reordered to "send emails first, then
+  // persist + respond" so the response could include the quote_url. S26
+  // caught that this violated V2_AUDIT §5.13 — a Brevo throw skipped
+  // persistLead entirely. V2.0.1 (this commit) restores the V1 fire-
+  // persist-first contract:
   //
-  //   await Promise.all([sendOne, sendOne, subscribeIfOptedIn])
   //   const lead = await persistLead()
-  //   res.json({ ok:true, ..., quote_url })
+  //   const quote_url = buildQuoteUrl(lead.id)
+  //   try {
+  //     await Promise.all([sendOne, sendOne, subscribeIfOptedIn])
+  //     emailed = true
+  //   } catch (brevoErr) { /* lead is already persisted */ }
+  //   res.json({ ok:true, emailed, quote_id, quote_url, ... })
   //
-  // If sendOne throws (Brevo 500), control jumps to the outer catch and
-  // res.status(500) fires WITHOUT calling persistLead.
-  //
-  // This is a documented divergence from the V1 fire-and-forget shape.
-  // The audit invariant survives because:
-  //   1. The no-BREVO_API_KEY path (the only path the audit explicitly
-  //      cited) still persists first — covered by the test above.
-  //   2. The S12 success path now needs the quote_url in the response,
-  //      which only exists after persistLead runs. Brevo throwing means
-  //      we don't have a successful customer email anyway, so the 500
-  //      to the client is honest.
-  //   3. The follow-up tracked in V2_SMOKE_TEST.md §6 (post-V2) is to
-  //      wrap Promise.all in a try/catch, persist the lead in the catch
-  //      branch, and respond 502/503 with quote_url so a Brevo outage
-  //      degrades gracefully like the no-BREVO path.
-  //
-  // The test below pins the current ordering so a future refactor that
-  // changes the arrangement is noticed in code review.
-  const happy = SRC.match(/await\s+Promise\.all\(\s*\[\s*\n[\s\S]*?subscribeIfOptedIn[\s\S]*?\]\s*\);[\s\S]*?const\s+lead\s*=\s*await\s+persistLead\(\)/);
-  assert.ok(happy,
-    'post-S12 ordering: Promise.all([sendOne, sendOne, subscribe]) → persistLead → res.json. ' +
-    'If this ordering changes, also update the post-V2 follow-up in V2_SMOKE_TEST.md §6.');
+  // Now a Brevo outage cannot kill lead capture on ANY path (the no-
+  // BREVO branch was already correct; the BREVO-configured branch is
+  // newly correct).
+
+  // Pin: persistLead is awaited BEFORE Promise.all on the happy path.
+  const happyOrdering = SRC.match(
+    /const\s+lead\s*=\s*await\s+persistLead\(\)[\s\S]*?await\s+Promise\.all\(\s*\[\s*\n[\s\S]*?subscribeIfOptedIn/
+  );
+  assert.ok(
+    happyOrdering,
+    'happy path must call persistLead BEFORE Promise.all([sendOne, sendOne, subscribe]) ' +
+    'so a Brevo throw cannot skip the quote_leads insert (V2_AUDIT §5.13 / R6).'
+  );
+
+  // Pin: the Promise.all is wrapped in a try/catch so a Brevo failure
+  // doesn't 500 — the response degrades gracefully with emailed:false.
+  assert.match(
+    SRC,
+    /try\s*{[\s\S]*?Promise\.all\(\s*\[\s*\n[\s\S]*?subscribeIfOptedIn[\s\S]*?\][\s\S]*?}\s*catch\s*\(\s*\w+\s*\)\s*{[\s\S]*?lead persisted/,
+    'Brevo Promise.all must be inside a try/catch that logs "lead persisted" — ' +
+    'graceful degradation per V2.0.1 fix.'
+  );
 });

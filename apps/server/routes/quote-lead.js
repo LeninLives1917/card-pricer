@@ -298,21 +298,41 @@ router.post('/api/quote-lead', quoteLeadLimiter, async (req, res) => {
       return subscribeBrevo();
     };
 
-    const [,, subRes] = await Promise.all([
-      sendOne(email, `Your ${SHOP_NAME} card quote`, customerHtml),
-      sendOne(SHOP_EMAIL, `New quote request — ${email}${newsletter ? ' (newsletter opt-in)' : ''}`, shopHtml, attachments),
-      subscribeIfOptedIn()
-    ]);
-
+    // Persist FIRST so a Brevo throw can't swallow the lead. V2_AUDIT §5.13
+    // invariant: a Brevo outage cannot kill lead capture. The earlier V2
+    // ordering (Promise.all then persistLead) violated this — S26 caught it,
+    // tracked as the "Brevo-ordering caveat" in V2_RELEASE_NOTES + §6.3 of
+    // V2_SMOKE_TEST. This commit restores the V1 fire-persist-first contract.
     const lead = await persistLead();
     const quote_url = buildQuoteUrl(lead.id);
+
+    // Brevo + newsletter happen AFTER persistence. If they throw, we still
+    // return the persisted lead's id + url to the client; the email simply
+    // didn't go out. emailed:false on Brevo failure tells the client to
+    // surface a "we got your request, but the email didn't send — please
+    // bring your cards in for the firm offer" fallback message.
+    let emailed = false;
+    let subRes = { subscribed: false };
+    try {
+      const [,, sub] = await Promise.all([
+        sendOne(email, `Your ${SHOP_NAME} card quote`, customerHtml),
+        sendOne(SHOP_EMAIL, `New quote request — ${email}${newsletter ? ' (newsletter opt-in)' : ''}`, shopHtml, attachments),
+        subscribeIfOptedIn()
+      ]);
+      emailed = true;
+      subRes = sub;
+    } catch (brevoErr) {
+      console.error('[QUOTE-LEAD] Brevo send failed (lead persisted):', brevoErr?.message || brevoErr);
+    }
+
     res.json({
       ok: true,
-      emailed: true,
+      emailed,
       subscribed: subRes.subscribed,
       quote_id: lead.id || null,
       quote_url,
       ...(lead.persistence ? { persistence: lead.persistence } : {}),
+      ...(emailed ? {} : { email_error: 'send_failed' }),
     });
   } catch (e) {
     console.error('[QUOTE-LEAD] failed:', e);
