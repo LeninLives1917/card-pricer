@@ -19,6 +19,7 @@ import {
   newSession, switchSession, deleteCurrentSession, renameCurrentSession,
 } from '../state.js';
 import { openResultSheet } from '../result-sheet.js';
+import { exportSessionPdf } from '../pdf-export.js';
 
 let _filter = '';
 let _editMode = false;
@@ -243,6 +244,7 @@ function wireActionRows() {
   const map = {
     sessActExportXlsx: exportXlsx,
     sessActExportCsv: exportCsvTcgPowerTools,
+    sessActExportPdf: exportPdfForCustomer,
     sessActRefresh: refreshAllPrices,
     sessActUndo: undoLastScan,
     sessActSummary: showSummary,
@@ -378,6 +380,19 @@ function exportXlsx() {
   window.XLSX.utils.book_append_sheet(wb, ws, 'Session');
   const name = (currentSession()?.name || 'session').replace(/[^a-z0-9]+/gi, '_').toLowerCase();
   window.XLSX.writeFile(wb, `cardpricer_${name}.xlsx`);
+}
+
+// Customer-facing PDF — renders a print-friendly sheet with images, market
+// price, and our cash/credit offers. Implementation lives in
+// modules/pdf-export.js so it stays self-contained.
+async function exportPdfForCustomer() {
+  const sess = currentSession();
+  if (!sess) return;
+  await exportSessionPdf(sess, {
+    cashPct: state.cashPct,
+    creditPct: state.creditPct,
+    sellMarkup: parseFloat(getSetting('sellMarkup', '110')) || 110,
+  });
 }
 
 function exportCsvTcgPowerTools() {
