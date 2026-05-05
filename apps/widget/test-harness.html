@@ -1,11 +1,13 @@
 <!DOCTYPE html>
 <!--
-  apps/widget/test-harness.html — A6 / Slice S9
+  apps/widget/test-harness.html — A6 / Slice S9 + S23
   Fake host page for V1 + V2 attribute parity tests + manual smoke.
 
   How to use:
     1. Open this file directly in a browser (no server needed for the harness
        itself — only the iframe targets `card-pricer-60qq.onrender.com/quote`).
+       On Windows, the path looks like:
+         file:///C:/Users/.../card-pricer/apps/widget/test-harness.html
     2. Visually compare the V1 button (section 1) and the V1-attrs-only V2
        button (section 2). They MUST look identical.
     3. Click each button to verify the modal opens, the iframe loads, and the
@@ -13,6 +15,13 @@
     4. Open DevTools Network tab to see the V2 telemetry beacon
        (POST /api/widget/loaded — 404 is OK on V1 servers, S14/A8 lands the
        endpoint).
+    5. Section 7 (S23-NEW) is a side-by-side iframe diff: V1 and V2 widgets
+       are loaded in two sandboxed child documents next to each other. The
+       buttons + modal chrome must look identical at default attrs.
+
+  Automated counterpart: `tests/regression/widget-parity.spec.js` (static
+  text lints) + `tests/regression/widget-runtime.spec.js` (jsdom DOM diff).
+  Run via `npm test`.
 
   IMPORTANT: this file loads `widget-v1.js` and `widget.js` from the same
   directory (relative paths). The V1-served file is `public/widget.js` —
@@ -110,13 +119,21 @@
   </style>
 </head>
 <body>
-  <h1>Card Pricer widget — test harness (S9)</h1>
+  <h1>Card Pricer widget — test harness (S9 + S23)</h1>
   <p class="lede">
     Each section drops a script tag exactly the way a customer shop would.
     Sections 1+2 must produce visually identical buttons (V1-attribute parity
     contract per docs/V2_ARCHITECTURE.md Q4). Sections 3-6 exercise V2-NEW
-    attributes. The Comparison panel logs every <code>cp:submitted</code>
-    payload that bubbles to <code>window.cardPricerWidgetOnSubmit</code>.
+    attributes. Section 7 (S23) loads V1 and V2 side-by-side in sandboxed
+    iframes for a tight visual diff. The Comparison panel logs every
+    <code>cp:submitted</code> payload that bubbles to
+    <code>window.cardPricerWidgetOnSubmit</code>.
+  </p>
+  <p class="lede" style="font-size:13px;">
+    Open in a real browser via <code>file:///…/apps/widget/test-harness.html</code>.
+    For the automated counterpart see
+    <code>tests/regression/widget-runtime.spec.js</code>
+    (jsdom DOM-diff parity, run with <code>npm test</code>).
   </p>
 
   <!-- ─── Section 1: V1 only (rollback target / control) ─── -->
@@ -213,6 +230,32 @@
             data-label="V2 lazy — Get a quote"
             data-lazy="true"
             defer></script>
+  </section>
+
+  <!-- ─── Section 7: Side-by-side V1 vs V2 (S23) ─── -->
+  <section style="max-width:none;">
+    <h3>7. Side-by-side V1 ↔ V2 — visual parity (S23)</h3>
+    <p>Two child documents, each loading one widget verbatim with the same
+    <code>data-shop="brewed"</code> + V1 defaults. The buttons should be
+    pixel-identical; clicking each opens the modal so you can eyeball the
+    backdrop, inner box, and close button.</p>
+    <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; align-items:start;">
+      <div>
+        <h4 style="margin:0 0 6px; font-size:13px; color:#78716c; text-transform:uppercase; letter-spacing:0.04em;">V1 (rollback target)</h4>
+        <iframe id="cp-side-v1" title="V1 widget sandbox" style="width:100%; height:240px; border:1px solid #e7e5e4; border-radius:8px; background:#fff;"
+                srcdoc='&lt;!doctype html&gt;&lt;html&gt;&lt;body style=&quot;margin:16px; font:14px system-ui;&quot;&gt;&lt;p&gt;V1 widget will appear below:&lt;/p&gt;&lt;script src=&quot;./widget-v1.js&quot; data-shop=&quot;brewed&quot; data-color=&quot;#b45309&quot; data-position=&quot;inline&quot; data-label=&quot;Get a quote on your cards&quot; defer&gt;&lt;/script&gt;&lt;/body&gt;&lt;/html&gt;'></iframe>
+      </div>
+      <div>
+        <h4 style="margin:0 0 6px; font-size:13px; color:#78716c; text-transform:uppercase; letter-spacing:0.04em;">V2 (V1 attrs only — must match)</h4>
+        <iframe id="cp-side-v2" title="V2 widget sandbox" style="width:100%; height:240px; border:1px solid #e7e5e4; border-radius:8px; background:#fff;"
+                srcdoc='&lt;!doctype html&gt;&lt;html&gt;&lt;body style=&quot;margin:16px; font:14px system-ui;&quot;&gt;&lt;p&gt;V2 widget will appear below:&lt;/p&gt;&lt;script src=&quot;./widget.js&quot; data-shop=&quot;brewed&quot; data-color=&quot;#b45309&quot; data-position=&quot;inline&quot; data-label=&quot;Get a quote on your cards&quot; defer&gt;&lt;/script&gt;&lt;/body&gt;&lt;/html&gt;'></iframe>
+      </div>
+    </div>
+    <p style="margin-top:8px; color:#78716c; font-size:12px;">
+      Tip: use a browser screenshot tool (or the DevTools "capture node screenshot" on each iframe)
+      to do a strict pixel diff. The Network tab inside each iframe should show
+      exactly one <code>POST /api/widget/loaded</code> for V2 and zero for V1.
+    </p>
   </section>
 
   <!-- ─── Comparison panel ─── -->
