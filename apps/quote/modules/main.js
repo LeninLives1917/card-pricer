@@ -226,6 +226,93 @@ function unlockResults() {
   $('gate').style.display = 'none';
 }
 
+// ── Recover saved quote (S12 / F6) ───────────────────────────────────────
+// If the URL hash contains `#recover=<uuid>`, fetch the persisted quote
+// from /api/v2/quote/:id and render it without going through the lookup
+// or email gate. This lets a customer revisit a quote from a stable URL
+// after closing the tab. /q/:id 302s here so the redirect lands with the
+// hash intact.
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function parseRecoverHash() {
+  const m = /#recover=([^&]+)/.exec(location.hash || '');
+  if (!m) return null;
+  const id = decodeURIComponent(m[1]);
+  return UUID_RE.test(id) ? id : null;
+}
+
+async function tryRecoverFromHash() {
+  const id = parseRecoverHash();
+  if (!id) return false;
+  const r = await request('/api/v2/quote/' + encodeURIComponent(id), { method: 'GET' });
+  if (!r.ok || !r.body || typeof r.body !== 'object') {
+    showRecoverError('That saved quote could not be loaded. Try entering your cards again.');
+    return false;
+  }
+  const q = r.body;
+  // Map the sanitised server shape back into the renderer's row shape.
+  const cards = Array.isArray(q.cards) ? q.cards : [];
+  state.results = cards.map((c) => ({
+    line: c.name || '',
+    error: null,
+    card: {
+      name: c.name,
+      set_code: c.set_code,
+      set_name: c.set_name || c.set_code,
+      card_number: c.card_number,
+      condition_estimate: c.condition || 'NM',
+    },
+    market: Number(c.mv) || 0,
+    cash: Number(c.cash) || 0,
+    credit: Number(c.credit) || 0,
+  }));
+  // Skip the email gate — it's already been submitted.
+  state.submitted = true;
+  $('resultsPanel')?.classList.add('visible');
+  $('resultsWrap')?.classList.remove('locked');
+  const gate = $('gate');
+  if (gate) gate.style.display = 'none';
+  renderResults();
+  showRecoverBanner(q);
+  return true;
+}
+
+function showRecoverBanner(q) {
+  let banner = document.getElementById('cpRecoverBanner');
+  if (!banner) {
+    banner = document.createElement('div');
+    banner.id = 'cpRecoverBanner';
+    banner.style.cssText =
+      'margin:0 0 12px;padding:10px 12px;border:1px solid #2c3344;border-radius:6px;background:#161a23;color:#9aa3b2;font-size:13px;';
+    const panel = $('resultsPanel');
+    if (panel) panel.insertBefore(banner, panel.firstChild);
+  }
+  let when = '';
+  try {
+    when = q.created_at ? new Date(q.created_at).toLocaleString() : '';
+  } catch { /* ignore */ }
+  banner.textContent = when
+    ? 'Showing saved quote from ' + when + '.'
+    : 'Showing saved quote.';
+}
+
+function showRecoverError(msg) {
+  // Non-scary inline note. Leave the form usable so the customer can
+  // re-enter cards manually.
+  const input = $('cardInput');
+  if (input && input.parentNode) {
+    let note = document.getElementById('cpRecoverError');
+    if (!note) {
+      note = document.createElement('div');
+      note.id = 'cpRecoverError';
+      note.style.cssText =
+        'margin:0 0 8px;padding:8px 10px;border:1px solid #5a3b3b;border-radius:6px;background:#1d1416;color:#f1c0c0;font-size:13px;';
+      input.parentNode.insertBefore(note, input);
+    }
+    note.textContent = msg;
+  }
+}
+
 // ── Boot ────────────────────────────────────────────────────────────────
 function boot() {
   // Branding first (matches V1 ordering — applyShopBranding fires before
@@ -242,6 +329,13 @@ function boot() {
     request,
     unlockResults,
   });
+
+  // Fire-and-forget recover attempt. Failure leaves the form normal.
+  if (parseRecoverHash()) {
+    tryRecoverFromHash().catch(() => {
+      showRecoverError('Could not load saved quote. Please enter your cards again.');
+    });
+  }
 }
 
 if (document.readyState === 'loading') {

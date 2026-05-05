@@ -135,33 +135,65 @@ router.post('/api/quote-lead', quoteLeadLimiter, async (req, res) => {
         </table>
       </div>`;
 
-    const persistLead = (extra) => {
-      if (!supabase) return;
-      supabase.from('quote_leads').insert({
-        shop_id: shop?.id || null,
-        shop_slug: shop?.slug || null,
-        email,
-        name: name || null,
-        newsletter: !!newsletter,
-        card_count: trimmed.length,
-        total_market: totals?.market || 0,
-        total_cash: totals?.cash || 0,
-        total_credit: totals?.credit || 0,
-        cards_json: trimmed.map(c => ({
-          name: c.name, set_code: c.set_code, card_number: c.card_number,
-          mv: c.market_value, cash: c.cash_offer, credit: c.credit_offer,
-          condition: c.condition_estimate || null
-        })),
-        ip_hash: hashIp(req.ip),
-        ...extra
-      }).then(() => {}, e => console.warn('[QUOTE-LEAD] insert failed:', e.message));
+    // S12 (F6): capture the inserted row's id so the response can return a
+    // stable recovery URL. V1 used fire-and-forget; we now await so the
+    // caller can bookmark the link, but supabase failures still degrade
+    // gracefully (returns null rather than 500ing the whole request).
+    const persistLead = async (extra) => {
+      if (!supabase) return { id: null, persistence: 'unavailable' };
+      try {
+        const { data, error } = await supabase.from('quote_leads').insert({
+          shop_id: shop?.id || null,
+          shop_slug: shop?.slug || null,
+          email,
+          name: name || null,
+          newsletter: !!newsletter,
+          card_count: trimmed.length,
+          total_market: totals?.market || 0,
+          total_cash: totals?.cash || 0,
+          total_credit: totals?.credit || 0,
+          cards_json: trimmed.map(c => ({
+            name: c.name, set_code: c.set_code, card_number: c.card_number,
+            mv: c.market_value, cash: c.cash_offer, credit: c.credit_offer,
+            condition: c.condition_estimate || null
+          })),
+          ip_hash: hashIp(req.ip),
+          ...extra
+        }).select('id').single();
+        if (error) {
+          console.warn('[QUOTE-LEAD] insert failed:', error.message);
+          return { id: null, persistence: 'failed' };
+        }
+        return { id: data?.id || null };
+      } catch (e) {
+        console.warn('[QUOTE-LEAD] insert failed:', e.message);
+        return { id: null, persistence: 'failed' };
+      }
+    };
+
+    // Build the public recovery URL from the request. Honours X-Forwarded-*
+    // because trust-proxy=1 is set on the app (apps/server/index.js).
+    const buildQuoteUrl = (id) => {
+      if (!id) return null;
+      const proto = req.protocol || 'https';
+      const host = req.get('host');
+      if (!host) return null;
+      return `${proto}://${host}/q/${id}`;
     };
 
     if (!process.env.BREVO_API_KEY) {
       console.log('[QUOTE-LEAD] (no BREVO_API_KEY set) would email to', email, 'and', SHOP_EMAIL);
       console.log('[QUOTE-LEAD] payload:', { email, name, newsletter, cardCount: trimmed.length, totals });
-      persistLead();
-      return res.json({ ok: true, emailed: false, note: 'Logged server-side. Set BREVO_API_KEY to enable email.' });
+      const lead = await persistLead();
+      const quote_url = buildQuoteUrl(lead.id);
+      return res.json({
+        ok: true,
+        emailed: false,
+        note: 'Logged server-side. Set BREVO_API_KEY to enable email.',
+        quote_id: lead.id || null,
+        quote_url,
+        ...(lead.persistence ? { persistence: lead.persistence } : {}),
+      });
     }
 
     const sendOne = (toEmail, subject, htmlContent, attachmentsList) => {
@@ -272,8 +304,16 @@ router.post('/api/quote-lead', quoteLeadLimiter, async (req, res) => {
       subscribeIfOptedIn()
     ]);
 
-    persistLead();
-    res.json({ ok: true, emailed: true, subscribed: subRes.subscribed });
+    const lead = await persistLead();
+    const quote_url = buildQuoteUrl(lead.id);
+    res.json({
+      ok: true,
+      emailed: true,
+      subscribed: subRes.subscribed,
+      quote_id: lead.id || null,
+      quote_url,
+      ...(lead.persistence ? { persistence: lead.persistence } : {}),
+    });
   } catch (e) {
     console.error('[QUOTE-LEAD] failed:', e);
     res.status(500).json({ error: e.message || 'Failed to send quote' });

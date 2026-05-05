@@ -98,6 +98,14 @@ export function bindLeadGate({ getResults, getCashPct, getCreditPct, request, un
             ? 'Quote unlocked & emailed. Welcome to the list!'
             : 'Quote unlocked & emailed — check your inbox.'
           : "Quote unlocked. We'll be in touch shortly.";
+
+        // S12 (F6): if persistence succeeded, surface the stable URL so
+        // customers can bookmark / re-open the quote without the email.
+        // When data.quote_url is null (supabase unavailable) we suppress
+        // the bookmark panel and fall back to the email-only message.
+        if (data.quote_url) {
+          successEl.appendChild(buildBookmarkPanel(data.quote_url));
+        }
       }
 
       // Notify the parent widget loader (audit §1c lines 711-727).
@@ -113,6 +121,62 @@ export function bindLeadGate({ getResults, getCashPct, getCreditPct, request, un
       submitBtn.textContent = 'Unlock my quote';
     }
   });
+}
+
+/**
+ * S12 (F6): build the "Bookmark this URL" panel shown after a successful
+ * submit. Two pieces: the URL displayed read-only (for muscle-memory
+ * copy-paste) + a Copy button that calls navigator.clipboard. We do NOT
+ * use innerHTML here — every value passes through textContent / value
+ * assignments so quote_url can never inject markup.
+ */
+function buildBookmarkPanel(url) {
+  const wrap = document.createElement('div');
+  wrap.style.cssText =
+    'margin-top:10px;padding:10px;border:1px solid #2c3344;border-radius:6px;background:#161a23;';
+
+  const label = document.createElement('div');
+  label.textContent = 'Bookmark this URL to revisit your quote:';
+  label.style.cssText = 'font-size:12px;color:#9aa3b2;margin-bottom:6px;';
+  wrap.appendChild(label);
+
+  const row = document.createElement('div');
+  row.style.cssText = 'display:flex;gap:6px;align-items:center;';
+
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.readOnly = true;
+  input.value = url;
+  input.style.cssText =
+    'flex:1;font-size:12px;padding:6px 8px;border:1px solid #2c3344;border-radius:4px;background:#0e1117;color:#e6e8ec;font-family:monospace;';
+  input.addEventListener('focus', () => input.select());
+  row.appendChild(input);
+
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.textContent = 'Copy';
+  btn.style.cssText =
+    'font-size:12px;padding:6px 10px;border:1px solid #2c3344;border-radius:4px;background:#1f2330;color:#e6e8ec;cursor:pointer;';
+  btn.addEventListener('click', async () => {
+    try {
+      if (navigator?.clipboard?.writeText) {
+        await navigator.clipboard.writeText(url);
+      } else {
+        input.select();
+        document.execCommand && document.execCommand('copy');
+      }
+      const prev = btn.textContent;
+      btn.textContent = 'Copied!';
+      setTimeout(() => { btn.textContent = prev; }, 1500);
+    } catch {
+      // Clipboard blocked — at least the input is selected for manual copy.
+      input.select();
+    }
+  });
+  row.appendChild(btn);
+
+  wrap.appendChild(row);
+  return wrap;
 }
 
 /**
