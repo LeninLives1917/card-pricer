@@ -1,19 +1,22 @@
 // apps/server/routes/account.js
-// Owner: A1 | Slice: S5
+// Owner: A1 | Slice: S5 (S16 wires GET/PUT /api/state into the F17 dual-writer)
 //
 // Routes (V1 server.js:180-187, 222-280, 284-299, 793-823):
 //   GET  /api/usage          — requireAuth
 //   POST /api/welcome-email  — requireAuth
 //   GET  /api/me             — requireAuth
-//   GET  /api/state          — requireAuth
-//   PUT  /api/state          — requireAuth (10MB body cap)
+//   GET  /api/state          — requireAuth (S16: delegates to db/sessions/reader.js)
+//   PUT  /api/state          — requireAuth, 10MB body cap (S16: delegates to db/sessions/dual-write.js)
 //
-// /api/v2/sessions arrives in S16 (sessions cutover, A3) — not in S5 scope.
+// /api/v2/sessions arrives in a later slice (still TBD). The S16 cutover
+// is invisible to the client — /api/state response shape is identical.
 
 import express from 'express';
 import { supabase } from '../_clients.js';
 import { requireAuth } from '../middleware/auth.js';
 import { getUsage } from '../middleware/quota.js';
+import { readState } from '../../../db/sessions/reader.js';
+import { dualWriteState } from '../../../db/sessions/dual-write.js';
 
 const router = express.Router();
 
@@ -103,31 +106,35 @@ router.get('/api/me', requireAuth, async (req, res) => {
   }
 });
 
+// GET /api/state — V1 response shape preserved verbatim:
+//   { state: { sessions, currentSessionId, wantlist, v } | null, updated_at }
+// Reader chooses JSONB vs. reconstructed-relational based on
+// READ_FROM_RELATIONAL (db/sessions/cutover-flag.js). Default JSONB.
 router.get('/api/state', requireAuth, async (req, res) => {
   try {
-    const { data, error } = await supabase
-      .from('user_state')
-      .select('state, updated_at')
-      .eq('user_id', req.user.id)
-      .maybeSingle();
-    if (error) throw error;
-    res.json({ state: data?.state || null, updated_at: data?.updated_at || null });
+    const out = await readState(req.user.id, supabase);
+    res.json(out);
   } catch (e) {
     console.error('[STATE] get failed:', e.message);
     res.status(500).json({ error: e.message });
   }
 });
 
+// PUT /api/state — V1 body shape preserved: { state: {...} } replaces the
+// whole blob. The dual-writer fans out to user_state JSONB AND
+// sessions/session_cards rows. The 10MB body cap is unchanged.
 router.put('/api/state', requireAuth, express.json({ limit: '10mb' }), async (req, res) => {
   try {
     const state = req.body?.state;
     if (!state || typeof state !== 'object') {
       return res.status(400).json({ error: 'body must include a state object' });
     }
-    const { error } = await supabase
-      .from('user_state')
-      .upsert({ user_id: req.user.id, state, updated_at: new Date().toISOString() });
-    if (error) throw error;
+    const result = await dualWriteState(req.user.id, state, supabase);
+    if (!result.ok) {
+      // dualWriteState only returns ok=false when JSONB itself failed
+      // (or the env wasn't configured). Surface 500 to mirror V1.
+      throw new Error(result.reason || 'dual-write failed');
+    }
     res.json({ ok: true });
   } catch (e) {
     console.error('[STATE] put failed:', e.message);
