@@ -67,12 +67,17 @@ import { errorHandler } from './middleware/error-handler.js';
 
 import identifyRouter from './routes/identify.js';
 import priceRouter from './routes/price.js';
+import priceSealedRouter from './routes/price-sealed.js'; // S17
 import cardDbRouter from './routes/card-db.js';
 import accountRouter from './routes/account.js';
 import billingRouter from './routes/billing.js';
 import adminRouter from './routes/admin.js';
 import shopRouter from './routes/shop.js';
 import quoteLeadRouter from './routes/quote-lead.js';
+import quoteRecoverRouter from './routes/quote-recover.js'; // S12
+import quoteOfferRouter from './routes/quote-offer.js';     // S20
+import customerRouter from './routes/customer.js';          // S20
+import inventoryRouter from './routes/inventory.js';        // S18
 import roomRouter from './routes/room.js';
 import searchRouter from './routes/search.js';
 import healthRouter from './routes/health.js';
@@ -118,13 +123,18 @@ app.use(adminRouter);       // /api/admin/*, /api/metrics
 app.use(billingRouter);     // /api/checkout, /api/portal, /api/stripe-webhook
 app.use(staticRoutes.earlyStatic);  // /service-worker.js, /, /index.html, /widget.js, /quote (BEFORE express.static)
 app.use(staticRoutes.staticAssets); // express.static('public', etag:false, maxAge:0)
-app.use(identifyRouter);    // /api/identify*, /api/identify-stream, /api/identify-manual, /api/read-set-code, /api/lookup-by-number, /api/report-bad-id, /api/correct-card
+app.use(identifyRouter);    // /api/identify*, /api/identify-stream, /api/identify-manual, /api/read-set-code, /api/lookup-by-number, /api/report-bad-id, /api/correct-card, /api/v2/identify-ocr-first, /api/v2/quote/identify-manual
 app.use(cardDbRouter);      // /api/card-db-*
-app.use(priceRouter);       // /api/price
+app.use(priceRouter);       // /api/price, /api/v2/quote/price
+app.use(priceSealedRouter); // /api/v2/price-sealed (S17)
 app.use(searchRouter);      // /api/search
 app.use(healthRouter);      // /api/health, /api/version, /api/widget/loaded
 app.use(roomRouter);        // /api/room/:id/*
 app.use(quoteLeadRouter);   // /api/quote-lead
+app.use(quoteRecoverRouter);// /api/v2/quote/:id, /q/:id (S12) — MUST be before spaFallback
+app.use(quoteOfferRouter);  // /api/v2/quote-offer + /:token/{accept,decline} (S20)
+app.use(customerRouter);    // /api/v2/customer/me + /offers + /magic-link (S20)
+app.use(inventoryRouter);   // /api/v2/inventory/* (S18)
 app.use(shopRouter);        // /api/shop, /api/shop-config/:slug
 
 // SPA fallback MUST be last (V2_AUDIT §1 — line 5707 in V1).
