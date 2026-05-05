@@ -185,6 +185,73 @@ test('renderPrintHtml renders the row image, name, set label, and prices', () =>
   assert.match(html, /€7\.00/);
 });
 
+// ── Cardmarket link ───────────────────────────────────────────────────────
+
+test('buildRow uses cardmarket.url first, falls back to filtered/search/card.cardmarket_url', () => {
+  // Top priority: cardmarket.url.
+  assert.equal(buildRow({
+    cardmarket: { url: 'https://www.cardmarket.com/en/Pokemon/Products/123', filtered_url: 'X' },
+    card: { cardmarket_url: 'Z' },
+  }, 50, 70).cardmarketUrl, 'https://www.cardmarket.com/en/Pokemon/Products/123');
+
+  // Then filtered_url.
+  assert.equal(buildRow({
+    cardmarket: { filtered_url: 'https://www.cardmarket.com/en/Pokemon/Products/123?lang=en' },
+    card: { cardmarket_url: 'Z' },
+  }, 50, 70).cardmarketUrl, 'https://www.cardmarket.com/en/Pokemon/Products/123?lang=en');
+
+  // Then search_url.
+  assert.equal(buildRow({
+    cardmarket: { search_url: 'https://www.cardmarket.com/en/Pokemon/Products/Search?q=pikachu' },
+  }, 50, 70).cardmarketUrl, 'https://www.cardmarket.com/en/Pokemon/Products/Search?q=pikachu');
+
+  // Last: manual-entry's card.cardmarket_url.
+  assert.equal(buildRow({
+    card: { cardmarket_url: 'https://www.cardmarket.com/en/Pokemon/Products/Pikachu' },
+  }, 50, 70).cardmarketUrl, 'https://www.cardmarket.com/en/Pokemon/Products/Pikachu');
+
+  // Empty when nothing set.
+  assert.equal(buildRow({ card: {} }, 50, 70).cardmarketUrl, '');
+});
+
+test('buildRow rejects non-http URLs (javascript:, data:, etc.)', () => {
+  assert.equal(buildRow({
+    cardmarket: { url: 'javascript:alert(1)' },
+  }, 50, 70).cardmarketUrl, '');
+  assert.equal(buildRow({
+    cardmarket: { url: 'data:text/html,<script>alert(1)</script>' },
+  }, 50, 70).cardmarketUrl, '');
+});
+
+// Test against the body of the rendered HTML only (skip the inline <style>),
+// because the CSS contains comments that mention link copy.
+function bodyOf(html) {
+  const i = html.indexOf('</style>');
+  return i < 0 ? html : html.slice(i + '</style>'.length);
+}
+
+test('renderPrintHtml emits a Cardmarket hyperlink on the name and a footer line', () => {
+  const ctx = sampleCtx();
+  ctx.rows[0].cardmarketUrl = 'https://www.cardmarket.com/en/Pokemon/Products/Singles/Pikachu';
+  const body = bodyOf(renderPrintHtml(ctx));
+  // Name wrapped in <a href="..."> pointing at Cardmarket.
+  assert.match(body, /<a href="https:\/\/www\.cardmarket\.com\/en\/Pokemon\/Products\/Singles\/Pikachu"[^>]*>Pikachu<\/a>/);
+  // Visible footer link line (anchor with the dedicated class).
+  assert.match(body, /<a[^>]*class="card-cm-foot"[^>]*>View on Cardmarket/);
+  // Anchor opens in a new tab when viewed digitally and doesn't leak the
+  // referrer back to Render.
+  assert.match(body, /target="_blank"/);
+  assert.match(body, /rel="noopener"/);
+});
+
+test('renderPrintHtml omits the link when no Cardmarket URL is available', () => {
+  const ctx = sampleCtx();
+  ctx.rows[0].cardmarketUrl = '';
+  const body = bodyOf(renderPrintHtml(ctx));
+  assert.doesNotMatch(body, /class="card-cm-foot"/);
+  assert.doesNotMatch(body, /<a [^>]*>Pikachu<\/a>/);
+});
+
 test('renderPrintHtml disclaimer says "Near-Mint English" not "trend"', () => {
   const html = renderPrintHtml(sampleCtx());
   assert.match(html, /Near-Mint English/);

@@ -197,6 +197,12 @@ function buildRow(entry, cashPct, creditPct) {
   const creditRaw = round2(market * (creditPct / 100));
   const qty = (entry.duplicate_count || 0) + 1;
   const image = entry.reference_image || card.image_url || card.reference_image || '';
+  // Cardmarket link priority: the priced entry's product URL (best — direct
+  // to the card page), then its filtered / search fallback, then the URL
+  // captured during manual identify. Only include http(s) links so we
+  // don't render `javascript:` or other schemes from a malformed entry.
+  const rawLink = cm.url || cm.filtered_url || cm.search_url || card.cardmarket_url || '';
+  const cardmarketUrl = /^https?:\/\//i.test(rawLink) ? rawLink : '';
   return {
     name: card.name || 'Unknown card',
     setLabel: [card.set_code, card.card_number].filter(Boolean).join(' '),
@@ -204,6 +210,7 @@ function buildRow(entry, cashPct, creditPct) {
     rarity: card.rarity || '',
     qty,
     image,
+    cardmarketUrl,
     marketRaw: market * qty,
     cashRaw: cashRaw * qty,
     creditRaw: creditRaw * qty,
@@ -242,22 +249,38 @@ function renderPrintHtml(ctx) {
   if (showCash) offerCols.push({ label: `Cash offer (${cashPct}%)`, key: 'cash', total: totals.cash });
   if (showCredit) offerCols.push({ label: `Store credit (${creditPct}%)`, key: 'credit', total: totals.credit });
 
-  const cardsHtml = rows.map((r) => `
+  const cardsHtml = rows.map((r) => {
+    // Image gets crossorigin removed (it forces CORS preflight that
+    // pokemontcg.io / scryfall don't honour for hotlinks, leaving the
+    // <img> broken in the PDF). referrer-policy stays so we don't leak
+    // Render's host as the referrer.
+    const img = r.image
+      ? `<img src="${escapeAttr(r.image)}" alt="" referrerpolicy="no-referrer">`
+      : '';
+    // Wrap thumb + name in a Cardmarket hyperlink when we have one. PDF
+    // viewers preserve <a href> as clickable links — the customer can tap
+    // through to verify the listing themselves.
+    const linkOpen  = r.cardmarketUrl ? `<a href="${escapeAttr(r.cardmarketUrl)}" target="_blank" rel="noopener" class="card-link">` : '';
+    const linkClose = r.cardmarketUrl ? `</a>` : '';
+    const linkFoot = r.cardmarketUrl
+      ? `<a class="card-cm-foot" href="${escapeAttr(r.cardmarketUrl)}" target="_blank" rel="noopener">View on Cardmarket →</a>`
+      : '';
+    return `
     <article class="card">
-      <div class="card-thumb">
-        ${r.image ? `<img src="${escapeAttr(r.image)}" alt="" referrerpolicy="no-referrer" crossorigin="anonymous">` : ''}
-      </div>
+      <div class="card-thumb">${img}</div>
       <div class="card-body">
-        <h3 class="card-name">${escapeHtml(r.name)}${r.qty > 1 ? ` <span class="qty">×${r.qty}</span>` : ''}</h3>
+        <h3 class="card-name">${linkOpen}${escapeHtml(r.name)}${linkClose}${r.qty > 1 ? ` <span class="qty">×${r.qty}</span>` : ''}</h3>
         <p class="card-set">${escapeHtml(r.setLabel)}${r.setName ? ' · ' + escapeHtml(r.setName) : ''}${r.rarity ? ' · ' + escapeHtml(r.rarity) : ''}</p>
         <dl class="card-prices">
           <div><dt>Market</dt><dd>${r.market}</dd></div>
           ${showCash   ? `<div class="cash"><dt>Cash offer</dt><dd>${r.cash}</dd></div>`     : ''}
           ${showCredit ? `<div class="credit"><dt>Store credit</dt><dd>${r.credit}</dd></div>` : ''}
         </dl>
+        ${linkFoot}
       </div>
     </article>
-  `).join('');
+  `;
+  }).join('');
 
   return `<!doctype html>
 <html lang="en">
@@ -390,6 +413,26 @@ function renderPrintHtml(ctx) {
   }
   .card-prices .cash dd   { color: #855410; }
   .card-prices .credit dd { color: #2f6f3a; }
+
+  /* Card name doubles as a Cardmarket link — keep the visual identical
+     to plain text (no underline, no colour change) so the printed page
+     stays clean; the hyperlink is preserved by PDF viewers regardless. */
+  .card-name a {
+    color: inherit;
+    text-decoration: none;
+  }
+  /* Small "View on Cardmarket →" line under the prices. Visually
+     present so the customer knows the row is verifiable, plus a real
+     hyperlink for digital-PDF readers. */
+  .card-cm-foot {
+    display: block;
+    margin-top: 6px;
+    font-size: 8.5pt;
+    font-weight: 500;
+    color: #1f5fa6;
+    text-decoration: none;
+    letter-spacing: 0.2px;
+  }
 
   footer.totals {
     margin-top: 18px;
