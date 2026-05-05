@@ -946,3 +946,179 @@ table tbody td.num {
   gap: var(--p-1);
   margin-bottom: var(--p-3);
 }
+
+/* ============================================================
+   RESPONSIVE — S22 / F11 (mobile-first polish)
+
+   Breakpoints (consistent with quote + customer apps):
+     640px → tables / multi-column rows collapse to card-list / stacked
+     540px → settings forms collapse to one column; signature type drops
+     390px → minimum-supported viewport (iPhone 14 Pro) — last-resort tweaks
+     hover:none + pointer:coarse → touch-only fixes
+
+   No new tokens introduced. Only padding / font-size / layout overrides.
+   ============================================================ */
+
+/* --- 640px: arbitrage card-list, admin user table, session log row --- */
+@media (max-width: 640px) {
+  /* Admin arbitrage rows are built inline as
+     .surface { display:grid; grid-template-columns:48px 1fr auto auto } —
+     stack image+meta on top and ratio/spread on a new row below. */
+  #tab-admin .surface[style*="grid-template-columns"] {
+    grid-template-columns: 48px 1fr !important;
+    grid-auto-rows: auto;
+    row-gap: var(--p-2);
+  }
+  #tab-admin .surface[style*="grid-template-columns"] > *:nth-child(3),
+  #tab-admin .surface[style*="grid-template-columns"] > *:nth-child(4) {
+    grid-column: 1 / -1;
+    text-align: left;
+  }
+
+  /* Admin user table: hide rank-style narrow columns? Cleaner: scroll
+     horizontally inside its own surface so figures stay tabular. */
+  .top-cards-table,
+  table {
+    display: block;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    white-space: nowrap;
+  }
+
+  /* Session log row (the V1-style buy log) — stack thumb above text/price. */
+  .session-log-row {
+    grid-template-columns: 48px 1fr;
+    grid-template-areas:
+      "thumb info"
+      "price price";
+    row-gap: var(--p-1);
+  }
+  .session-log-row .thumb { grid-area: thumb; }
+  .session-log-row > .name,
+  .session-log-row > .meta,
+  .session-log-row > div:nth-child(2) { grid-area: info; }
+  .session-log-row .price {
+    grid-area: price;
+    text-align: right;
+    padding-top: var(--p-1);
+    border-top: 1px dashed var(--hairline);
+  }
+}
+
+/* --- 540px: settings → one column; tabs label 12px; modal width --- */
+@media (max-width: 540px) {
+  /* Settings rows: stack label above value rather than space-between. */
+  .setting-row {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--p-1);
+  }
+  .setting-row .figure,
+  .setting-row .setting-value {
+    align-self: stretch;
+    text-align: right;
+  }
+
+  /* Tabs: 5-tab admin row gets cramped; reduce label font + padding,
+     keep horizontal scroll fallback. */
+  .tabs {
+    gap: var(--p-2);
+    scroll-snap-type: x mandatory;
+  }
+  .tab {
+    font-size: 12px;
+    padding: var(--p-2) var(--p-2);
+    scroll-snap-align: start;
+  }
+
+  /* Mode-toggle (Bulk / Text / Manual entry) — shrink label & padding. */
+  #tab-scan .surface[style*="display:flex"] .btn { font-size: 12px; }
+
+  /* Modals on a phone — let them fill the viewport with breathing room. */
+  .modal {
+    max-width: calc(100vw - 16px);
+    padding: var(--p-3);
+  }
+  .modal h2 { font-size: 18px; }
+
+  /* Result-sheet card-name: 28 → 22; meta + grid stay legible. */
+  .sheet-card-name { font-size: 22px; }
+  .sheet-prices { grid-template-columns: 1fr; gap: var(--p-1); }
+  .sheet-actions { grid-template-columns: 1fr; }
+
+  /* Slider rows full-width on phone. */
+  .slider-row {
+    grid-template-columns: 1fr auto;
+    grid-template-areas:
+      "label value"
+      "input input";
+    row-gap: var(--p-1);
+  }
+  .slider-row > .label-text { grid-area: label; }
+  .slider-row > .figure { grid-area: value; }
+  .slider-row > input[type="range"] { grid-area: input; }
+
+  /* Session-strip: keep 3-up but shrink type so it doesn't wrap. */
+  .session-strip { padding: var(--p-2); }
+  .session-strip .stat-val { font-size: 15px; }
+
+  /* Pair QR — keep readable but don't overflow narrow viewports. */
+  #pairQRWrap canvas, #pairQRWrap img { width: 200px; height: 200px; }
+}
+
+/* --- 390px: iPhone 14 Pro / Plus 14 portrait floor --- */
+@media (max-width: 390px) {
+  /* Tabs: 5 buttons in a horizontal row at 358px need extra-tight gap. */
+  .tabs { gap: 4px; }
+  .tab { font-size: 11px; padding: var(--p-2) 6px; }
+
+  /* Mode toggle row gap shrinks too. */
+  #tab-scan .surface[style*="display:flex"] { gap: 6px !important; }
+  #tab-scan .surface[style*="display:flex"] .btn { padding: var(--p-2) var(--p-2); }
+
+  /* Btn-row gaps tighten. */
+  .btn-row { gap: 6px; }
+
+  /* Header h1 shrinks. */
+  .header h1 { font-size: 17px; }
+  .header { padding: var(--p-2) var(--p-1); }
+}
+
+/* --- Touch / coarse-pointer: 44px targets, no hover lift, fat focus --- */
+@media (hover: none) and (pointer: coarse) {
+  .btn,
+  .tab,
+  .auth-tab,
+  .sheet-action,
+  .session-pill,
+  .install-nudge button {
+    min-height: 44px;
+    padding-top: var(--p-2);
+    padding-bottom: var(--p-2);
+  }
+
+  /* No `:hover` lift on touch — these only fire on a trailing-hover
+     touchscreen and create sticky highlight states. */
+  .btn:hover,
+  .btn.primary:hover,
+  .btn.ghost:hover,
+  .tab:hover,
+  .candidate:hover,
+  .bulk-drop:hover,
+  .offer-card:hover,
+  footer a:hover {
+    background: inherit;
+    color: inherit;
+    border-color: inherit;
+  }
+
+  /* Larger focus ring on touch — easier to spot on a moving viewport. */
+  :focus-visible {
+    outline-width: 3px;
+    outline-offset: 3px;
+  }
+
+  /* Capture-style action buttons (any "btn primary" larger control) get
+     a more comfortable hit area. */
+  .auth-submit { min-height: 48px; }
+}

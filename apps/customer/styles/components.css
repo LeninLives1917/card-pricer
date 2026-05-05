@@ -445,11 +445,62 @@ hr.hairline {
 }
 
 /* 10. Mobile tweaks --------------------------------------------------- */
+
+/* 640px: line-table on the offer-accept view scrolls horizontally rather
+   than crushing the figure column. Keeps tabular-nums alignment intact. */
+@media (max-width: 640px) {
+  .line-table { display: block; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  .line-table thead, .line-table tbody, .line-table tr { width: max-content; min-width: 100%; }
+}
+
+/* 540px: phone polish — the customer surface is phone-only first-touch.
+   Stack offer-accept actions, account form to one column, sign-in CTA
+   gets touch-comfortable padding. */
 @media (max-width: 540px) {
   .wrap { padding: 18px 12px 64px; }
   h1 { font-size: 24px; }
+  h2 { font-size: 19px; margin-top: 24px; }
+  .sub { font-size: 14px; margin-bottom: 18px; }
+
+  .panel { padding: 18px 16px; }
+
   .offer-header .total { font-size: 30px; }
-  .offer-card { padding: 14px 16px; }
-  .offer-card .offer-total { font-size: 16px; }
-  .cta-row .btn { width: 100%; flex: 1 1 100%; }
+
+  /* Offer cards — tighter padding, stack offer-meta + total vertically
+     so long shop names don't truncate into a useless ellipsis. */
+  .offer-card {
+    padding: 14px 16px;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+  }
+  .offer-card .offer-total { font-size: 16px; align-self: flex-end; }
+
+  /* Offer-list is already a 1-up flex column — nothing to do for the
+     spec's "dashboard tiles 1-up" rule beyond what's already shipped. */
+
+  /* CTA row in the offer-accept view stacks 1-up; full-width buttons. */
+  .cta-row { flex-direction: column; gap: 10px; }
+  .cta-row .btn { width: 100%; flex: 1 1 100%; min-height: 48px; }
+
+  /* Account-edit form is a single column already (form-row is column),
+     but bump the input height + submit-row width so the keyboard doesn't
+     misalign the submit button. */
+  .form-row input[type="email"],
+  .form-row input[type="text"],
+  .form-row select { min-height: 44px; font-size: 16px; /* iOS no-zoom */ }
+  .btn-row { flex-direction: column; }
+  .btn-row .btn { width: 100%; }
+
+  /* Sign-in CTA — ensure full-width 48px target; the form is centered
+     via .signin-form max-width:420px so on a phone it fills the wrap. */
+  .signin-form .btn.primary { width: 100%; min-height: 48px; }
+}
+
+/* Touch + coarse-pointer: 44px hit targets, fatter focus ring, no hover. */
+@media (hover: none) and (pointer: coarse) {
+  .btn { min-height: 44px; }
+  .nav a, .nav button { min-height: 32px; padding: 8px 0; }
+  .offer-card:hover { border-color: var(--hairline); }
+  :focus-visible { outline-width: 3px; outline-offset: 3px; }
 }

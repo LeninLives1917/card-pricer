@@ -565,3 +565,69 @@ footer a:hover {
     flex-wrap: nowrap;
   }
 }
+
+/* Mobile polish — S22 / F11 -------------------------------------------- */
+
+/* 640px floor: how-to panel stacks SVG above text (already wrap-able,
+   force the column flow so the SVG always leads). */
+@media (max-width: 640px) {
+  .how-to {
+    flex-direction: column;
+    gap: 14px;
+  }
+  .card-diagram { align-self: center; }
+  .how-to-text { width: 100%; min-width: 0; }
+
+  /* h1 trims a little for narrower viewports. */
+  h1 { font-size: 26px; }
+}
+
+/* 540px: card-list rows stack icon above meta above prices; totals 1×3. */
+@media (max-width: 540px) {
+  .wrap { padding: 16px 12px 72px; }
+
+  /* Totals — 3-up grid stretches the eye on a 360px viewport.
+     1-up stack reads cleaner and keeps prices in tabular alignment. */
+  .totals {
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+  .totals .stat { padding: 12px; }
+  .totals .stat-value { font-size: 20px; }
+
+  /* Card rows — collapse 36px-icon | meta | prices into a 2-row stack:
+     icon + meta on the top row, prices right-aligned underneath. */
+  .card-row {
+    grid-template-columns: 36px 1fr;
+    grid-template-areas:
+      "icon meta"
+      "prices prices";
+    row-gap: 8px;
+  }
+  .card-icon { grid-area: icon; }
+  .card-meta { grid-area: meta; }
+  .card-prices {
+    grid-area: prices;
+    text-align: right;
+    padding-top: 6px;
+    border-top: 1px dashed var(--hairline);
+  }
+
+  /* Buttons in the entry section take full width; let .btn-row stack. */
+  .btn-row { flex-direction: column; }
+  .btn-clear { width: 100%; }
+
+  /* Panel padding shrinks to claw back horizontal real-estate. */
+  .panel { padding: 14px; }
+
+  /* Entry textarea height drops so the keyboard doesn't shove the
+     whole layout. */
+  .entry-section textarea { min-height: 130px; }
+}
+
+/* Touch + coarse-pointer: 44px hit targets on the customer-facing CTAs. */
+@media (hover: none) and (pointer: coarse) {
+  .btn { min-height: 44px; padding: 14px 20px; }
+  .lead-form input { min-height: 44px; }
+  :focus-visible { outline-width: 3px; outline-offset: 3px; }
+}
