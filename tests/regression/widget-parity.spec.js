@@ -117,11 +117,16 @@ test('widget-v1.js carries the rollback-target header', () => {
 test('widget-v1.js content matches public/widget.js byte-for-byte modulo top header', () => {
   // Strip our added top-comment line from the v1 backup; the remainder MUST
   // equal the live file. This is the "verbatim copy" contract.
-  const v1WithoutHeader = v1.replace(/^\/\/ ROLLBACK TARGET[^\n]*\n/, '');
+  // Line-ending normalisation: git's autocrlf on Windows can convert LF→CRLF
+  // on checkout for one file but not the other depending on .gitattributes
+  // state. The "verbatim copy" contract is about CONTENT, not line-end
+  // encoding, so normalise both sides to LF before comparison.
+  const v1WithoutHeader = v1.replace(/^\/\/ ROLLBACK TARGET[^\n]*\n/, '').replace(/\r\n/g, '\n');
+  const liveLf = live.replace(/\r\n/g, '\n');
   assert.equal(
     v1WithoutHeader,
-    live,
-    'apps/widget/widget-v1.js content (after stripping the rollback header) must equal public/widget.js byte-for-byte',
+    liveLf,
+    'apps/widget/widget-v1.js content (after stripping the rollback header) must equal public/widget.js byte-for-byte (LF-normalised)',
   );
 });
 
