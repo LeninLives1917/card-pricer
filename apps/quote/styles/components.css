@@ -1,0 +1,633 @@
+/* apps/quote/styles/components.css
+ * Owner: A5 | Slice: S8
+ *
+ * Component styles for the customer quote page. Editorial rhythm —
+ * larger Fraunces, more whitespace, slower pace than the vendor app.
+ * Tokens come from tokens.css (load order matters).
+ *
+ * Ported from V1 public/quote.html <style> block, with the legacy aliases
+ * (--bg, --bg-deep, --panel, --cash duplicate, --credit alias, --cream)
+ * removed per IMPLEMENTATION_PLAN.md Phase E. All references now point at
+ * the canonical tokens directly.
+ */
+
+.wrap {
+  max-width: 780px;
+  margin: 0 auto;
+  padding: 24px 16px 96px;
+}
+
+/* Brand header --------------------------------------------------------- */
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 8px 0 28px;
+}
+.brand-logo {
+  width: 56px;
+  height: 56px;
+  border-radius: var(--r-2);
+  overflow: hidden;
+  background: var(--ink-300);
+  display: grid;
+  place-items: center;
+}
+.brand-logo img,
+.brand-logo svg {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+}
+.brand-name {
+  font-family: 'Fraunces', Georgia, serif;
+  font-size: 22px;
+  font-weight: 600;
+  font-style: italic;
+  letter-spacing: -0.02em;
+  color: var(--paper-100);
+}
+.brand-tag {
+  font-family: 'IBM Plex Sans', system-ui, sans-serif;
+  font-size: 11px;
+  color: var(--paper-300);
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  margin-top: 2px;
+}
+
+/* Display headings ----------------------------------------------------- */
+h1 {
+  font-family: 'Fraunces', Georgia, serif;
+  font-size: 32px;
+  margin: 8px 0 12px;
+  line-height: 1.1;
+  font-weight: 600;
+  font-style: italic;
+  letter-spacing: -0.02em;
+  color: var(--paper-100);
+}
+h1 .accent {
+  color: var(--accent);
+  font-style: italic;
+}
+.sub {
+  font-family: 'IBM Plex Sans', system-ui, sans-serif;
+  color: var(--paper-200);
+  font-size: 15px;
+  margin: 0 0 28px;
+  line-height: 1.55;
+  max-width: 56ch;
+}
+
+h2 {
+  font-family: 'Fraunces', Georgia, serif;
+  font-size: 20px;
+  font-weight: 600;
+  font-style: italic;
+  letter-spacing: -0.02em;
+  margin: 0 0 12px;
+  color: var(--paper-100);
+}
+
+/* Panels --------------------------------------------------------------- */
+.panel {
+  background: var(--ink-200);
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-2);
+  padding: 20px;
+  margin-bottom: 16px;
+}
+
+/* How-to diagram ------------------------------------------------------- */
+.how-to {
+  display: flex;
+  gap: 20px;
+  align-items: flex-start;
+  margin-bottom: 4px;
+  flex-wrap: wrap;
+}
+.card-diagram {
+  flex: 0 0 auto;
+}
+.how-to-text {
+  flex: 1;
+  min-width: 200px;
+}
+.how-to-text h3 {
+  font-family: 'IBM Plex Sans', system-ui, sans-serif;
+  margin: 0 0 10px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--paper-300);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.how-to-text p {
+  margin: 0 0 6px;
+  font-family: 'IBM Plex Sans', system-ui, sans-serif;
+  font-size: 13px;
+  color: var(--paper-300);
+  line-height: 1.55;
+}
+.how-to-text .step {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  margin-bottom: 10px;
+}
+.step-num {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--accent-mute);
+  border: 1px solid var(--accent);
+  color: var(--accent-soft);
+  font-family: 'IBM Plex Mono', ui-monospace, monospace;
+  font-size: 11px;
+  font-weight: 500;
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+.step-text {
+  font-family: 'IBM Plex Sans', system-ui, sans-serif;
+  font-size: 13px;
+  color: var(--paper-100);
+  line-height: 1.5;
+}
+.step-text code,
+.format-hint code {
+  font-family: 'IBM Plex Mono', ui-monospace, monospace;
+  font-variant-numeric: tabular-nums;
+  background: var(--ink-300);
+  padding: 1px 6px;
+  border-radius: var(--r-1);
+  font-size: 12px;
+  color: var(--accent-soft);
+}
+
+/* Entry area ----------------------------------------------------------- */
+.entry-section {
+  margin-bottom: 16px;
+}
+.entry-section label {
+  display: block;
+  font-family: 'IBM Plex Sans', system-ui, sans-serif;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--paper-300);
+  margin-bottom: 6px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.entry-section select,
+.entry-section textarea {
+  width: 100%;
+  padding: 11px 14px;
+  border-radius: var(--r-2);
+  border: 1px solid var(--hairline);
+  background: var(--ink-300);
+  color: var(--paper-100);
+  font-family: 'IBM Plex Sans', system-ui, sans-serif;
+  font-size: 14px;
+  transition: border-color var(--t-fast) var(--ease);
+}
+.entry-section textarea {
+  min-height: 160px;
+  font-family: 'IBM Plex Mono', ui-monospace, monospace;
+  font-variant-numeric: tabular-nums;
+  font-size: 14px;
+  line-height: 1.7;
+  resize: vertical;
+}
+.entry-section select:focus,
+.entry-section textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+.entry-section textarea::placeholder {
+  color: var(--paper-400);
+  opacity: 1;
+}
+.format-hint {
+  font-family: 'IBM Plex Sans', system-ui, sans-serif;
+  font-size: 12px;
+  color: var(--paper-300);
+  margin-top: 8px;
+  line-height: 1.6;
+}
+
+/* Buttons -------------------------------------------------------------- */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 12px 20px;
+  border-radius: var(--r-2);
+  border: none;
+  font-family: 'IBM Plex Sans', system-ui, sans-serif;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background var(--t-fast) var(--ease);
+  width: 100%;
+  letter-spacing: 0.01em;
+}
+.btn.primary {
+  background: var(--accent);
+  color: var(--ink-100);
+}
+.btn.primary:hover:not(:disabled) {
+  background: var(--accent-soft);
+}
+.btn.primary:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.btn.secondary {
+  background: var(--ink-300);
+  color: var(--paper-100);
+  border: 1px solid var(--hairline);
+}
+.btn.secondary:hover {
+  background: var(--ink-400);
+}
+.btn-row {
+  display: flex;
+  gap: 8px;
+  margin-top: 14px;
+}
+.btn-clear {
+  flex: 0 0 auto;
+  width: auto;
+  padding: 14px 16px;
+}
+
+/* Progress bar --------------------------------------------------------- */
+.progress-wrap {
+  margin-top: 14px;
+  height: 4px;
+  background: var(--ink-300);
+  border-radius: var(--r-1);
+  overflow: hidden;
+}
+.progress-bar {
+  height: 100%;
+  background: var(--accent);
+  width: 0%;
+  transition: width 0.3s var(--ease);
+}
+.progress-label {
+  font-family: 'IBM Plex Mono', ui-monospace, monospace;
+  font-variant-numeric: tabular-nums;
+  font-size: 11px;
+  color: var(--paper-300);
+  text-align: center;
+  margin-top: 8px;
+  letter-spacing: 0.04em;
+}
+
+/* Results -------------------------------------------------------------- */
+.results {
+  display: none;
+}
+.results.visible {
+  display: block;
+}
+
+.totals {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+  margin-bottom: 16px;
+}
+.totals .stat {
+  background: var(--ink-300);
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-2);
+  padding: 14px 12px;
+  text-align: center;
+}
+.totals .stat-label {
+  font-family: 'IBM Plex Sans', system-ui, sans-serif;
+  font-size: 10px;
+  color: var(--paper-300);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-weight: 500;
+}
+.totals .stat-value {
+  font-family: 'IBM Plex Mono', ui-monospace, monospace;
+  font-variant-numeric: tabular-nums;
+  font-size: 22px;
+  font-weight: 500;
+  margin-top: 6px;
+  letter-spacing: -0.02em;
+  color: var(--paper-100);
+}
+.totals .stat.cash .stat-value {
+  color: var(--cash);
+}
+.totals .stat.credit .stat-value {
+  color: var(--rare);
+}
+.totals .stat.credit {
+  border-color: rgba(234, 179, 8, 0.3);
+}
+
+.card-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.card-row {
+  display: grid;
+  grid-template-columns: 36px 1fr auto;
+  gap: 12px;
+  align-items: center;
+  padding: 10px;
+  background: var(--ink-300);
+  border-radius: var(--r-2);
+  border: 1px solid var(--hairline);
+}
+.card-icon {
+  width: 36px;
+  height: 36px;
+  border-radius: var(--r-1);
+  background: var(--ink-200);
+  display: grid;
+  place-items: center;
+  font-family: 'IBM Plex Mono', ui-monospace, monospace;
+  font-size: 13px;
+  color: var(--paper-300);
+}
+.card-meta .card-name {
+  font-family: 'Fraunces', Georgia, serif;
+  font-style: italic;
+  font-weight: 600;
+  font-size: 15px;
+  margin-bottom: 2px;
+  color: var(--paper-100);
+  letter-spacing: -0.01em;
+}
+.card-name-link {
+  color: var(--paper-100);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.card-name-link:hover {
+  color: var(--accent-soft);
+}
+.card-meta .card-set {
+  font-family: 'IBM Plex Mono', ui-monospace, monospace;
+  font-variant-numeric: tabular-nums;
+  font-size: 11px;
+  color: var(--paper-300);
+  letter-spacing: 0.02em;
+}
+.card-prices {
+  text-align: right;
+  font-family: 'IBM Plex Mono', ui-monospace, monospace;
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
+}
+.card-prices .row {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  margin-bottom: 1px;
+  align-items: baseline;
+}
+.card-prices .label {
+  color: var(--paper-300);
+  font-size: 10px;
+  font-family: 'IBM Plex Sans', system-ui, sans-serif;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-weight: 500;
+}
+.card-prices .cash {
+  color: var(--cash);
+  font-weight: 500;
+}
+.card-prices .credit {
+  color: var(--rare);
+  font-weight: 500;
+}
+.card-error-row {
+  padding: 10px 12px;
+  background: var(--down-soft);
+  border: 1px solid rgba(220, 38, 38, 0.3);
+  border-radius: var(--r-2);
+  font-family: 'IBM Plex Sans', system-ui, sans-serif;
+  font-size: 13px;
+  color: var(--down);
+}
+
+/* Email gate ----------------------------------------------------------- */
+.lead-form input {
+  width: 100%;
+  padding: 12px 14px;
+  border-radius: var(--r-2);
+  border: 1px solid var(--hairline);
+  background: var(--ink-300);
+  color: var(--paper-100);
+  font-family: 'IBM Plex Sans', system-ui, sans-serif;
+  font-size: 14px;
+  margin-bottom: 10px;
+  box-sizing: border-box;
+  transition: border-color var(--t-fast) var(--ease);
+}
+.lead-form input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.note {
+  font-family: 'IBM Plex Sans', system-ui, sans-serif;
+  font-size: 12px;
+  color: var(--paper-300);
+  line-height: 1.55;
+  padding: 10px 0;
+}
+.success-banner {
+  background: var(--rare-soft);
+  border: 1px solid rgba(234, 179, 8, 0.3);
+  color: var(--rare);
+  padding: 12px;
+  border-radius: var(--r-2);
+  text-align: center;
+  margin-bottom: 12px;
+  font-family: 'IBM Plex Sans', system-ui, sans-serif;
+  font-weight: 500;
+}
+
+.results-wrap {
+  position: relative;
+}
+.results-wrap.locked .card-list,
+.results-wrap.locked .totals {
+  filter: blur(8px);
+  pointer-events: none;
+  user-select: none;
+}
+.gate {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 40px 12px;
+  z-index: 5;
+}
+.gate-inner {
+  width: 100%;
+  max-width: 420px;
+  background: var(--ink-200);
+  border: 1px solid var(--accent);
+  border-radius: var(--r-3);
+  padding: 24px;
+}
+.gate-title {
+  font-family: 'Fraunces', Georgia, serif;
+  font-size: 22px;
+  font-weight: 600;
+  font-style: italic;
+  letter-spacing: -0.02em;
+  margin: 0 0 6px;
+  color: var(--paper-100);
+}
+.gate-sub {
+  font-family: 'IBM Plex Sans', system-ui, sans-serif;
+  font-size: 13px;
+  color: var(--paper-300);
+  margin: 0 0 16px;
+  line-height: 1.5;
+}
+.checkbox-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 0 16px;
+}
+.checkbox-row input[type='checkbox'] {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--accent);
+  margin-top: 2px;
+  flex-shrink: 0;
+  cursor: pointer;
+}
+.checkbox-row label {
+  font-family: 'IBM Plex Sans', system-ui, sans-serif;
+  font-size: 13px;
+  color: var(--paper-200);
+  line-height: 1.5;
+  cursor: pointer;
+}
+.gate-small {
+  font-family: 'IBM Plex Sans', system-ui, sans-serif;
+  font-size: 11px;
+  color: var(--paper-300);
+  margin: 10px 0 0;
+  text-align: center;
+  letter-spacing: 0.02em;
+}
+
+/* Footer --------------------------------------------------------------- */
+footer {
+  text-align: center;
+  font-family: 'IBM Plex Sans', system-ui, sans-serif;
+  color: var(--paper-300);
+  font-size: 12px;
+  padding: 32px 0 16px;
+}
+footer a {
+  color: var(--paper-200);
+  text-decoration: none;
+  border-bottom: 1px solid var(--hairline);
+  padding-bottom: 1px;
+  transition: color var(--t-fast) var(--ease), border-color var(--t-fast) var(--ease);
+}
+footer a:hover {
+  color: var(--accent-soft);
+  border-color: var(--accent);
+}
+
+/* Breakpoints ---------------------------------------------------------- */
+@media (min-width: 640px) {
+  .how-to {
+    flex-wrap: nowrap;
+  }
+}
+
+/* Mobile polish — S22 / F11 -------------------------------------------- */
+
+/* 640px floor: how-to panel stacks SVG above text (already wrap-able,
+   force the column flow so the SVG always leads). */
+@media (max-width: 640px) {
+  .how-to {
+    flex-direction: column;
+    gap: 14px;
+  }
+  .card-diagram { align-self: center; }
+  .how-to-text { width: 100%; min-width: 0; }
+
+  /* h1 trims a little for narrower viewports. */
+  h1 { font-size: 26px; }
+}
+
+/* 540px: card-list rows stack icon above meta above prices; totals 1×3. */
+@media (max-width: 540px) {
+  .wrap { padding: 16px 12px 72px; }
+
+  /* Totals — 3-up grid stretches the eye on a 360px viewport.
+     1-up stack reads cleaner and keeps prices in tabular alignment. */
+  .totals {
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+  .totals .stat { padding: 12px; }
+  .totals .stat-value { font-size: 20px; }
+
+  /* Card rows — collapse 36px-icon | meta | prices into a 2-row stack:
+     icon + meta on the top row, prices right-aligned underneath. */
+  .card-row {
+    grid-template-columns: 36px 1fr;
+    grid-template-areas:
+      "icon meta"
+      "prices prices";
+    row-gap: 8px;
+  }
+  .card-icon { grid-area: icon; }
+  .card-meta { grid-area: meta; }
+  .card-prices {
+    grid-area: prices;
+    text-align: right;
+    padding-top: 6px;
+    border-top: 1px dashed var(--hairline);
+  }
+
+  /* Buttons in the entry section take full width; let .btn-row stack. */
+  .btn-row { flex-direction: column; }
+  .btn-clear { width: 100%; }
+
+  /* Panel padding shrinks to claw back horizontal real-estate. */
+  .panel { padding: 14px; }
+
+  /* Entry textarea height drops so the keyboard doesn't shove the
+     whole layout. */
+  .entry-section textarea { min-height: 130px; }
+}
+
+/* Touch + coarse-pointer: 44px hit targets on the customer-facing CTAs. */
+@media (hover: none) and (pointer: coarse) {
+  .btn { min-height: 44px; padding: 14px 20px; }
+  .lead-form input { min-height: 44px; }
+  :focus-visible { outline-width: 3px; outline-offset: 3px; }
+}

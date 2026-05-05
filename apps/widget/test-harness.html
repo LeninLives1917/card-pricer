@@ -1,0 +1,312 @@
+<!DOCTYPE html>
+<!--
+  apps/widget/test-harness.html — A6 / Slice S9 + S23
+  Fake host page for V1 + V2 attribute parity tests + manual smoke.
+
+  How to use:
+    1. Open this file directly in a browser (no server needed for the harness
+       itself — only the iframe targets `card-pricer-60qq.onrender.com/quote`).
+       On Windows, the path looks like:
+         file:///C:/Users/.../card-pricer/apps/widget/test-harness.html
+    2. Visually compare the V1 button (section 1) and the V1-attrs-only V2
+       button (section 2). They MUST look identical.
+    3. Click each button to verify the modal opens, the iframe loads, and the
+       Comparison panel logs the postMessage payload on submit.
+    4. Open DevTools Network tab to see the V2 telemetry beacon
+       (POST /api/widget/loaded — 404 is OK on V1 servers, S14/A8 lands the
+       endpoint).
+    5. Section 7 (S23-NEW) is a side-by-side iframe diff: V1 and V2 widgets
+       are loaded in two sandboxed child documents next to each other. The
+       buttons + modal chrome must look identical at default attrs.
+
+  Automated counterpart: `tests/regression/widget-parity.spec.js` (static
+  text lints) + `tests/regression/widget-runtime.spec.js` (jsdom DOM diff).
+  Run via `npm test`.
+
+  IMPORTANT: this file loads `widget-v1.js` and `widget.js` from the same
+  directory (relative paths). The V1-served file is `public/widget.js` —
+  this harness does NOT use it; it tests `apps/widget/widget-v1.js` (verbatim
+  V1 backup) so the rollback target is exercised the same way the live file
+  is.
+-->
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Card Pricer widget — test harness (S9)</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      font: 14px/1.5 -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+      margin: 0;
+      padding: 32px 24px 200px;
+      background: #f5f5f4;
+      color: #1c1917;
+    }
+    h1 { font-size: 20px; margin: 0 0 8px; }
+    h2 { font-size: 16px; margin: 32px 0 8px; color: #57534e; }
+    .lede { color: #57534e; max-width: 720px; }
+    section {
+      background: #fff;
+      border: 1px solid #e7e5e4;
+      border-radius: 12px;
+      padding: 20px;
+      margin: 16px 0;
+      max-width: 720px;
+    }
+    section h3 {
+      margin: 0 0 6px;
+      font-size: 15px;
+      letter-spacing: 0.02em;
+      text-transform: uppercase;
+      color: #78716c;
+    }
+    section p { margin: 4px 0 12px; color: #57534e; }
+    code {
+      background: #f5f5f4;
+      padding: 1px 5px;
+      border-radius: 3px;
+      font-size: 12px;
+    }
+    .comparison-panel {
+      position: fixed;
+      bottom: 16px;
+      right: 16px;
+      width: 360px;
+      max-height: 50vh;
+      overflow: auto;
+      background: #0c0a09;
+      color: #fafaf9;
+      border-radius: 10px;
+      padding: 12px 14px;
+      font: 11px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
+      box-shadow: 0 12px 28px rgba(0,0,0,.3);
+      z-index: 1;
+    }
+    .comparison-panel header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 8px;
+    }
+    .comparison-panel header strong {
+      color: #fde68a;
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+    .comparison-panel button {
+      background: #292524;
+      color: #fafaf9;
+      border: 1px solid #44403c;
+      border-radius: 4px;
+      padding: 2px 8px;
+      cursor: pointer;
+      font: inherit;
+    }
+    .comparison-panel pre {
+      margin: 0;
+      white-space: pre-wrap;
+      word-break: break-all;
+    }
+    .log-entry {
+      padding: 6px 0;
+      border-bottom: 1px dashed #44403c;
+    }
+    .log-entry:last-child { border-bottom: 0; }
+    .log-entry .ts { color: #a8a29e; }
+    .log-entry .src { color: #fde68a; margin-left: 4px; }
+  </style>
+</head>
+<body>
+  <h1>Card Pricer widget — test harness (S9 + S23)</h1>
+  <p class="lede">
+    Each section drops a script tag exactly the way a customer shop would.
+    Sections 1+2 must produce visually identical buttons (V1-attribute parity
+    contract per docs/V2_ARCHITECTURE.md Q4). Sections 3-6 exercise V2-NEW
+    attributes. Section 7 (S23) loads V1 and V2 side-by-side in sandboxed
+    iframes for a tight visual diff. The Comparison panel logs every
+    <code>cp:submitted</code> payload that bubbles to
+    <code>window.cardPricerWidgetOnSubmit</code>.
+  </p>
+  <p class="lede" style="font-size:13px;">
+    Open in a real browser via <code>file:///…/apps/widget/test-harness.html</code>.
+    For the automated counterpart see
+    <code>tests/regression/widget-runtime.spec.js</code>
+    (jsdom DOM-diff parity, run with <code>npm test</code>).
+  </p>
+
+  <!-- ─── Section 1: V1 only (rollback target / control) ─── -->
+  <section>
+    <h3>1. V1 only — rollback target / control</h3>
+    <p>Loads <code>apps/widget/widget-v1.js</code>. This is the verbatim copy
+    of the live <code>public/widget.js</code> (V1). Use as the visual baseline
+    for parity comparisons.</p>
+    <div id="slot-v1"></div>
+    <script src="./widget-v1.js"
+            data-shop="brewed"
+            data-color="#b45309"
+            data-position="inline"
+            data-label="V1 — Get a quote"
+            defer></script>
+  </section>
+
+  <!-- ─── Section 2: V2 with V1-only attributes ─── -->
+  <section>
+    <h3>2. V2 with V1-only attributes — parity check</h3>
+    <p>Loads <code>apps/widget/widget.js</code> (V2) but passes ZERO V2
+    attributes. The button + modal MUST be visually indistinguishable from
+    section 1. This is the RG-41 contract.</p>
+    <div id="slot-v2-parity"></div>
+    <script src="./widget.js"
+            data-shop="brewed"
+            data-color="#b45309"
+            data-position="inline"
+            data-label="V2 (parity) — Get a quote"
+            defer></script>
+  </section>
+
+  <!-- ─── Section 3: V1 + V2 attributes mixed ─── -->
+  <section>
+    <h3>3. V1 + V2 mixed — additive attributes</h3>
+    <p>V1 attrs plus <code>data-button-shape="pill"</code> and
+    <code>data-event-callback="onPillSubmit"</code>. The button rounds to a
+    pill; on submit, both <code>cardPricerWidgetOnSubmit</code> AND
+    <code>onPillSubmit</code> fire.</p>
+    <div id="slot-v2-mixed"></div>
+    <script src="./widget.js"
+            data-shop="brewed"
+            data-color="#7c3aed"
+            data-position="inline"
+            data-label="V2 mixed — pill button"
+            data-button-shape="pill"
+            data-event-callback="onPillSubmit"
+            defer></script>
+  </section>
+
+  <!-- ─── Section 4: Light theme ─── -->
+  <section>
+    <h3>4. Light theme — RG-42</h3>
+    <p>Modal chrome flips to the light palette
+    (<code>bg #fafaf9, text #0c0a09</code>). Button background is still
+    <code>data-color</code> with white text (button is brand-coloured, not
+    theme-coloured).</p>
+    <div id="slot-v2-light"></div>
+    <script src="./widget.js"
+            data-shop="brewed"
+            data-color="#0891b2"
+            data-position="inline"
+            data-label="V2 light — Get a quote"
+            data-theme="light"
+            defer></script>
+  </section>
+
+  <!-- ─── Section 5: Compact modal ─── -->
+  <section>
+    <h3>5. Compact modal size</h3>
+    <p>Modal sizes drop from <code>min(820px, 100%) × min(900px, 90vh)</code>
+    (V1 default) to <code>min(560px, 100%) × min(720px, 85vh)</code>.</p>
+    <div id="slot-v2-compact"></div>
+    <script src="./widget.js"
+            data-shop="brewed"
+            data-color="#dc2626"
+            data-position="inline"
+            data-label="V2 compact — Get a quote"
+            data-modal-size="compact"
+            defer></script>
+  </section>
+
+  <!-- ─── Section 6: Lazy-load ─── -->
+  <section>
+    <h3>6. Lazy-load — defers iframe until first click</h3>
+    <p>V1 already lazy-builds the modal on first click; this attribute exists
+    for symmetry / future tightening. Today it's a no-op vs section 2 in
+    behaviour but is documented for completeness.</p>
+    <div id="slot-v2-lazy"></div>
+    <script src="./widget.js"
+            data-shop="brewed"
+            data-color="#16a34a"
+            data-position="inline"
+            data-label="V2 lazy — Get a quote"
+            data-lazy="true"
+            defer></script>
+  </section>
+
+  <!-- ─── Section 7: Side-by-side V1 vs V2 (S23) ─── -->
+  <section style="max-width:none;">
+    <h3>7. Side-by-side V1 ↔ V2 — visual parity (S23)</h3>
+    <p>Two child documents, each loading one widget verbatim with the same
+    <code>data-shop="brewed"</code> + V1 defaults. The buttons should be
+    pixel-identical; clicking each opens the modal so you can eyeball the
+    backdrop, inner box, and close button.</p>
+    <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; align-items:start;">
+      <div>
+        <h4 style="margin:0 0 6px; font-size:13px; color:#78716c; text-transform:uppercase; letter-spacing:0.04em;">V1 (rollback target)</h4>
+        <iframe id="cp-side-v1" title="V1 widget sandbox" style="width:100%; height:240px; border:1px solid #e7e5e4; border-radius:8px; background:#fff;"
+                srcdoc='&lt;!doctype html&gt;&lt;html&gt;&lt;body style=&quot;margin:16px; font:14px system-ui;&quot;&gt;&lt;p&gt;V1 widget will appear below:&lt;/p&gt;&lt;script src=&quot;./widget-v1.js&quot; data-shop=&quot;brewed&quot; data-color=&quot;#b45309&quot; data-position=&quot;inline&quot; data-label=&quot;Get a quote on your cards&quot; defer&gt;&lt;/script&gt;&lt;/body&gt;&lt;/html&gt;'></iframe>
+      </div>
+      <div>
+        <h4 style="margin:0 0 6px; font-size:13px; color:#78716c; text-transform:uppercase; letter-spacing:0.04em;">V2 (V1 attrs only — must match)</h4>
+        <iframe id="cp-side-v2" title="V2 widget sandbox" style="width:100%; height:240px; border:1px solid #e7e5e4; border-radius:8px; background:#fff;"
+                srcdoc='&lt;!doctype html&gt;&lt;html&gt;&lt;body style=&quot;margin:16px; font:14px system-ui;&quot;&gt;&lt;p&gt;V2 widget will appear below:&lt;/p&gt;&lt;script src=&quot;./widget.js&quot; data-shop=&quot;brewed&quot; data-color=&quot;#b45309&quot; data-position=&quot;inline&quot; data-label=&quot;Get a quote on your cards&quot; defer&gt;&lt;/script&gt;&lt;/body&gt;&lt;/html&gt;'></iframe>
+      </div>
+    </div>
+    <p style="margin-top:8px; color:#78716c; font-size:12px;">
+      Tip: use a browser screenshot tool (or the DevTools "capture node screenshot" on each iframe)
+      to do a strict pixel diff. The Network tab inside each iframe should show
+      exactly one <code>POST /api/widget/loaded</code> for V2 and zero for V1.
+    </p>
+  </section>
+
+  <!-- ─── Comparison panel ─── -->
+  <div class="comparison-panel" id="cp-panel">
+    <header>
+      <strong>Comparison panel</strong>
+      <button type="button" id="cp-clear">clear</button>
+    </header>
+    <div id="cp-log"><pre>(no events yet — click a button, complete a quote, watch payloads land here)</pre></div>
+  </div>
+
+  <script>
+    // Wire up window.cardPricerWidgetOnSubmit + the data-event-callback target.
+    // Both should fire on a cp:submitted message from the iframe.
+    var logEl = document.getElementById('cp-log');
+    var first = true;
+
+    function append(src, payload) {
+      if (first) { logEl.innerHTML = ''; first = false; }
+      var entry = document.createElement('div');
+      entry.className = 'log-entry';
+      var ts = new Date().toISOString().slice(11, 19);
+      var pre = document.createElement('pre');
+      pre.textContent = JSON.stringify(payload, null, 2);
+      entry.innerHTML =
+        '<span class="ts">' + ts + '</span>' +
+        '<span class="src">[' + src + ']</span>';
+      entry.appendChild(pre);
+      logEl.insertBefore(entry, logEl.firstChild);
+    }
+
+    window.cardPricerWidgetOnSubmit = function (d) {
+      append('cardPricerWidgetOnSubmit', d);
+    };
+
+    // Named callback target for section 3 (data-event-callback="onPillSubmit").
+    window.onPillSubmit = function (d) {
+      append('onPillSubmit', d);
+    };
+
+    document.getElementById('cp-clear').addEventListener('click', function () {
+      logEl.innerHTML = '<pre>(cleared)</pre>';
+      first = true;
+    });
+
+    // Also surface raw postMessage so we can debug origin mismatches without
+    // spelunking the DevTools console.
+    window.addEventListener('message', function (e) {
+      if (!e.data || typeof e.data !== 'object') return;
+      append('raw postMessage from ' + e.origin, e.data);
+    });
+  </script>
+</body>
+</html>

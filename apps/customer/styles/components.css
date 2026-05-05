@@ -1,0 +1,506 @@
+/* apps/customer/styles/components.css
+ * Owner: A10 | Slice: S21
+ *
+ * Customer dashboard components. Editorial rhythm — calmer than the
+ * vendor terminal, with more whitespace and tighter copy. Tokens come
+ * from tokens.css.
+ *
+ * Sections:
+ *   1. Layout shell (.wrap, .brand, .foot)
+ *   2. Type (h1/h2/p)
+ *   3. Sign-in form
+ *   4. Dashboard tiles + offer cards
+ *   5. Offer-accept view (line-item table + CTAs)
+ *   6. Account-edit form
+ *   7. Banners (success / error / info)
+ */
+
+/* 1. Layout shell ------------------------------------------------------ */
+.wrap {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 24px 18px 96px;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 0 32px;
+}
+.brand-logo {
+  width: 40px;
+  height: 40px;
+  border-radius: var(--r-2);
+  overflow: hidden;
+  background: var(--ink-300);
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+}
+.brand-logo svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+.brand-text {
+  flex: 1;
+}
+.brand-name {
+  font-family: 'Fraunces', Georgia, serif;
+  font-size: 18px;
+  font-weight: 600;
+  font-style: italic;
+  letter-spacing: -0.02em;
+  color: var(--paper-100);
+}
+.brand-tag {
+  font-family: 'IBM Plex Sans', system-ui, sans-serif;
+  font-size: 10px;
+  color: var(--paper-300);
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  margin-top: 2px;
+}
+
+.nav {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  font-size: 13px;
+}
+.nav a,
+.nav button {
+  background: transparent;
+  border: 0;
+  padding: 6px 0;
+  font: inherit;
+  color: var(--paper-200);
+  cursor: pointer;
+  text-decoration: none;
+}
+.nav a:hover,
+.nav button:hover {
+  color: var(--accent-soft);
+}
+.nav .nav-email {
+  color: var(--paper-300);
+  font-size: 12px;
+  cursor: default;
+}
+
+.foot {
+  margin-top: 64px;
+  padding-top: 24px;
+  border-top: 1px solid var(--hairline);
+  text-align: center;
+  color: var(--paper-300);
+  font-size: 12px;
+}
+.foot a {
+  color: var(--paper-200);
+}
+
+/* 2. Type -------------------------------------------------------------- */
+h1 {
+  font-family: 'Fraunces', Georgia, serif;
+  font-size: 30px;
+  margin: 0 0 12px;
+  line-height: 1.15;
+  font-weight: 600;
+  font-style: italic;
+  letter-spacing: -0.02em;
+  color: var(--paper-100);
+}
+h1 .accent { color: var(--accent); font-style: italic; }
+
+h2 {
+  font-family: 'Fraunces', Georgia, serif;
+  font-size: 22px;
+  font-weight: 600;
+  font-style: italic;
+  letter-spacing: -0.02em;
+  margin: 32px 0 12px;
+  color: var(--paper-100);
+}
+
+.sub {
+  color: var(--paper-200);
+  font-size: 15px;
+  margin: 0 0 24px;
+  line-height: 1.55;
+  max-width: 56ch;
+}
+
+.note {
+  color: var(--paper-300);
+  font-size: 12px;
+  line-height: 1.5;
+  margin: 8px 0 0;
+}
+
+.view-loading {
+  color: var(--paper-300);
+  text-align: center;
+  padding: 48px 0;
+  font-size: 14px;
+}
+
+/* 3. Panels ------------------------------------------------------------ */
+.panel {
+  background: var(--ink-200);
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-2);
+  padding: 24px;
+  margin-bottom: 16px;
+}
+.panel + .panel { margin-top: 16px; }
+
+/* 4. Forms (sign-in + account) ---------------------------------------- */
+.form-row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 16px;
+}
+.form-row label {
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  font-weight: 500;
+  color: var(--paper-300);
+}
+.form-row input[type="email"],
+.form-row input[type="text"],
+.form-row select {
+  background: var(--ink-300);
+  color: var(--paper-100);
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-1);
+  padding: 12px 14px;
+  font: inherit;
+  font-size: 15px;
+  width: 100%;
+}
+.form-row input:focus-visible,
+.form-row select:focus-visible {
+  border-color: var(--accent);
+}
+.form-row .check-inline {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.form-row .check-inline label {
+  text-transform: none;
+  letter-spacing: 0;
+  font-size: 14px;
+  color: var(--paper-200);
+  font-weight: 400;
+}
+
+/* Buttons ------------------------------------------------------------- */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid transparent;
+  border-radius: var(--r-1);
+  padding: 12px 20px;
+  font: inherit;
+  font-size: 15px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background var(--t-fast) var(--ease), border-color var(--t-fast) var(--ease);
+}
+.btn.primary {
+  background: var(--accent);
+  color: var(--ink-100);
+}
+.btn.primary:hover { background: var(--accent-soft); }
+.btn.primary:disabled { opacity: 0.55; cursor: not-allowed; }
+
+.btn.secondary {
+  background: transparent;
+  color: var(--paper-200);
+  border-color: var(--ink-400);
+}
+.btn.secondary:hover {
+  border-color: var(--paper-300);
+  color: var(--paper-100);
+}
+
+.btn.ghost {
+  background: transparent;
+  color: var(--paper-300);
+  padding: 6px 10px;
+  font-size: 13px;
+}
+.btn.ghost:hover { color: var(--paper-100); }
+
+.btn-row {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 16px;
+}
+
+/* 5. Sign-in landing -------------------------------------------------- */
+.signin-hero {
+  text-align: center;
+  padding: 16px 0 8px;
+}
+.signin-form {
+  margin: 0 auto;
+  max-width: 420px;
+}
+.signin-success {
+  text-align: center;
+  padding: 24px;
+  font-size: 15px;
+  color: var(--paper-200);
+}
+.signin-success .display {
+  display: block;
+  font-size: 22px;
+  margin-bottom: 12px;
+  color: var(--paper-100);
+}
+
+/* 6. Dashboard tiles -------------------------------------------------- */
+.dash-greeting {
+  font-size: 14px;
+  color: var(--paper-300);
+  margin-bottom: 4px;
+}
+.dash-greeting strong { color: var(--paper-100); font-weight: 500; }
+
+.offer-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 16px;
+}
+.offer-card {
+  background: var(--ink-200);
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-2);
+  padding: 18px 20px;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  text-decoration: none;
+  color: inherit;
+  transition: border-color var(--t-fast) var(--ease);
+}
+.offer-card:hover { border-color: var(--ink-500); }
+.offer-card .offer-meta { flex: 1; min-width: 0; }
+.offer-card .offer-shop {
+  font-size: 13px;
+  color: var(--paper-300);
+  margin-bottom: 4px;
+}
+.offer-card .offer-status-line {
+  font-size: 12px;
+  color: var(--paper-400);
+}
+.offer-card .offer-total {
+  font-family: 'IBM Plex Mono', ui-monospace, monospace;
+  font-variant-numeric: tabular-nums;
+  font-size: 18px;
+  font-weight: 500;
+  color: var(--paper-100);
+}
+.offer-card .pill {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  font-weight: 500;
+  margin-right: 8px;
+}
+.pill.open     { background: var(--accent-mute); color: var(--accent-soft); }
+.pill.accepted { background: var(--up-soft); color: var(--up); }
+.pill.declined { background: var(--ink-400); color: var(--paper-300); }
+.pill.expired  { background: var(--down-soft); color: var(--down); }
+
+.offer-section { margin-top: 24px; }
+.offer-section .section-title {
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--paper-300);
+  margin: 0 0 8px;
+}
+
+.empty-state {
+  padding: 32px;
+  text-align: center;
+  border: 1px dashed var(--hairline);
+  border-radius: var(--r-2);
+  color: var(--paper-300);
+  font-size: 14px;
+}
+.empty-state a { color: var(--accent-soft); }
+
+/* 7. Offer-accept view ------------------------------------------------ */
+.offer-header {
+  text-align: center;
+  margin-bottom: 24px;
+}
+.offer-header .shop-line {
+  font-size: 13px;
+  color: var(--paper-300);
+  margin-bottom: 6px;
+}
+.offer-header .total {
+  font-family: 'IBM Plex Mono', ui-monospace, monospace;
+  font-variant-numeric: tabular-nums;
+  font-size: 38px;
+  font-weight: 500;
+  color: var(--paper-100);
+  letter-spacing: -0.02em;
+}
+.offer-header .expires {
+  font-size: 12px;
+  color: var(--paper-400);
+  margin-top: 4px;
+}
+
+.line-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 16px 0;
+}
+.line-table th,
+.line-table td {
+  text-align: left;
+  padding: 10px 8px;
+  border-bottom: 1px solid var(--hairline);
+  font-size: 13px;
+}
+.line-table th {
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--paper-300);
+  font-weight: 500;
+}
+.line-table td.num {
+  font-family: 'IBM Plex Mono', ui-monospace, monospace;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  white-space: nowrap;
+}
+.line-table tr:last-child td { border-bottom: 0; }
+
+.cta-row {
+  display: flex;
+  gap: 12px;
+  margin-top: 24px;
+  flex-wrap: wrap;
+}
+.cta-row .btn { flex: 1 1 auto; min-width: 140px; padding: 14px 20px; }
+
+.status-card {
+  text-align: center;
+  padding: 32px 16px;
+}
+.status-card .status-icon {
+  font-size: 36px;
+  margin-bottom: 8px;
+}
+.status-card.ok .status-icon  { color: var(--up); }
+.status-card.bad .status-icon { color: var(--down); }
+.status-card .status-msg {
+  font-size: 16px;
+  color: var(--paper-100);
+  margin-bottom: 6px;
+}
+.status-card .status-meta {
+  font-size: 13px;
+  color: var(--paper-300);
+}
+
+/* 8. Banners ---------------------------------------------------------- */
+.banner {
+  border-radius: var(--r-1);
+  padding: 12px 14px;
+  margin-bottom: 16px;
+  font-size: 14px;
+  border: 1px solid var(--hairline);
+}
+.banner.ok    { background: var(--up-soft); border-color: var(--up); color: var(--up); }
+.banner.error { background: var(--down-soft); border-color: var(--down); color: var(--down); }
+.banner.info  { background: var(--accent-mute); border-color: var(--accent); color: var(--accent-soft); }
+
+/* 9. Hairline rule ---------------------------------------------------- */
+hr.hairline {
+  border: 0;
+  border-top: 1px solid var(--hairline);
+  margin: 24px 0;
+}
+
+/* 10. Mobile tweaks --------------------------------------------------- */
+
+/* 640px: line-table on the offer-accept view scrolls horizontally rather
+   than crushing the figure column. Keeps tabular-nums alignment intact. */
+@media (max-width: 640px) {
+  .line-table { display: block; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  .line-table thead, .line-table tbody, .line-table tr { width: max-content; min-width: 100%; }
+}
+
+/* 540px: phone polish — the customer surface is phone-only first-touch.
+   Stack offer-accept actions, account form to one column, sign-in CTA
+   gets touch-comfortable padding. */
+@media (max-width: 540px) {
+  .wrap { padding: 18px 12px 64px; }
+  h1 { font-size: 24px; }
+  h2 { font-size: 19px; margin-top: 24px; }
+  .sub { font-size: 14px; margin-bottom: 18px; }
+
+  .panel { padding: 18px 16px; }
+
+  .offer-header .total { font-size: 30px; }
+
+  /* Offer cards — tighter padding, stack offer-meta + total vertically
+     so long shop names don't truncate into a useless ellipsis. */
+  .offer-card {
+    padding: 14px 16px;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+  }
+  .offer-card .offer-total { font-size: 16px; align-self: flex-end; }
+
+  /* Offer-list is already a 1-up flex column — nothing to do for the
+     spec's "dashboard tiles 1-up" rule beyond what's already shipped. */
+
+  /* CTA row in the offer-accept view stacks 1-up; full-width buttons. */
+  .cta-row { flex-direction: column; gap: 10px; }
+  .cta-row .btn { width: 100%; flex: 1 1 100%; min-height: 48px; }
+
+  /* Account-edit form is a single column already (form-row is column),
+     but bump the input height + submit-row width so the keyboard doesn't
+     misalign the submit button. */
+  .form-row input[type="email"],
+  .form-row input[type="text"],
+  .form-row select { min-height: 44px; font-size: 16px; /* iOS no-zoom */ }
+  .btn-row { flex-direction: column; }
+  .btn-row .btn { width: 100%; }
+
+  /* Sign-in CTA — ensure full-width 48px target; the form is centered
+     via .signin-form max-width:420px so on a phone it fills the wrap. */
+  .signin-form .btn.primary { width: 100%; min-height: 48px; }
+}
+
+/* Touch + coarse-pointer: 44px hit targets, fatter focus ring, no hover. */
+@media (hover: none) and (pointer: coarse) {
+  .btn { min-height: 44px; }
+  .nav a, .nav button { min-height: 32px; padding: 8px 0; }
+  .offer-card:hover { border-color: var(--hairline); }
+  :focus-visible { outline-width: 3px; outline-offset: 3px; }
+}

@@ -71,7 +71,7 @@ card-pricer/
 │   │   ├── tcggo-rapidapi.js       ← TCGGO Cardmarket EUR + graded comps
 │   │   ├── ebay-sold.js            ← eBay Browse API, IE marketplace
 │   │   ├── cardmarket-html.js      ← best-effort scrape, mostly CF-blocked
-│   │   └── tcgplayer-pro.js        ← NEW — sealed product pricing (F5; paid tier ~€60/mo)
+│   │   └── cardmarket-sealed.js    ← NEW — sealed product pricing (F5; V2.0.1 swap from TCGPlayer Pro to Cardmarket scrape + manual override)
 │   ├── sealed/                     ← NEW — F5 sealed-product engine (A2)
 │   │   ├── product-types.js        ← Booster, ETB, BoosterBox, Bundle, …
 │   │   ├── verify.js               ← sealed verify (SKU-based, not card-number)
@@ -511,6 +511,8 @@ Per audit non-negotiable §2.4 ("never edit data in place without a backup"):
 
 For `user_state` → `sessions`+`session_cards` (F17): the dual-write window happens **inside V2** rather than across V2 → V2.1. A3 ships the dual-writer in S1, the relational reader is gated behind `READ_FROM_RELATIONAL=false` until the regression suite confirms parity, then flipped to `true` near the end of phase 4. The JSONB column drop is a separate migration in the first release after V2 ships.
 
+**S24 parity rubric** (added by slice S24): the read-flip is invisible to the client iff the relational path returns the same content the JSONB path returned. The S24 deliverables — `tests/regression/sessions-readflip.spec.js` (23 parity tests) plus `infra/deploy/sessions-readflip-runbook.md` (operator-facing flip+rollback steps) — make that contract testable. Documented divergences (uuid-keyed session map, defensive `wantlist`/`v` normalisation on the relational path) are listed in the runbook §3.3 + §7 so operators expect them. The parity suite must pass on the deployed build *before* the runbook is executed.
+
 ### 4.2 File-backed state (server-local)
 
 Render Starter (Q2) means we have persistent disk, so files survive redeploys:
@@ -533,7 +535,7 @@ Operator-locked at end of phase 2. All ✓ / ✗ are final.
 | F2 | Condition-aware pricing with vendor spreads | ✓ already in V1 | A4 | S | low |
 | F3 | Bulk paste / CSV upload → full quote | ✓ V2 | A4 + A5 | M | medium — interacts with rate limits |
 | F4 | Set / edition disambiguation chooser | ✓ already in V1 (`candidates`) — surface better in V2 | A4 | S | low |
-| **F5** | **Sealed product pricing** (boosters, ETBs, bundles) | **✓ V2 (Q1)** | A2 | L | high — new data model + paid TCGPlayer Pro tier |
+| **F5** | **Sealed product pricing** (boosters, ETBs, bundles) | **✓ V2 (Q1)** | A2 | L | medium — new data model; V2.0.1 ships Cardmarket scrape + manual override (no paid tier required) |
 | F6 | Quote persistence — stable URL, recoverable | ✓ V2 | A1 + A5 | M | medium |
 | F7 | PDF export of quotes (vendor-branded) | ✓ V2 | A5 | M | low |
 | F8 | Vendor analytics dashboard | ✓ V2 | A1 + A4 | M | medium |
@@ -545,7 +547,7 @@ Operator-locked at end of phase 2. All ✓ / ✗ are final.
 | F14 | Vendor auth — single password + session | ✓ already in V1 (Supabase) | A1 | XS | none |
 | F15 | Phone-pair survives redeploy (Postgres `live_sessions`) | ✓ V2 | A1 + A3 | M | medium — touches scanner-mode |
 | F16 | Adopt `card_prices` table for arbitrage data | ✓ V2 | A2 + A3 | S | low |
-| **F17** | **Adopt `sessions`/`session_cards` table — replace JSONB blob** | **✓ V2 (Q1)** | A3 | L | high — dual-write + cutover |
+| **F17** | **Adopt `sessions`/`session_cards` table — replace JSONB blob** | **✓ V2 (Q1)** | A3 | L | high — dual-write + cutover. S24 parity tests + readflip runbook landed in commit \<pending\>; flip is operated post-V2-ship via Render env, not part of V2 cutover itself. |
 | **F18** | **Inventory subsystem** | **✓ V2 (Q1)** | A9 (NEW) + A1 + A4 | XL | very high — touches every surface |
 | **F19** | **Customer-side accounts + tokenised offer accept/decline** | **✓ V2 (Q1)** | A10 (NEW) + A1 + A5 | L | high — new auth flow |
 | F20 | Pricing engine model bumped to one constant | ✓ V2 | A2 | XS | none — pure refactor |
@@ -600,7 +602,7 @@ Aligned to `CARD_PRICER_V2_PROMPT.md` §3 + the expanded scope. Each row starts 
 | **S14 — Observability (F13)** | A8 | S5 ✓ | day 5 | pino middleware + `/api/version` + `/api/metrics` + Sentry SDKs (Q5) |
 | **S15 — OCR-first re-enable (F24, Q3)** | A2 + A7 | S6 ✓ | day 5 | `pricing/ocr-first/*`, `OCR_FIRST_ENABLED` env, RG-31..RG-40 fixtures |
 | **S16 — Sessions cutover dual-write (F17, Q1)** | A3 | S5 ✓ S11 ✓ | day 6 | `db/sessions/dual-write.js`, `READ_FROM_RELATIONAL` flag |
-| **S17 — Sealed pricing (F5, Q1)** | A2 | S6 ✓ | day 6 | `pricing/sealed/*`, `pricing/adapters/tcgplayer-pro.js`, `/api/v2/price-sealed` route |
+| **S17 — Sealed pricing (F5, Q1)** | A2 | S6 ✓ | day 6 | `pricing/sealed/*`, `pricing/adapters/cardmarket-sealed.js` (V2.0.1; was tcgplayer-pro.js), `/api/v2/price-sealed` route |
 | **S18 — Inventory backend (F18, Q1)** | A9 | S5 ✓ S1 ✓ | day 7 | `apps/server/routes/inventory.js`, `db/inventory/*`, `pricing/marketplaces/*` |
 | **S19 — Inventory vendor UI (F18, Q1)** | A9 + A4 | S18 contract | day 9 | new vendor tab `apps/vendor/modules/tabs/inventory.js` |
 | **S20 — Customer accounts backend (F19, Q1)** | A10 + A1 | S5 ✓ S1 ✓ | day 7 | `apps/server/routes/customer.js`, `routes/quote-offer.js`, `db/customers/*` |
@@ -686,7 +688,7 @@ One test per row in `V2_AUDIT.md` §1 (surface map) and §5 (hidden behaviours).
 |---|---|---|
 | F1-01 | `/api/v2/price` returns `v2.sources` array | every adapter in `candidates` shows up with confidence |
 | F1-02 | source priority: TCGGO active > pokemontcg | both return prices; TCGGO selected |
-| F5-01 | `/api/v2/price-sealed` returns sealed product price | ETB SKU → TCGPlayer Pro adapter → market price |
+| F5-01 | `/api/v2/price-sealed` returns sealed product price | ETB rich-shape input → Cardmarket sealed adapter (V2.0.1) → market price (scrape OR manual_market_eur override) |
 | F5-02 | sealed product not found → graceful 404 | invalid SKU |
 | F6-01 | quote persistence | POST /api/v2/quote → `{id, url}`; GET /api/v2/quote/:id returns identical content |
 | F8-01 | analytics endpoint | seed `quote_leads` + `scan_events`; assert daily counts match |
@@ -748,6 +750,8 @@ S0 ──┬──► S1 (A3 schema)        ──► S5 (A1 backend)        ─
 | Q6 | Deploy preview env vs in-place | **In place** | Phase-5 release runbook owns the safeguards |
 
 ## 9. Release runbook outline (Q6 — full version in `infra/deploy/release-runbook.md`)
+
+**V2 ships with `READ_FROM_RELATIONAL=false`.** The F17 sessions read-flip is a SEPARATE, distinct operation that runs AFTER V2 has been stable for at least one release window (recommended 2–3 weeks). It is owned by `infra/deploy/sessions-readflip-runbook.md` and is NOT part of the steps below. Conflating the two would put the read-path swap on the same change-window as the V2 ship, which is exactly what the dual-write design is meant to avoid.
 
 Pre-cutover (T-24h):
 1. All A7 regression tests green on v2 branch.

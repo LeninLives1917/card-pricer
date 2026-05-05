@@ -1,0 +1,842 @@
+// apps/server/routes/identify.js
+// Owner: A1 | Slice: S5
+//
+// Routes:
+//   POST /api/identify                — identifyLimiter + requireAuth + enforceQuota + multer single
+//   POST /api/identify-stream         — identifyLimiter + requireAuth + enforceQuota + multer single (NDJSON)
+//   POST /api/identify-manual         — requireAuth + enforceQuota
+//   POST /api/read-set-code           — identifyLimiter + requireAuth + enforceQuota
+//   POST /api/lookup-by-number        — requireAuth + enforceQuota
+//   POST /api/report-bad-id           — public (15MB body cap)
+//   POST /api/correct-card            — requireAuth (V1 security fix in 1309ccd preserved)
+//
+// All handlers verbatim from V1 server.js with two changes:
+//   1. Anthropic model strings replaced by READ_SET_CODE_MODEL constant
+//      (V2_AUDIT §5.22 — refactor, not behaviour change).
+//   2. Helpers moved to apps/server/_legacy-pricing.js + _card-db-boot.js
+//      (S5 transient extraction; S6 absorbs them into pricing/).
+
+import express from 'express';
+import multer from 'multer';
+import sharp from 'sharp';
+import fs from 'fs';
+import { fileURLToPath } from 'url';
+import { dirname, join } from 'path';
+
+import { axios, anthropic, supabase } from '../_clients.js';
+import { requireAuth } from '../middleware/auth.js';
+import { enforceQuota, logScanEvent } from '../middleware/quota.js';
+import { identifyLimiter, quoteLeadLimiter } from '../middleware/rate-limit.js';
+// S15 (OCR-first): pipeline + collaborators. Only the route handler at
+// /api/v2/identify-ocr-first reaches into these — the rest of the file is
+// V1-shape preserved.
+import { runOcrFirst } from '../../../pricing/ocr-first/pipeline.js';
+// S6 import-flip — these used to live in apps/server/_legacy-pricing.js;
+// pricing/ now owns them. See V2_ARCHITECTURE §1 and S6 commit message.
+import {
+  identifyCore,
+  doubleCheckAll,
+  stripInternals,
+  cacheSet,
+  extractImageBuffer,
+} from '../../../pricing/identify-core.js';
+import { verifyIdentified } from '../../../pricing/verify.js';
+import { resolveSetCode, PKM_SET_NAMES } from '../../../pricing/set-aliases.js';
+import { POKEMONTCG_UNRELIABLE, REG_MARK_ERAS } from '../../../pricing/corrections.js';
+import { READ_SET_CODE_MODEL } from '../../../pricing/confidence.js';
+import { lookupTCGdex } from '../../../pricing/adapters/tcgdex.js';
+import { lookupViaTCGGO } from '../../../pricing/adapters/tcggo-rapidapi.js';
+import { lookupViaJustTCG } from '../../../pricing/adapters/justtcg.js';
+import {
+  CARD_DB,
+  lookupLocalDb,
+  cacheCardResult,
+  saveCardDbToFile,
+  markCardDbDirty,
+} from '../_card-db-boot.js';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+const REPO_ROOT = join(__dirname, '..', '..', '..');
+
+// Multer (in-memory, 20MB cap) — V1 server.js:872-876.
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 20 * 1024 * 1024 }
+});
+
+const router = express.Router();
+
+// V1 server.js:1284-1312
+router.post('/api/identify', identifyLimiter, requireAuth, enforceQuota, upload.single('image'), async (req, res) => {
+  logScanEvent(req.user.id, '/api/identify');
+  try {
+    const buffer = extractImageBuffer(req);
+    const hint = req.body.hint || '';
+
+    const out = await identifyCore({ buffer, hint });
+    if (out.cached) {
+      console.log(`[IDENT-CACHE] HIT ${out.cacheKey.slice(0, 8)}`);
+      return res.json(out.result);
+    }
+
+    if (out.parsed.cards?.length > 0) {
+      console.log(`[VERIFY] Verifying ${out.parsed.cards.length} card(s) against databases...`);
+      out.parsed.cards = await verifyIdentified(out.parsed.cards);
+      out.parsed.cards = await doubleCheckAll(out.imageBase64, out.imageMediaType, out.parsed.cards);
+    }
+
+    const anyRejected = (out.parsed.cards || []).some(c => c?.verify_rejected);
+    out.parsed.cards = stripInternals(out.parsed.cards);
+    if (out.cacheKey && !anyRejected) cacheSet(out.cacheKey, out.parsed);
+    res.json(out.parsed);
+  } catch (err) {
+    if (err.status === 400) return res.status(400).json({ error: err.message });
+    console.error('Identification error:', err.message);
+    res.status(500).json({ error: 'Failed to identify card', details: err.message });
+  }
+});
+
+// V1 server.js:1326-1378
+router.post('/api/identify-stream', identifyLimiter, requireAuth, enforceQuota, upload.single('image'), async (req, res) => {
+  logScanEvent(req.user.id, '/api/identify-stream');
+  res.setHeader('Content-Type', 'application/x-ndjson');
+  res.setHeader('Cache-Control', 'no-cache, no-transform');
+  res.setHeader('X-Accel-Buffering', 'no');
+  const send = (obj) => { try { res.write(JSON.stringify(obj) + '\n'); } catch {} };
+
+  try {
+    let buffer;
+    try { buffer = extractImageBuffer(req); }
+    catch (e) { send({ type: 'error', error: e.message }); return res.end(); }
+
+    const hint = req.body.hint || '';
+
+    const out = await identifyCore({ buffer, hint });
+    if (out.cached) {
+      console.log(`[IDENT-STREAM-CACHE] HIT ${out.cacheKey.slice(0, 8)}`);
+      send({ type: 'ident', cards: out.result.cards || [] });
+      send({ type: 'verified', cards: out.result.cards || [] });
+      send({ type: 'done' });
+      return res.end();
+    }
+
+    send({ type: 'ident', cards: out.parsed.cards || [] });
+
+    if (out.parsed.cards?.length > 0) {
+      try {
+        out.parsed.cards = await verifyIdentified(out.parsed.cards);
+        out.parsed.cards = await doubleCheckAll(out.imageBase64, out.imageMediaType, out.parsed.cards);
+      } catch (e) {
+        console.error('[IDENT-STREAM] verify error:', e.message);
+      }
+    }
+    out.parsed.cards = stripInternals(out.parsed.cards);
+    send({ type: 'verified', cards: out.parsed.cards || [] });
+
+    const anyRejected = (out.parsed.cards || []).some(c => c?.verify_rejected);
+    if (out.cacheKey && !anyRejected) cacheSet(out.cacheKey, out.parsed);
+    else if (anyRejected) console.log('[IDENT-STREAM-CACHE] SKIP — one or more cards had verify_rejected flag');
+    send({ type: 'done' });
+    res.end();
+  } catch (err) {
+    console.error('Identify-stream error:', err.message);
+    send({ type: 'error', error: err.message });
+    res.end();
+  }
+});
+
+// V1 server.js:2447-2672 — manual identify body, extracted to a shared
+// helper so both the auth'd V1 path and the public V2 quote path share
+// identical lookup logic. See S8.5 fix below.
+//
+// S15 refactor: split the route-shaped wrapper from the pure-function
+// core so the OCR-first pipeline (pricing/ocr-first/pipeline.js) can call
+// the lookup logic without a synthetic req/res. Behaviour preserved 1:1 —
+// the wrapper translates the structured envelope back to res.status/json.
+
+/**
+ * Pure async function: take normalised inputs, return either
+ *   { cards: [<card>] }
+ *   { error: '...', status: 400|404|500 }
+ * No req/res, no rate-limit, no quota, no telemetry. Caller owns those.
+ *
+ * Inputs accepted:
+ *   - game        (REQUIRED) 'pokemon' | 'magic' | <other> — case-sensitive
+ *   - set_code    optional set abbreviation; aliases resolved internally
+ *   - card_number REQUIRED; "/total" suffix stripped, leading zeros trimmed
+ *   - name        optional name hint (helps disambiguate)
+ */
+async function manualIdentifyCore({ game, set_code, card_number, name } = {}) {
+  if (!game) return { error: 'game is required', status: 400 };
+  if (!card_number) return { error: 'card_number is required', status: 400 };
+
+  const cleanNum = String(card_number).replace(/\/.*/, '').replace(/^0+/, '') || String(card_number);
+  let card = null;
+
+  try {
+    if (game === 'pokemon') {
+      const resolved = set_code ? resolveSetCode(set_code) : { setId: null, ptcgoCode: null };
+
+      if (resolved.setId) {
+        card = lookupLocalDb(resolved.setId, cleanNum);
+        if (card) {
+          console.log(`[MANUAL-PKM] Local DB hit: ${card.name} (${resolved.setId}-${cleanNum})`);
+          return { cards: [card] };
+        }
+      }
+
+      const queries = [];
+      if (resolved.setId) {
+        queries.push(`set.id:${resolved.setId} number:${cleanNum}`);
+      }
+      if (resolved.ptcgoCode && !resolved.aliased) {
+        queries.push(`set.ptcgoCode:${resolved.ptcgoCode} number:${cleanNum}`);
+      }
+      if (set_code && !resolved.aliased && resolved.setId !== String(set_code).toLowerCase()) {
+        queries.push(`set.id:${String(set_code).toLowerCase()} number:${cleanNum}`);
+      }
+      if (name) queries.push(`name:"${name}" number:${cleanNum}`);
+      if (name) queries.push(`number:${cleanNum} name:"${name}"`);
+
+      const skipPokemonTCG = resolved.setId && POKEMONTCG_UNRELIABLE.has(resolved.setId);
+      if (skipPokemonTCG) {
+        console.log(`[MANUAL-PKM] Skipping pokemontcg.io for unreliable set "${resolved.setId}" — going to fallbacks`);
+      }
+
+      if (resolved.setId && !skipPokemonTCG) {
+        const directId = `${resolved.setId}-${cleanNum}`;
+        console.log(`[MANUAL-PKM] Direct lookup: ${directId}`);
+        try {
+          const resp = await axios.get(`https://api.pokemontcg.io/v2/cards/${directId}`, { timeout: 10000 });
+          const best = resp.data?.data;
+          if (best) {
+            card = {
+              game: 'pokemon',
+              name: best.name,
+              set_name: best.set?.name,
+              set_code: best.set?.id?.toUpperCase(),
+              card_number: best.number,
+              rarity: best.rarity,
+              hp: best.hp,
+              reference_image: best.images?.large || best.images?.small,
+              cardmarket_url: best.cardmarket?.url || null,
+              tcgplayer_url: best.tcgplayer?.url || null,
+              verified: true,
+              db_source: 'pokemontcg.io (manual)',
+              _manual: true
+            };
+            console.log(`[MANUAL-PKM] Direct hit: ${best.name} (${directId})`);
+          }
+        } catch (e) {
+          console.log(`[MANUAL-PKM] Direct lookup ${directId} failed: ${e.message}`);
+        }
+      }
+
+      if (!card && !skipPokemonTCG) {
+        for (const q of queries) {
+          console.log(`[MANUAL-PKM] Trying: ${q}`);
+          try {
+            const resp = await axios.get('https://api.pokemontcg.io/v2/cards', {
+              params: { q, pageSize: 10 }, timeout: 10000
+            });
+            const results = resp.data?.data;
+            if (!results?.length) continue;
+            let best = results[0];
+            if (name) {
+              const exact = results.find(d => d.name?.toLowerCase() === String(name).toLowerCase());
+              if (exact) best = exact;
+            }
+            card = {
+              game: 'pokemon',
+              name: best.name,
+              set_name: best.set?.name,
+              set_code: best.set?.id?.toUpperCase(),
+              card_number: best.number,
+              rarity: best.rarity,
+              hp: best.hp,
+              reference_image: best.images?.large || best.images?.small,
+              cardmarket_url: best.cardmarket?.url || null,
+              tcgplayer_url: best.tcgplayer?.url || null,
+              verified: true,
+              db_source: 'pokemontcg.io (manual)',
+              _manual: true
+            };
+            break;
+          } catch (e) {
+            console.error(`[MANUAL-PKM] Query failed: ${e.message}`);
+          }
+        }
+      }
+
+      if (!card && resolved.setId) {
+        console.log(`[MANUAL-PKM] pokemontcg.io miss — trying fallback APIs for ${resolved.setId} #${cleanNum}`);
+
+        const racers = [
+          lookupTCGdex(resolved.setId, cleanNum),
+          lookupViaJustTCG(resolved.setId, cleanNum)
+        ];
+        card = await Promise.race([
+          ...racers.map(p => p.then(r => r || new Promise(() => {}))),
+          Promise.allSettled(racers).then(rs => rs.find(s => s.status === 'fulfilled' && s.value)?.value || null)
+        ]);
+
+        if (!card) {
+          card = await lookupViaTCGGO(resolved.setId, cleanNum, set_code);
+        }
+
+        if (card) {
+          console.log(`[MANUAL-PKM] Fallback success: ${card.name} via ${card.db_source}`);
+        } else {
+          console.log(`[MANUAL-PKM] All fallbacks exhausted for ${set_code} #${cleanNum}`);
+        }
+      }
+    } else if (game === 'magic') {
+      const sc = set_code ? String(set_code).toLowerCase() : null;
+      if (sc) {
+        try {
+          const url = `https://api.scryfall.com/cards/${sc}/${cleanNum}`;
+          console.log(`[MANUAL-MTG] GET ${url}`);
+          const resp = await axios.get(url, { timeout: 10000 });
+          const d = resp.data;
+          card = {
+            game: 'magic',
+            name: d.name,
+            set_name: d.set_name,
+            set_code: d.set?.toUpperCase(),
+            card_number: d.collector_number,
+            rarity: d.rarity,
+            reference_image: d.image_uris?.normal || d.card_faces?.[0]?.image_uris?.normal,
+            cardmarket_url: d.purchase_uris?.cardmarket || null,
+            tcgplayer_url: d.purchase_uris?.tcgplayer || null,
+            verified: true,
+            db_source: 'scryfall.com (manual)',
+            _manual: true
+          };
+        } catch (e) {
+          console.error(`[MANUAL-MTG] Direct lookup failed: ${e.message}`);
+        }
+      }
+      if (!card && name) {
+        try {
+          const resp = await axios.get('https://api.scryfall.com/cards/named', {
+            params: { exact: name, set: sc || undefined }, timeout: 10000
+          });
+          const d = resp.data;
+          card = {
+            game: 'magic',
+            name: d.name, set_name: d.set_name, set_code: d.set?.toUpperCase(),
+            card_number: d.collector_number, rarity: d.rarity,
+            reference_image: d.image_uris?.normal || d.card_faces?.[0]?.image_uris?.normal,
+            cardmarket_url: d.purchase_uris?.cardmarket || null,
+            tcgplayer_url: d.purchase_uris?.tcgplayer || null,
+            verified: true, db_source: 'scryfall.com (manual)', _manual: true
+          };
+        } catch (e) { console.error(`[MANUAL-MTG] Named fallback failed: ${e.message}`); }
+      }
+    } else {
+      card = {
+        game,
+        name: name || `${set_code || ''} #${card_number}`.trim(),
+        set_name: set_code || null,
+        set_code: set_code ? String(set_code).toUpperCase() : null,
+        card_number: cleanNum,
+        verified: false,
+        _manual: true,
+        db_source: 'manual entry (no DB lookup for ' + game + ')'
+      };
+    }
+
+    if (!card) {
+      return { error: 'No card found for that set/number combination. Double-check the set code and number.', status: 404 };
+    }
+
+    if (card.game === 'pokemon' && set_code) {
+      const resolved2 = resolveSetCode(set_code);
+      if (resolved2.setId) {
+        cacheCardResult(resolved2.setId, cleanNum, card);
+      }
+    }
+
+    return { cards: [card] };
+  } catch (err) {
+    console.error('[MANUAL] Error:', err.message);
+    return { error: err.message, status: 500 };
+  }
+}
+
+// Thin route-shaped wrapper. Translates the manualIdentifyCore envelope
+// back to res.status/res.json. Existing tests (S8.5
+// quote-public-paths.spec.js) call this with (req, res) — preserved.
+async function handleManualIdentify(req, res) {
+  const result = await manualIdentifyCore(req.body || {});
+  if (result && result.error) {
+    return res.status(result.status || 500).json({ error: result.error });
+  }
+  return res.json({ cards: result.cards });
+}
+
+// V1 auth'd manual-identify (vendor-side). Logs scan event against the
+// authenticated user; enforceQuota writes X-Scan-* headers.
+router.post('/api/identify-manual', requireAuth, enforceQuota, async (req, res) => {
+  logScanEvent(req.user.id, '/api/identify-manual');
+  return handleManualIdentify(req, res);
+});
+
+// S8.5 fix — public quote-side manual identify. /quote.html and apps/quote
+// were silently failing with 401s because they call this endpoint as
+// anonymous customers. Same lookup logic as /api/identify-manual but no
+// requireAuth; rate-limited via quoteLeadLimiter (10/hr per IP) — the
+// terminal quote-lead step is already gated by the same limiter, so the
+// whole customer flow shares one bucket.
+//
+// logScanEvent(null, ...) is a no-op (the helper bails when userId is
+// falsy), so we skip calling it here — there's no user to attribute
+// to and scan_events.user_id is NOT NULL.
+router.post('/api/v2/quote/identify-manual', quoteLeadLimiter, async (req, res) => {
+  return handleManualIdentify(req, res);
+});
+
+// =============================================================================
+// READ-SET-CODE — V1 server.js:2681-2830.
+//
+// S15 split: the OCR work (sharp resize → Sonnet 4.6 → post-process)
+// is now a pure helper `readSetCodeFromImage({buffer, mediaType})` that
+// the OCR-first pipeline (pricing/ocr-first/pipeline.js) calls directly,
+// bypassing the data-URL decoding and HTTP layer. Public endpoint shape
+// is preserved 1:1.
+// =============================================================================
+
+const READ_SET_CODE_PROMPT = `Read the set code and card number printed on this Pokemon card. Look near the bottom of the card for small text.
+
+CRITICAL — PRESERVE LEADING ZEROS. If the printed number is "027", report "027". NOT "27" and NOT "2". Dropping zeros sends this card to the wrong entry in our database and returns a completely different card. "003/165" is NOT "3/165". This is the #1 failure mode — treat every digit you see as load-bearing, including leading zeros.
+
+FORMATS to look for (check all):
+
+1. MODERN (most common): [reg mark] [SET CODE] [LANG] [NUMBER]
+   The set code is 2-4 uppercase letters, often in a small box. Examples:
+   MEP EN 066 → return "MEP 066"
+   DRI EN 204/182 → return "DRI 204/182"
+   SVP EN 153 → return "SVP 153"
+   WHT EN 131/086 → return "WHT 131/086"
+
+2. SWSH PROMOS: SWSH followed by 3 digits, e.g. SWSH020, SWSH066
+   Return as-is: "SWSH020"
+
+3. GALARIAN GALLERY: GG + number / GG + number, e.g. GG31/GG70
+   Return as-is: "GG31/GG70"
+
+4. OLDER CARDS: Just a regulation mark (D, E, F) + number, no set code box.
+   Return: "NONE"
+
+VALID SET CODES (read the letters VERY carefully — M vs W, E vs F, G vs C matter):
+SVI, PAL, OBF, MEW, PAR, PAF, TEF, TWM, SFA, SCR, SSP, PRE, JTG, DRI,
+MEG, PFL, POR, SVP, MEP, WHT, BBT, ASH, DIA,
+SSH, RCL, DAA, CPA, VIV, BST, CRE, EVS, FST, BRS, ASR, LOR, SIT, CRZ, SWP
+
+SET TOTAL HINTS (use the number after "/" to verify you read the set code correctly):
+MEG = /132, PFL = /094, POR = /088, MEP has no total, WHT = /086, BBT = /086,
+DRI = /182, SSP = /191, SVI = /198, MEW = /165, SVP has no total, DIA = /182
+If the total doesn't match the set code, re-read the set code letters more carefully.
+
+Return ONLY the set code and number. If you cannot read any set code, respond: NONE`;
+
+// SET_TOTALS lookup for the post-processing cross-check
+// (corrects MEP→MEG when the printed total /132 matches MEG, not MEP).
+const READ_SET_CODE_TOTALS = {
+  'MEG':'132','PFL':'094','POR':'088','WHT':'086','BBT':'086',
+  'DRI':'182','SSP':'191','SVI':'198','MEW':'165','DIA':'182',
+  'PAL':'198','OBF':'197','PAR':'182','PAF':'091','TEF':'162',
+  'TWM':'167','SFA':'064','SCR':'156','PRE':'175','JTG':'182',
+  'SSH':'202','RCL':'192','DAA':'189','VIV':'185','BST':'163',
+  'CRE':'198','EVS':'203','FST':'264','BRS':'172','ASR':'189',
+  'LOR':'196','SIT':'195','CRZ':'230',
+};
+
+/**
+ * Pure-function OCR pass that returns the printed set code + card number.
+ * Resizes large images via sharp before sending to Sonnet 4.6 (matches V1
+ * 4MB threshold + 3200px / q98 settings). Post-processing strips markdown
+ * and runs the set-total cross-check — both verbatim from V1.
+ *
+ * Used by:
+ *   - POST /api/read-set-code  (route handler below)
+ *   - POST /api/v2/identify-ocr-first  (via runOcrFirst)
+ *
+ * Returns:
+ *   { text: 'MEP 027' }   — happy path
+ *   { error: 'Could not read set code from image' }
+ *   { error: <message> }  — Sonnet/sharp failure
+ *
+ * @param {object} args
+ * @param {Buffer} args.buffer     Raw image bytes.
+ * @param {string} args.mediaType  'image/jpeg' | 'image/png' | ...
+ */
+export async function readSetCodeFromImage({ buffer, mediaType } = {}) {
+  if (!buffer) return { error: 'No image provided' };
+  try {
+    let imageBase64, sendMediaType;
+    if (buffer.length > 4 * 1024 * 1024) {
+      const resized = await sharp(buffer)
+        .resize({ width: 3200, withoutEnlargement: true })
+        .jpeg({ quality: 98 })
+        .toBuffer();
+      imageBase64 = resized.toString('base64');
+      sendMediaType = 'image/jpeg';
+      console.log(`[READ-SET-CODE] Resized (too large): ${(buffer.length/1024).toFixed(0)}KB → ${(resized.length/1024).toFixed(0)}KB`);
+    } else {
+      imageBase64 = buffer.toString('base64');
+      sendMediaType = mediaType || 'image/jpeg';
+      console.log(`[READ-SET-CODE] Passthrough: ${(buffer.length/1024).toFixed(0)}KB (${sendMediaType})`);
+    }
+
+    console.log('[READ-SET-CODE] Sending to Claude Sonnet 4.6...');
+    const t0 = Date.now();
+
+    const response = await anthropic.messages.create({
+      model: READ_SET_CODE_MODEL,
+      max_tokens: 20,
+      messages: [{
+        role: 'user',
+        content: [
+          {
+            type: 'image',
+            source: { type: 'base64', media_type: sendMediaType, data: imageBase64 }
+          },
+          { type: 'text', text: READ_SET_CODE_PROMPT }
+        ]
+      }]
+    });
+
+    let raw = (response.content?.[0]?.text || '').trim();
+    const elapsed = Date.now() - t0;
+    console.log(`[READ-SET-CODE] ${elapsed}ms → raw "${raw}"`);
+
+    raw = raw.replace(/\*\*/g, '').replace(/^#+\s*/, '');
+    if (raw.length > 30) {
+      const codeMatch = raw.match(/\b([A-Z]{2,5})\s+(?:EN\s+)?(\d{1,4}(?:\s*\/\s*\d{1,4})?)\b/)
+        || raw.match(/\bSWSH\d{3,4}\b/)
+        || raw.match(/\bGG\d{1,3}\s*\/\s*GG\d{1,3}\b/);
+      if (codeMatch) {
+        raw = codeMatch[0].replace(/\s*EN\s+/, ' ');
+        console.log(`[READ-SET-CODE] Extracted from verbose: "${raw}"`);
+      } else {
+        raw = 'NONE';
+      }
+    }
+    raw = raw.replace(/^([A-Z]{2,4})(EN)\s/, '$1 ');
+
+    const totalMatch = raw.match(/^([A-Z]{2,4})\s+(\d+)\s*\/\s*(\d+)$/);
+    if (totalMatch) {
+      const [, readCode, cardNum, total] = totalMatch;
+      const expectedTotal = READ_SET_CODE_TOTALS[readCode];
+      if (expectedTotal && expectedTotal !== total) {
+        const correctCode = Object.entries(READ_SET_CODE_TOTALS).find(([, t]) => t === total)?.[0];
+        if (correctCode) {
+          const corrected = `${correctCode} ${cardNum}/${total}`;
+          console.log(`[READ-SET-CODE] CORRECTED: "${raw}" → "${corrected}" (total /${total} matches ${correctCode}, not ${readCode})`);
+          raw = corrected;
+        }
+      }
+    }
+
+    console.log(`[READ-SET-CODE] ${elapsed}ms → final "${raw}"`);
+
+    if (!raw || raw === 'NONE') {
+      return { error: 'Could not read set code from image' };
+    }
+    return { text: raw };
+  } catch (err) {
+    console.error('[READ-SET-CODE] Error:', err.message, err.status || '', err.error?.message || '');
+    return { error: err.message };
+  }
+}
+
+// V1 endpoint: thin shim around readSetCodeFromImage. Decodes the data URL
+// from req.body.image, then delegates. Response shape preserved 1:1.
+router.post('/api/read-set-code', identifyLimiter, requireAuth, enforceQuota, async (req, res) => {
+  logScanEvent(req.user.id, '/api/read-set-code');
+  const dataUrl = req.body?.image;
+  if (!dataUrl) {
+    return res.status(400).json({ error: 'No image provided' });
+  }
+  const match = dataUrl.match(/^data:(image\/[a-zA-Z]+);base64,(.+)$/);
+  if (!match) {
+    return res.status(400).json({ error: 'Invalid image data URL' });
+  }
+  const rawBuffer = Buffer.from(match[2], 'base64');
+  const result = await readSetCodeFromImage({ buffer: rawBuffer, mediaType: match[1] });
+  if (result.error) {
+    // V1 mapped 'Could not read set code from image' to 404, anything else
+    // (sharp/anthropic failures) to 500. Preserve the split.
+    const status = /Could not read set code/.test(result.error) ? 404 : 500;
+    return res.status(status).json({ error: result.error });
+  }
+  return res.json({ text: result.text });
+});
+
+// V1 server.js:2920-3052 — /api/lookup-by-number.
+router.post('/api/lookup-by-number', requireAuth, enforceQuota, express.json(), async (req, res) => {
+  logScanEvent(req.user.id, '/api/lookup-by-number');
+  try {
+    const { number, set_code: setCode, game, reg_mark } = req.body || {};
+    if (!number || typeof number !== 'string') {
+      return res.status(400).json({ error: 'number required' });
+    }
+
+    const raw = number.trim();
+
+    if (setCode && (game === 'magic' || !game)) {
+      const numOnly = raw.split('/')[0].replace(/^0+/, '') || raw;
+      try {
+        const resp = await axios.get(
+          `https://api.scryfall.com/cards/${encodeURIComponent(setCode.toLowerCase())}/${encodeURIComponent(numOnly)}`,
+          { timeout: 6000 }
+        );
+        const d = resp.data;
+        if (d && d.name) {
+          const card = {
+            game: 'magic',
+            name: d.name,
+            set_name: d.set_name,
+            set_code: (d.set || '').toUpperCase(),
+            card_number: d.collector_number,
+            rarity: d.rarity,
+            image_url: d.image_uris?.normal || d.image_uris?.large,
+            cardmarket_url: d.purchase_uris?.cardmarket || null,
+            tcgplayer_url: d.purchase_uris?.tcgplayer || null,
+            source: 'scryfall.com (ocr-direct)'
+          };
+          console.log(`[OCR-LOOKUP] Scryfall HIT: ${card.name} ${card.set_code} #${card.card_number}`);
+          return res.json({ cards: [card] });
+        }
+      } catch (e) {
+        console.log(`[OCR-LOOKUP] Scryfall miss: ${e.message}`);
+      }
+    }
+
+    const hasSlash = raw.includes('/');
+    let numPart, totalPart;
+    if (hasSlash) {
+      const [a, b] = raw.split('/');
+      numPart = (a || '').replace(/^0+/, '') || a;
+      totalPart = (b || '').replace(/^0+/, '') || b;
+    } else {
+      numPart = raw;
+    }
+
+    if (game !== 'magic') {
+      const queries = [];
+      if (hasSlash && numPart && totalPart) {
+        queries.push(`number:"${numPart}" set.printedTotal:${totalPart}`);
+        queries.push(`number:"${numPart}" set.total:${totalPart}`);
+      } else if (numPart) {
+        queries.push(`number:"${numPart}"`);
+      }
+
+      for (const q of queries) {
+        try {
+          const resp = await axios.get('https://api.pokemontcg.io/v2/cards', {
+            params: { q, pageSize: 10 },
+            timeout: 6000
+          });
+          const results = resp.data?.data || [];
+          if (results.length === 1) {
+            const d = results[0];
+            const card = {
+              game: 'pokemon',
+              name: d.name,
+              set_name: d.set?.name,
+              set_code: (d.set?.id || '').toUpperCase(),
+              card_number: d.number,
+              rarity: d.rarity,
+              hp: d.hp,
+              image_url: d.images?.large || d.images?.small,
+              cardmarket_url: d.cardmarket?.url || null,
+              tcgplayer_url: d.tcgplayer?.url,
+              source: 'pokemontcg.io (ocr-direct)'
+            };
+            console.log(`[OCR-LOOKUP] PokemonTCG HIT: ${card.name} ${card.set_code} #${card.card_number}`);
+            return res.json({ cards: [card] });
+          } else if (results.length > 1 && reg_mark) {
+            const era = REG_MARK_ERAS[reg_mark];
+            if (era) {
+              console.log(`[OCR-LOOKUP] Ambiguous: ${results.length} matches for ${q}, using reg mark ${reg_mark} to filter (${era.prefix} era)`);
+              const filtered = results.filter(d => {
+                const setId = (d.set?.id || '').toLowerCase();
+                const releaseYear = d.set?.releaseDate ? parseInt(d.set.releaseDate.substring(0, 4)) : 0;
+                const eraMatch = era.prefix ? setId.startsWith(era.prefix) : true;
+                const yearMatch = releaseYear >= era.minYear && releaseYear <= era.maxYear;
+                return eraMatch || yearMatch;
+              });
+              if (filtered.length === 1) {
+                const d = filtered[0];
+                const card = {
+                  game: 'pokemon',
+                  name: d.name,
+                  set_name: d.set?.name,
+                  set_code: (d.set?.id || '').toUpperCase(),
+                  card_number: d.number,
+                  rarity: d.rarity,
+                  hp: d.hp,
+                  image_url: d.images?.large || d.images?.small,
+                  cardmarket_url: d.cardmarket?.url || null,
+                  tcgplayer_url: d.tcgplayer?.url,
+                  source: `pokemontcg.io (ocr-direct, reg:${reg_mark})`
+                };
+                console.log(`[OCR-LOOKUP] Reg-mark filtered HIT: ${card.name} ${card.set_code} #${card.card_number}`);
+                return res.json({ cards: [card] });
+              } else {
+                console.log(`[OCR-LOOKUP] Reg-mark filter left ${filtered.length} matches (from ${results.length})`);
+              }
+            }
+          } else if (results.length > 1) {
+            console.log(`[OCR-LOOKUP] Ambiguous: ${results.length} matches for ${q}`);
+          }
+        } catch (e) {
+          console.log(`[OCR-LOOKUP] PokemonTCG error: ${e.message}`);
+        }
+      }
+    }
+
+    return res.status(404).json({ error: 'no unique match' });
+  } catch (err) {
+    console.error('[OCR-LOOKUP] error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// V1 server.js:2838-2862 — /api/report-bad-id (15MB body cap).
+router.post('/api/report-bad-id', express.json({ limit: '15mb' }), async (req, res) => {
+  try {
+    const { card, reason, image, timestamp, ua } = req.body || {};
+    const logDir = join(REPO_ROOT, 'logs');
+    if (!fs.existsSync(logDir)) fs.mkdirSync(logDir, { recursive: true });
+    const entry = {
+      t: new Date().toISOString(),
+      reason: (reason || '').slice(0, 500),
+      card: card ? {
+        name: card.name, game: card.game, set_name: card.set_name,
+        set_code: card.set_code, card_number: card.card_number,
+        rarity: card.rarity, variant: card.variant
+      } : null,
+      had_image: !!image,
+      ua: (ua || '').slice(0, 200),
+      orig_timestamp: timestamp
+    };
+    fs.appendFileSync(join(logDir, 'bad-ids.log'), JSON.stringify(entry) + '\n');
+    console.log(`[BAD-ID] ${entry.card?.name || '?'} — ${entry.reason || '(no reason)'}`);
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('[BAD-ID] error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// V1 server.js:2874-2908 — /api/correct-card (V1 security fix preserved:
+// requireAuth gate + user_id audit log).
+router.post('/api/correct-card', requireAuth, express.json(), (req, res) => {
+  try {
+    const { set_code, card_number, correct_name } = req.body || {};
+    if (!set_code || !card_number || !correct_name) {
+      return res.status(400).json({ error: 'set_code, card_number, and correct_name required' });
+    }
+
+    const resolved = resolveSetCode(set_code);
+    const setId = resolved.setId || set_code.toLowerCase();
+    const cleanNum = String(card_number).replace(/\/.*/, '').replace(/^0+/, '') || String(card_number);
+
+    const key = `${setId}-${cleanNum}`;
+    const existing = CARD_DB.get(key) || {};
+
+    CARD_DB.set(key, {
+      ...existing,
+      name: correct_name.trim(),
+      setName: existing.setName || PKM_SET_NAMES[setId] || set_code,
+      setCode: (existing.setCode || set_code).toUpperCase(),
+      source: 'manual',
+    });
+
+    markCardDbDirty();
+    saveCardDbToFile();
+
+    console.log(`[CORRECT] ${key}: "${existing.name || '?'}" → "${correct_name.trim()}" (manual override by ${req.user?.id || 'unknown'})`);
+    res.json({ ok: true, key, oldName: existing.name || null, newName: correct_name.trim() });
+  } catch (err) {
+    console.error('[CORRECT] error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// =============================================================================
+// /api/v2/identify-ocr-first — S15 OCR-first scan path (Q3, F24).
+//
+// Server-side kill switch: if OCR_FIRST_ENABLED !== 'true' the route returns
+// 503 immediately, no Anthropic call, no telemetry write. Default off per
+// infra/render.yaml + infra/env.example.
+//
+// On any non-503 outcome the pipeline writes one scan_events row with
+// endpoint='ocr-first' (telemetry honest regardless of validated/fell
+// through outcome) and increments cardpricer_ocr_first_total.
+//
+// The client treats {validated:false} as "go run /api/identify-stream the
+// slow way" — same UX as today. The OCR-first path is purely a fast happy
+// path. The logScanEvent at the top of the handler keeps the V1 quota
+// accounting honest (one scan = one quota tick, regardless of which path
+// served it).
+// =============================================================================
+router.post('/api/v2/identify-ocr-first',
+  identifyLimiter,
+  requireAuth,
+  enforceQuota,
+  upload.single('image'),
+  async (req, res) => {
+    if (process.env.OCR_FIRST_ENABLED !== 'true') {
+      return res.status(503).json({
+        error: 'ocr_first_disabled',
+        enable_with: 'OCR_FIRST_ENABLED=true',
+      });
+    }
+
+    // Per-attempt quota tick + classic scan_events row (no `data` payload).
+    // The pipeline writes a SECOND row with endpoint='ocr-first' + data jsonb;
+    // the V1 row keeps quota accounting consistent with /api/identify.
+    logScanEvent(req.user.id, '/api/v2/identify-ocr-first');
+
+    try {
+      const buffer = extractImageBuffer(req);
+      // multer / data URL paths both decode bytes; we don't have a strict
+      // media-type from multer for raw uploads, so default to JPEG (matches
+      // identifyCore's behaviour for the client-resized data URL path).
+      const mediaType = req.file?.mimetype || 'image/jpeg';
+      const hint = req.body?.hint || '';
+
+      const out = await runOcrFirst({
+        buffer,
+        mediaType,
+        hint,
+        ctx: { userId: req.user.id },
+        deps: {
+          readSetCodeFromImage,
+          manualIdentifyCore,
+        },
+      });
+
+      return res.json(out);
+    } catch (err) {
+      if (err.status === 400) return res.status(400).json({ error: err.message });
+      console.error('[OCR-FIRST] error:', err.message);
+      return res.status(500).json({ error: 'Failed to run OCR-first identify', details: err.message });
+    }
+  }
+);
+
+// Named exports for tests + the OCR-first pipeline:
+//   - handleManualIdentify     (S8.5 — quote-public-paths.spec.js)
+//   - manualIdentifyCore       (S15 — pricing/ocr-first/pipeline.js calls
+//                               this directly via the deps object)
+//   - readSetCodeFromImage     (already exported inline above; here for
+//                               documentation symmetry).
+export { handleManualIdentify, manualIdentifyCore };
+
+export default router;

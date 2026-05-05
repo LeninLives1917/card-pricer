@@ -1,0 +1,117 @@
+/* apps/customer/styles/tokens.css
+ * Owner: A10 | Slice: S21
+ *
+ * Design tokens for the editorial-mode customer dashboard (DESIGN_BRIEF.md
+ * "Quote page (/quote) — editorial mode"). These are intentionally identical
+ * to apps/quote/styles/tokens.css — DESIGN_BRIEF says "Both pages consume
+ * the same tokens." When apps/quote/styles/tokens.css moves, this file
+ * MUST move with it; mismatches are a design regression.
+ *
+ * Phase E (IMPLEMENTATION_PLAN.md): legacy aliases (--bg-deep, --cream,
+ * --credit-soft, --cash duplicate) stay out from day 1.
+ */
+
+:root {
+  /* surfaces — warm dark */
+  --ink-100: #0c0a09;
+  --ink-200: #1c1917;
+  --ink-300: #292524;
+  --ink-400: #44403c;
+  --ink-500: #57534e;
+  --hairline: rgba(120, 113, 108, 0.18);
+
+  /* type */
+  --paper-100: #fafaf9;
+  --paper-200: #d6d3d1;
+  --paper-300: #a8a29e;
+  --paper-400: #78716c;
+
+  /* brand */
+  --accent: #d97706;
+  --accent-soft: #fbbf24;
+  --accent-mute: rgba(217, 119, 6, 0.12);
+
+  /* semantic — finance convention */
+  --up: #16a34a;
+  --down: #dc2626;
+  --up-soft: rgba(22, 163, 74, 0.14);
+  --down-soft: rgba(220, 38, 38, 0.14);
+
+  /* premium signal */
+  --rare: #eab308;
+  --rare-soft: rgba(234, 179, 8, 0.14);
+
+  /* cash signal — DESIGN_BRIEF "Cash colour #f59e0b (amber-500)" */
+  --cash: #f59e0b;
+
+  /* radius */
+  --r-1: 6px;
+  --r-2: 8px;
+  --r-3: 12px;
+
+  /* motion */
+  --ease: cubic-bezier(0.2, 0, 0, 1);
+  --t-fast: 120ms;
+  --t-mid: 180ms;
+}
+
+* {
+  box-sizing: border-box;
+  -webkit-tap-highlight-color: transparent;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  background: var(--ink-100);
+  color: var(--paper-100);
+  font-family: 'IBM Plex Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  min-height: 100vh;
+}
+
+body {
+  overflow-x: hidden;
+}
+
+*:focus {
+  outline: none;
+}
+
+*:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: var(--r-1);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    transition-duration: 0.001ms !important;
+  }
+}
+
+/* Type utility classes — same names as the vendor + quote apps. */
+.display {
+  font-family: 'Fraunces', Georgia, 'Times New Roman', serif;
+  font-weight: 600;
+  font-style: italic;
+  letter-spacing: -0.01em;
+}
+
+.figure {
+  font-family: 'IBM Plex Mono', ui-monospace, 'SF Mono', 'Fira Code', Consolas, monospace;
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum' 1, 'zero' 1;
+}
+
+.label {
+  font-family: 'IBM Plex Sans', system-ui, sans-serif;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--paper-300);
+}

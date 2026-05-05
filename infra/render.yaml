@@ -21,8 +21,8 @@ services:
     runtime: node
     plan: starter
     region: frankfurt
-    buildCommand: npm install && node --check apps/server/server.js
-    startCommand: node apps/server/server.js
+    buildCommand: npm install && node --check server.js
+    startCommand: node server.js
     healthCheckPath: /api/health
 
     # Persistent disk (Q2). data/card-db.json + data/card-prices.json + logs/
