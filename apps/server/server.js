@@ -11,16 +11,14 @@
 
 import app from './index.js';
 // Explicit boot-time side effects — moved out of module bodies so test
-// imports of pricing/* and apps/server/* don't fire network requests
-// and don't leave open setInterval handles that block the test runner.
+// imports don't fire network requests and don't leave open setInterval
+// handles that block the test runner.
 import { initCardDb, startCardDbDirtySaveInterval } from './_card-db-boot.js';
 import { startFxRefreshInterval } from '../../pricing/fx.js';
-import { startLegacyFxRefreshInterval } from './_legacy-pricing.js';
 
 initCardDb();
 startCardDbDirtySaveInterval();
 startFxRefreshInterval();
-startLegacyFxRefreshInterval();
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {

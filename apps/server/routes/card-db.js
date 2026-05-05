@@ -20,7 +20,8 @@ import {
   downloadCardDatabase,
   importUnreliableSetsFromTCGGO,
 } from '../_card-db-boot.js';
-import { POKEMONTCG_UNRELIABLE, PKM_SET_NAMES } from '../_legacy-pricing.js';
+import { POKEMONTCG_UNRELIABLE } from '../../../pricing/corrections.js';
+import { PKM_SET_NAMES } from '../../../pricing/set-aliases.js';
 
 const router = express.Router();
 

@@ -27,22 +27,22 @@ import { axios, anthropic, supabase } from '../_clients.js';
 import { requireAuth } from '../middleware/auth.js';
 import { enforceQuota, logScanEvent } from '../middleware/quota.js';
 import { identifyLimiter } from '../middleware/rate-limit.js';
+// S6 import-flip — these used to live in apps/server/_legacy-pricing.js;
+// pricing/ now owns them. See V2_ARCHITECTURE §1 and S6 commit message.
 import {
   identifyCore,
-  verifyIdentified,
   doubleCheckAll,
   stripInternals,
   cacheSet,
   extractImageBuffer,
-  resolveSetCode,
-  lookupTCGdex,
-  lookupViaTCGGO,
-  lookupViaJustTCG,
-  PKM_SET_NAMES,
-  POKEMONTCG_UNRELIABLE,
-  REG_MARK_ERAS,
-  READ_SET_CODE_MODEL,
-} from '../_legacy-pricing.js';
+} from '../../../pricing/identify-core.js';
+import { verifyIdentified } from '../../../pricing/verify.js';
+import { resolveSetCode, PKM_SET_NAMES } from '../../../pricing/set-aliases.js';
+import { POKEMONTCG_UNRELIABLE, REG_MARK_ERAS } from '../../../pricing/corrections.js';
+import { READ_SET_CODE_MODEL } from '../../../pricing/confidence.js';
+import { lookupTCGdex } from '../../../pricing/adapters/tcgdex.js';
+import { lookupViaTCGGO } from '../../../pricing/adapters/tcggo-rapidapi.js';
+import { lookupViaJustTCG } from '../../../pricing/adapters/justtcg.js';
 import {
   CARD_DB,
   lookupLocalDb,

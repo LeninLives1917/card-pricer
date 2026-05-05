@@ -32,11 +32,11 @@ import cors from 'cors';
 // agents). Importing this for side effects is intentional.
 import './_clients.js';
 
-// Side-effect import: starts the FX refresh loop, kicks off card-DB boot
-// and the periodic dirty-save interval. Same lifecycle as V1.
-import './_legacy-pricing.js';
-// _card-db-boot.js is imported transitively via _legacy-pricing — its
-// initCardDb() call fires at module load.
+// Boot-time side effects (initCardDb, FX refresh, dirty-save interval) are
+// fired explicitly from apps/server/server.js before app.listen. Importing
+// this module no longer triggers them — tests + tooling can import the
+// app builder without kicking off network calls. See V2 commit 215afb3
+// (S6) for the rationale.
 
 // Telemetry. S5 imports the logger to anchor the wiring point; real
 // logging is wired by S14 (A8). pino isn't yet in package.json so the

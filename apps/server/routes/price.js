@@ -8,19 +8,15 @@
 
 import express from 'express';
 import { requireAuth } from '../middleware/auth.js';
-import {
-  buildCardmarketUrl,
-  fetchCardmarketPrice,
-  priceMagicCard,
-  pricePokemonCard,
-  fetchJustTCGPrice,
-  fetchRapidAPICardmarketPrice,
-  priceEbaySold,
-  priceCacheKey,
-  priceCacheGet,
-  priceCacheSet,
-  getUsdToEur,
-} from '../_legacy-pricing.js';
+// S6 import-flip
+import { buildCardmarketUrl, fetchCardmarketPrice } from '../../../pricing/adapters/cardmarket-html.js';
+import { priceMagicCard } from '../../../pricing/adapters/scryfall.js';
+import { pricePokemonCard } from '../../../pricing/adapters/pokemontcg.js';
+import { fetchJustTCGPrice } from '../../../pricing/adapters/justtcg.js';
+import { fetchRapidAPICardmarketPrice } from '../../../pricing/adapters/tcggo-rapidapi.js';
+import { priceEbaySold } from '../../../pricing/adapters/ebay-sold.js';
+import { priceCacheKey, priceCacheGet, priceCacheSet } from '../../../pricing/price.js';
+import { getUsdToEur } from '../../../pricing/fx.js';
 
 const router = express.Router();
 

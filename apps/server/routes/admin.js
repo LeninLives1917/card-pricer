@@ -22,7 +22,7 @@ import {
   getLastPriceRefreshAt,
   downloadCardDatabase,
 } from '../_card-db-boot.js';
-import { getUsdToEur } from '../_legacy-pricing.js';
+import { getUsdToEur } from '../../../pricing/fx.js';
 
 const router = express.Router();
 

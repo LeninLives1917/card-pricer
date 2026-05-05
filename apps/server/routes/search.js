@@ -6,7 +6,7 @@
 
 import express from 'express';
 import { axios } from '../_clients.js';
-import { getGameSlug } from '../_legacy-pricing.js';
+import { getGameSlug } from '../../../pricing/adapters/cardmarket-html.js';
 
 const router = express.Router();
 
