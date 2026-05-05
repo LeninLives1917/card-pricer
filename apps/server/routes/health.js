@@ -14,17 +14,33 @@ import { widget_loaded_total } from '../../../infra/observability/metrics.js';
 const router = express.Router();
 
 router.get('/api/health', (req, res) => {
+  // Flat boolean keys consumed by the V2 admin tab (apps/vendor/modules/tabs/admin.js).
+  // V1 nested `apis.*` shape is preserved alongside for backward compat with any
+  // older surface still reading it.
+  const has_anthropic_key = !!process.env.ANTHROPIC_API_KEY;
+  const has_supabase = !!(process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY);
+  const has_stripe   = !!process.env.STRIPE_SECRET_KEY;
+  const has_ebay     = !!(process.env.EBAY_APP_ID && process.env.EBAY_CERT_ID);
+  const has_justtcg  = !!process.env.JUSTTCG_API_KEY;
+  const has_rapidapi = !!process.env.RAPIDAPI_KEY;
+
   res.json({
     status: 'ok',
     ts: Date.now(),
     uptime: process.uptime(),
     apis: {
-      anthropic: !!process.env.ANTHROPIC_API_KEY,
+      anthropic: has_anthropic_key,
       cardmarket: '✅ Direct links + API prices (no scraping)',
-      ebay: !!(process.env.EBAY_APP_ID && process.env.EBAY_CERT_ID),
+      ebay: has_ebay,
       scryfall: true,
-      pokemontcg: true
-    }
+      pokemontcg: true,
+    },
+    has_anthropic_key,
+    has_supabase,
+    has_stripe,
+    has_ebay,
+    has_justtcg,
+    has_rapidapi,
   });
 });
 
