@@ -511,6 +511,8 @@ Per audit non-negotiable §2.4 ("never edit data in place without a backup"):
 
 For `user_state` → `sessions`+`session_cards` (F17): the dual-write window happens **inside V2** rather than across V2 → V2.1. A3 ships the dual-writer in S1, the relational reader is gated behind `READ_FROM_RELATIONAL=false` until the regression suite confirms parity, then flipped to `true` near the end of phase 4. The JSONB column drop is a separate migration in the first release after V2 ships.
 
+**S24 parity rubric** (added by slice S24): the read-flip is invisible to the client iff the relational path returns the same content the JSONB path returned. The S24 deliverables — `tests/regression/sessions-readflip.spec.js` (23 parity tests) plus `infra/deploy/sessions-readflip-runbook.md` (operator-facing flip+rollback steps) — make that contract testable. Documented divergences (uuid-keyed session map, defensive `wantlist`/`v` normalisation on the relational path) are listed in the runbook §3.3 + §7 so operators expect them. The parity suite must pass on the deployed build *before* the runbook is executed.
+
 ### 4.2 File-backed state (server-local)
 
 Render Starter (Q2) means we have persistent disk, so files survive redeploys:
@@ -545,7 +547,7 @@ Operator-locked at end of phase 2. All ✓ / ✗ are final.
 | F14 | Vendor auth — single password + session | ✓ already in V1 (Supabase) | A1 | XS | none |
 | F15 | Phone-pair survives redeploy (Postgres `live_sessions`) | ✓ V2 | A1 + A3 | M | medium — touches scanner-mode |
 | F16 | Adopt `card_prices` table for arbitrage data | ✓ V2 | A2 + A3 | S | low |
-| **F17** | **Adopt `sessions`/`session_cards` table — replace JSONB blob** | **✓ V2 (Q1)** | A3 | L | high — dual-write + cutover |
+| **F17** | **Adopt `sessions`/`session_cards` table — replace JSONB blob** | **✓ V2 (Q1)** | A3 | L | high — dual-write + cutover. S24 parity tests + readflip runbook landed in commit \<pending\>; flip is operated post-V2-ship via Render env, not part of V2 cutover itself. |
 | **F18** | **Inventory subsystem** | **✓ V2 (Q1)** | A9 (NEW) + A1 + A4 | XL | very high — touches every surface |
 | **F19** | **Customer-side accounts + tokenised offer accept/decline** | **✓ V2 (Q1)** | A10 (NEW) + A1 + A5 | L | high — new auth flow |
 | F20 | Pricing engine model bumped to one constant | ✓ V2 | A2 | XS | none — pure refactor |
@@ -748,6 +750,8 @@ S0 ──┬──► S1 (A3 schema)        ──► S5 (A1 backend)        ─
 | Q6 | Deploy preview env vs in-place | **In place** | Phase-5 release runbook owns the safeguards |
 
 ## 9. Release runbook outline (Q6 — full version in `infra/deploy/release-runbook.md`)
+
+**V2 ships with `READ_FROM_RELATIONAL=false`.** The F17 sessions read-flip is a SEPARATE, distinct operation that runs AFTER V2 has been stable for at least one release window (recommended 2–3 weeks). It is owned by `infra/deploy/sessions-readflip-runbook.md` and is NOT part of the steps below. Conflating the two would put the read-path swap on the same change-window as the V2 ship, which is exactly what the dual-write design is meant to avoid.
 
 Pre-cutover (T-24h):
 1. All A7 regression tests green on v2 branch.
