@@ -1,8 +1,17 @@
 // apps/quote/modules/lookup.js
-// Owner: A5 | Slice: S8
+// Owner: A5 | Slice: S8 — updated S8.5 (anonymous-customer 401 fix).
 //
 // Sequential identify-manual + price loop for the customer quote. Mirrors
 // V1 startProcessing() in public/quote.html lines 501-591 (V2_AUDIT §1c).
+//
+// S8.5 NOTE: this module USED to call /api/identify-manual + /api/price,
+// both of which carry requireAuth. Anonymous customers hitting /quote
+// always got 401 from both, and the page silently rendered "None of the
+// N card(s) could be priced". The fix is the new public V2 paths
+// /api/v2/quote/identify-manual and /api/v2/quote/price (added in
+// apps/server/routes/identify.js + price.js — same handler bodies, no
+// auth, gated by quoteLeadLimiter 10/hr per IP). See S8.5 report for
+// the full carve-out rationale.
 //
 // Sequential by design (NOT parallel) — preserves rate-limit safety + lets
 // the progress bar tick after every completed lookup.
@@ -50,7 +59,7 @@ export async function runLookup({ lines, game, cashPct, creditPct, request, onPr
 
   for (const entry of lines) {
     try {
-      const idResp = await request('/api/identify-manual', {
+      const idResp = await request('/api/v2/quote/identify-manual', {
         method: 'POST',
         body: {
           game,
@@ -70,12 +79,10 @@ export async function runLookup({ lines, game, cashPct, creditPct, request, onPr
 
       const card = cards[0];
 
-      // /api/price requires auth too (audit §1a). The customer is anonymous;
-      // we still attempt the call so the UX matches V1 verbatim. If the
-      // request errors out we fall through to the catch block and push an
-      // error row, which is the same observable behaviour V1 produced when
-      // /api/price returned 401.
-      const priceResp = await request('/api/price', {
+      // S8.5: was /api/price (requireAuth, returned 401 for anonymous
+      // customers); now uses the public /api/v2/quote/price carve-out
+      // gated by quoteLeadLimiter. Same response shape.
+      const priceResp = await request('/api/v2/quote/price', {
         method: 'POST',
         body: { card, buyPercentage: cashPct },
       });

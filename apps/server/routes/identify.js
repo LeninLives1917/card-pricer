@@ -26,7 +26,7 @@ import { dirname, join } from 'path';
 import { axios, anthropic, supabase } from '../_clients.js';
 import { requireAuth } from '../middleware/auth.js';
 import { enforceQuota, logScanEvent } from '../middleware/quota.js';
-import { identifyLimiter } from '../middleware/rate-limit.js';
+import { identifyLimiter, quoteLeadLimiter } from '../middleware/rate-limit.js';
 // S6 import-flip — these used to live in apps/server/_legacy-pricing.js;
 // pricing/ now owns them. See V2_ARCHITECTURE §1 and S6 commit message.
 import {
@@ -142,9 +142,10 @@ router.post('/api/identify-stream', identifyLimiter, requireAuth, enforceQuota, 
   }
 });
 
-// V1 server.js:2447-2672 — /api/identify-manual.
-router.post('/api/identify-manual', requireAuth, enforceQuota, async (req, res) => {
-  logScanEvent(req.user.id, '/api/identify-manual');
+// V1 server.js:2447-2672 — manual identify body, extracted to a shared
+// helper so both the auth'd V1 path and the public V2 quote path share
+// identical lookup logic. See S8.5 fix below.
+async function handleManualIdentify(req, res) {
   try {
     const { game, set_code, card_number, name } = req.body || {};
     if (!game) return res.status(400).json({ error: 'game is required' });
@@ -341,6 +342,27 @@ router.post('/api/identify-manual', requireAuth, enforceQuota, async (req, res) 
     console.error('[MANUAL] Error:', err.message);
     res.status(500).json({ error: err.message });
   }
+}
+
+// V1 auth'd manual-identify (vendor-side). Logs scan event against the
+// authenticated user; enforceQuota writes X-Scan-* headers.
+router.post('/api/identify-manual', requireAuth, enforceQuota, async (req, res) => {
+  logScanEvent(req.user.id, '/api/identify-manual');
+  return handleManualIdentify(req, res);
+});
+
+// S8.5 fix — public quote-side manual identify. /quote.html and apps/quote
+// were silently failing with 401s because they call this endpoint as
+// anonymous customers. Same lookup logic as /api/identify-manual but no
+// requireAuth; rate-limited via quoteLeadLimiter (10/hr per IP) — the
+// terminal quote-lead step is already gated by the same limiter, so the
+// whole customer flow shares one bucket.
+//
+// logScanEvent(null, ...) is a no-op (the helper bails when userId is
+// falsy), so we skip calling it here — there's no user to attribute
+// to and scan_events.user_id is NOT NULL.
+router.post('/api/v2/quote/identify-manual', quoteLeadLimiter, async (req, res) => {
+  return handleManualIdentify(req, res);
 });
 
 // V1 server.js:2681-2830 — /api/read-set-code.
@@ -672,5 +694,8 @@ router.post('/api/correct-card', requireAuth, express.json(), (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
+
+// Named export for tests (S8.5 — quote-public-paths.spec.js).
+export { handleManualIdentify };
 
 export default router;

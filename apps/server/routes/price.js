@@ -8,6 +8,7 @@
 
 import express from 'express';
 import { requireAuth } from '../middleware/auth.js';
+import { quoteLeadLimiter } from '../middleware/rate-limit.js';
 // S6 import-flip
 import { buildCardmarketUrl, fetchCardmarketPrice } from '../../../pricing/adapters/cardmarket-html.js';
 import { priceMagicCard } from '../../../pricing/adapters/scryfall.js';
@@ -20,7 +21,10 @@ import { getUsdToEur } from '../../../pricing/fx.js';
 
 const router = express.Router();
 
-router.post('/api/price', requireAuth, async (req, res) => {
+// V1 /api/price body, extracted to a shared helper so both the auth'd
+// vendor path and the public V2 quote path share identical pricing logic.
+// See S8.5 fix below.
+async function handlePrice(req, res) {
   try {
     const { card } = req.body;
     if (!card || !card.name) {
@@ -311,6 +315,24 @@ router.post('/api/price', requireAuth, async (req, res) => {
     console.error('Pricing error:', err.message);
     res.status(500).json({ error: 'Pricing lookup failed', details: err.message });
   }
+}
+
+// V1 auth'd pricing (vendor-side).
+router.post('/api/price', requireAuth, async (req, res) => {
+  return handlePrice(req, res);
 });
+
+// S8.5 fix — public quote-side pricing. Customers using /quote are
+// anonymous; the V1 endpoint required auth and silently 401'd, leaving
+// the page to render "None of the N card(s) could be priced". Same body
+// as /api/price; rate-limited via quoteLeadLimiter (10/hr per IP) so the
+// whole customer flow (identify-manual → price → quote-lead) shares one
+// bucket.
+router.post('/api/v2/quote/price', quoteLeadLimiter, async (req, res) => {
+  return handlePrice(req, res);
+});
+
+// Named export for tests (S8.5 — quote-public-paths.spec.js).
+export { handlePrice };
 
 export default router;
