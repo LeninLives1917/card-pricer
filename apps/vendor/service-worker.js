@@ -8,8 +8,14 @@
 //
 // CACHE_VERSION must change every time the served HTML changes (audit R7).
 // V1 = 'cardpricer-v60'; V2 ships as 'cardpricer-v2'.
+// Bumps:
+//   v2.1 — customer-PDF export landed (412c367 + iframe-load fix). The
+//           stale-while-revalidate strategy was serving cached pre-PDF
+//           session.js to existing clients, so the button click did
+//           nothing because no handler was wired. Bumping the version
+//           evicts every cached module on next load.
 
-const CACHE_VERSION = 'cardpricer-v2';
+const CACHE_VERSION = 'cardpricer-v2.1';
 
 const SHELL = [
   '/',

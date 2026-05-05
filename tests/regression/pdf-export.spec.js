@@ -76,7 +76,7 @@ test('buildRow multiplies all three figures by quantity (duplicate_count + 1)', 
   assert.equal(r.creditRaw, 21);
 });
 
-test('buildRow image priority: card.image_url > card.reference_image > entry.image', () => {
+test('buildRow image priority: card.image_url > card.reference_image (no scan-photo fallback)', () => {
   // image_url wins.
   assert.equal(buildRow({
     card: { image_url: 'A', reference_image: 'B' },
@@ -89,11 +89,13 @@ test('buildRow image priority: card.image_url > card.reference_image > entry.ima
     image: 'C',
   }, 50, 70).image, 'B');
 
-  // entry.image as last resort.
+  // entry.image (operator scan photo) is deliberately NOT used in the
+  // customer PDF — we only print catalogue art so the quote looks like
+  // a Cardmarket page, not a phone snap of the cards on the desk.
   assert.equal(buildRow({
     card: {},
     image: 'C',
-  }, 50, 70).image, 'C');
+  }, 50, 70).image, '');
 
   // Empty when nothing set.
   assert.equal(buildRow({

@@ -16,10 +16,13 @@
 // fall out of CSS. The trade-off is a manual "Save as PDF" step in the
 // print dialog — acceptable for an operator-driven action.
 //
-// Image source priority: card.image_url → card.reference_image → e.image
-// (scan photo). The first two are the official card art (same image
-// Cardmarket displays); e.image is the operator's phone snap and is the
-// last-resort fallback for entries that never got a verified DB hit.
+// Image source: card.image_url → card.reference_image. These are the
+// official card art served by pokemontcg.io / scryfall — the same image
+// Cardmarket displays on its product pages. We deliberately do NOT fall
+// back to entry.image (the operator's scan photo): a customer-facing
+// quote should show the catalogue card, not a phone snap of the cards
+// they brought in. Cards that never got a verified DB hit print without
+// an image rather than with a low-quality scan.
 
 import { getSetting } from './state.js';
 
@@ -38,10 +41,108 @@ import { getSetting } from './state.js';
  * @param {boolean}  [opts.creditOnly]    hide the cash column
  */
 export async function exportSessionPdf(session, pricing, opts = {}) {
+  console.log('[PDF] exportSessionPdf called', {
+    sessionName: session?.name,
+    cards: session?.log?.length,
+    pricing,
+  });
   if (!session || !Array.isArray(session.log) || !session.log.length) {
     alert('Nothing to export — this session is empty.');
     return;
   }
+  const overlay = showPokeballOverlay();
+  try {
+    return await _exportInner(session, pricing, opts);
+  } catch (err) {
+    console.error('[PDF] export failed:', err);
+    alert('Could not generate PDF: ' + (err?.message || 'unknown error'));
+  } finally {
+    overlay.hide();
+  }
+}
+
+// Spinning-Pokéball overlay shown while we compose the printable doc and
+// wait for images. Pure inline-style + CSS keyframes so it works without
+// any external assets — colours match the V2 token palette (accent =
+// burnt-umber, paper-300 = cream).
+function showPokeballOverlay() {
+  // De-dupe: if a previous PDF run hasn't torn the overlay down yet,
+  // re-use it instead of stacking another on top.
+  let host = document.getElementById('cp-pdf-overlay');
+  if (!host) {
+    host = document.createElement('div');
+    host.id = 'cp-pdf-overlay';
+    host.setAttribute('role', 'status');
+    host.setAttribute('aria-live', 'polite');
+    host.innerHTML = `
+      <style>
+        #cp-pdf-overlay {
+          position: fixed; inset: 0; z-index: 99999;
+          display: flex; flex-direction: column;
+          align-items: center; justify-content: center;
+          background: rgba(20, 17, 15, 0.55);
+          backdrop-filter: blur(2px);
+          -webkit-backdrop-filter: blur(2px);
+          font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, Roboto, sans-serif;
+          color: #f4ecdf;
+          animation: cpPdfFade 220ms ease-out;
+        }
+        @keyframes cpPdfFade {
+          from { opacity: 0; }
+          to   { opacity: 1; }
+        }
+        #cp-pdf-overlay .cp-poke {
+          width: 88px; height: 88px;
+          border-radius: 50%;
+          background:
+            radial-gradient(circle at 50% 50%, #f4ecdf 0 11px, #14110f 11px 14px, transparent 14px),
+            linear-gradient(180deg, #d23636 0 50%, #f4ecdf 50% 100%);
+          box-shadow:
+            inset 0 -2px 0 rgba(0,0,0,0.18),
+            inset 0 2px 0 rgba(255,255,255,0.18),
+            0 6px 18px rgba(0,0,0,0.35);
+          position: relative;
+          animation: cpPokeSpin 1.1s linear infinite;
+        }
+        #cp-pdf-overlay .cp-poke::before {
+          content: '';
+          position: absolute;
+          left: 0; right: 0; top: 50%;
+          height: 6px; transform: translateY(-50%);
+          background: #14110f;
+        }
+        @keyframes cpPokeSpin {
+          from { transform: rotate(0deg); }
+          to   { transform: rotate(360deg); }
+        }
+        #cp-pdf-overlay .cp-msg {
+          margin-top: 18px;
+          font-family: 'Fraunces', Georgia, serif;
+          font-size: 17px;
+          letter-spacing: 0.2px;
+        }
+        #cp-pdf-overlay .cp-sub {
+          margin-top: 4px;
+          font-size: 12px;
+          opacity: 0.75;
+        }
+      </style>
+      <div class="cp-poke" aria-hidden="true"></div>
+      <div class="cp-msg">Building your PDF…</div>
+      <div class="cp-sub">Loading card images — your print dialog will open shortly.</div>
+    `;
+    document.body.appendChild(host);
+  }
+  return {
+    hide() {
+      try {
+        host.remove();
+      } catch {}
+    },
+  };
+}
+
+async function _exportInner(session, pricing, opts) {
 
   const shopName = opts.shopName ?? getSetting('shopName', 'Card Pricer');
   const shopEmail = opts.shopEmail ?? getSetting('shopEmail', '');
@@ -87,7 +188,7 @@ function buildRow(entry, cashPct, creditPct) {
   const cashRaw = entry.custom_buy ?? round2(market * (cashPct / 100));
   const creditRaw = round2(market * (creditPct / 100));
   const qty = (entry.duplicate_count || 0) + 1;
-  const image = card.image_url || card.reference_image || entry.image || '';
+  const image = card.image_url || card.reference_image || '';
   return {
     name: card.name || 'Unknown card',
     setLabel: [card.set_code, card.card_number].filter(Boolean).join(' '),
@@ -372,8 +473,6 @@ function openPrintFrame(html) {
     iframe.style.width = '0';
     iframe.style.height = '0';
     iframe.style.border = '0';
-    iframe.srcdoc = html;
-    document.body.appendChild(iframe);
 
     let printed = false;
     const cleanup = () => {
@@ -386,22 +485,27 @@ function openPrintFrame(html) {
       }, 600);
     };
 
-    iframe.addEventListener('load', () => {
+    const runPrint = () => {
       const doc = iframe.contentDocument;
       const win = iframe.contentWindow;
-      if (!doc || !win) { cleanup(); return; }
+      if (!doc || !win) {
+        console.warn('[PDF] iframe has no document/window after load');
+        cleanup();
+        return;
+      }
 
-      // Wait for every <img> inside the doc to either load or fail before
-      // calling print(). Without this, large card images often show as
-      // broken thumbs in the saved PDF on slower connections.
+      // Wait for every <img> in the doc to settle (or 4s, whichever is
+      // first). Without the cap, a slow card-image fetch silently
+      // suppresses the print dialog forever.
       const imgs = Array.from(doc.images || []);
-      const ready = imgs.length === 0 ? Promise.resolve() : Promise.all(
+      const imgReady = imgs.length === 0 ? Promise.resolve() : Promise.all(
         imgs.map((img) => img.complete ? Promise.resolve()
           : new Promise((r) => { img.onload = img.onerror = () => r(); })
         ),
       );
-
-      ready.then(() => {
+      const cap = new Promise((r) => setTimeout(r, 4000));
+      Promise.race([imgReady, cap]).then(() => {
+        console.log('[PDF] images ready, opening print dialog');
         try {
           win.focus();
           win.print();
@@ -410,7 +514,31 @@ function openPrintFrame(html) {
         }
         cleanup();
       });
+    };
+
+    // Hard-timeout safety net: if the 'load' event never fires (it can
+    // fire synchronously inside appendChild for srcdoc and miss any
+    // listener added later, or be eaten if the iframe is reparented), this
+    // forces the print after 1.5s. runPrint is idempotent via `printed`.
+    const fallback = setTimeout(() => {
+      if (!printed) {
+        console.warn('[PDF] load event never fired — forcing print()');
+        runPrint();
+      }
+    }, 1500);
+
+    // CRITICAL: attach the load listener BEFORE writing srcdoc and
+    // appending the iframe. With srcdoc, browsers can fire 'load'
+    // synchronously inside appendChild — too late to register a listener
+    // afterwards. v412c367 had this in the wrong order, which is why the
+    // dialog never opened.
+    iframe.addEventListener('load', () => {
+      clearTimeout(fallback);
+      runPrint();
     });
+
+    iframe.srcdoc = html;
+    document.body.appendChild(iframe);
   });
 }
 
