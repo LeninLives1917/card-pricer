@@ -1,26 +1,30 @@
 // pricing/sealed/price.js
 //
-// Owner: A2 (Pricing engine) — Slice S17
+// Owner: A2 (Pricing engine) — Slice S17 + V2.0.1 (Cardmarket swap)
 // Cross-references:
 //   - docs/V2_ARCHITECTURE.md §5 F5
 //   - pricing/sealed/verify.js (verifySealed)
-//   - pricing/adapters/tcgplayer-pro.js (only adapter for V2)
+//   - pricing/adapters/cardmarket-sealed.js (sole adapter for V2)
 //   - pricing/sealed/product-types.js (SealedProduct, SealedQuote)
-//   - pricing/fx.js (getUsdToEur — adapters apply this themselves; we pass
-//     the rate via ctx so they don't re-import)
+//   - pricing/fx.js (getUsdToEur — Cardmarket is EUR-native so unused, but
+//     threaded via ctx for forward-compat with USD-priced adapters)
 //
 // Fan-out + selection for /api/v2/price-sealed.
 //
 // Differences vs single-card priceCard():
-//   - SKU-keyed input, not card-number/set/name.
+//   - {game, category, name?, ...}-keyed input, not card-number/set/name.
 //   - condition_multiplier is implicitly 1.0 (sealed has no condition axis).
 //   - NO hotness scoring. Sealed product trends move weekly, not daily;
 //     surfacing a "hot" badge against weekly data is misleading. If/when we
 //     add weekly trend data we can revisit.
-//   - Source priority is trivial (one source for V2).
+//   - Source priority is trivial (one source for V2 — cardmarket-sealed).
+//   - Cardmarket sealed is best-effort scrape: it can return a quote with
+//     market_value_eur:null + blocked_by:'cloudflare' when Cloudflare
+//     blocks. That's still a useful response — the URL surfaces, the
+//     operator/customer can check live.
 
 import { getUsdToEur } from '../fx.js';
-import tcgplayerPro from '../adapters/tcgplayer-pro.js';
+import cardmarketSealed from '../adapters/cardmarket-sealed.js';
 import { verifySealed, isSealedVerifyAvailable, SEALED_VERIFY_ADAPTERS } from './verify.js';
 import { normalizeSealedSku, isSealedProduct } from './product-types.js';
 
@@ -28,11 +32,11 @@ const DEFAULT_BUY_PERCENTAGE = 60;
 
 /**
  * Set of adapters that participate in sealed pricing. Same priority order as
- * verify; today only TCGPlayer Pro.
+ * verify; today only Cardmarket sealed.
  *
  * @type {ReadonlyArray<{ name: string, isAvailable: () => boolean, priceSealed: Function }>}
  */
-const SEALED_PRICE_ADAPTERS = Object.freeze([tcgplayerPro]);
+const SEALED_PRICE_ADAPTERS = Object.freeze([cardmarketSealed]);
 
 /**
  * Static priority list for sealed sources — used as a confidence-tie breaker.
@@ -41,7 +45,7 @@ const SEALED_PRICE_ADAPTERS = Object.freeze([tcgplayerPro]);
  *
  * @type {ReadonlyArray<string>}
  */
-export const SEALED_STATIC_PRIORITY = Object.freeze(['tcgplayer-pro']);
+export const SEALED_STATIC_PRIORITY = Object.freeze(['cardmarket-sealed']);
 
 /**
  * Price a verified sealed product across every available adapter.
@@ -149,21 +153,42 @@ function round2(n) {
 }
 
 /**
- * One-shot helper combining verify + price. The route uses this so the SKU
- * is canonicalised before the (paid) price call.
+ * One-shot helper combining verify + price. The route uses this so the
+ * input is canonicalised through verify before the price call.
  *
- * @param {string} rawSku
+ * Two input shapes accepted:
+ *   - bare SKU string (when the operator already knows it)
+ *   - rich object { sku?, game, category, set_code?, set_name?, name?,
+ *     cardmarket_url?, language?, manual_market_eur? }. cardmarket-sealed
+ *     needs game + category + (name OR set_name OR cardmarket_url) to
+ *     build the URL.
+ *
+ * The optional manual_market_eur on the rich-object path is operator-
+ * supplied — when present, the adapter SHORT-CIRCUITS the scrape and
+ * returns confidence:0.95 (operator vouched). Useful when Cloudflare
+ * blocks the scrape but the operator is looking at the live page.
+ *
+ * @param {string | object} input
  * @param {object} [ctx]
  * @param {object} [opts]
  * @returns {Promise<null | Awaited<ReturnType<typeof priceSealed>>>}
- *   null when verify says the SKU doesn't exist.
+ *   null when verify says the input doesn't resolve to a product.
  */
-export async function verifyAndPrice(rawSku, ctx = {}, opts = {}) {
-  const sku = normalizeSealedSku(rawSku);
-  if (!sku) return null;
-  const product = await verifySealed({ sku }, ctx);
+export async function verifyAndPrice(input, ctx = {}, opts = {}) {
+  if (input == null) return null;
+  if (typeof input === 'string' && !normalizeSealedSku(input)) return null;
+
+  const product = await verifySealed(input, ctx);
   if (!product) return null;
-  return priceSealed(product, ctx, opts);
+
+  // Pass through the manual_market_eur override if the rich-object shape
+  // included one — the priceSealed adapter consumes ctx.manual_market_eur
+  // to skip the scrape.
+  const priceCtx = (typeof input === 'object' && typeof input.manual_market_eur === 'number')
+    ? { ...ctx, manual_market_eur: input.manual_market_eur }
+    : ctx;
+
+  return priceSealed(product, priceCtx, opts);
 }
 
 // Re-exports for the route + tests.

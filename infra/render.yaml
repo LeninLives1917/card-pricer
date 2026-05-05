@@ -134,17 +134,15 @@ services:
       - key: LOG_LEVEL
         value: info
 
-      # ---------------- V2-NEW sealed pricing (S17) ----------------
-      # TCGPlayer Pro is a paid tier. When TCGPLAYER_PRO_API_KEY is unset
-      # AND TCGPLAYER_PRO_MOCK is not 'true', /api/v2/price-sealed returns
-      # 503 cleanly. Set TCGPLAYER_PRO_MOCK=true on staging to exercise
-      # the sealed pipeline without a real subscription.
-      - key: TCGPLAYER_PRO_API_KEY
-        sync: false
-      - key: TCGPLAYER_PRO_BASE_URL
-        value: https://api.tcgplayer.com/
-      - key: TCGPLAYER_PRO_MOCK
-        value: "false"
+      # ---------------- V2-NEW sealed pricing (S17 + V2.0.1) ----------------
+      # Sealed product pricing uses pricing/adapters/cardmarket-sealed.js,
+      # which best-effort scrapes Cardmarket product pages. Cloudflare
+      # blocks ~most of the time; when it does, /api/v2/price-sealed
+      # returns the URL only with blocked_by:'cloudflare' and the operator
+      # supplies manual_market_eur from the live Cardmarket page.
+      # NO API KEY REQUIRED. The adapter is always available.
+      # (V2.0.1 dropped the previous TCGPLAYER_PRO_* env vars when the
+      # adapter was swapped from TCGPlayer Pro to Cardmarket sealed.)
 
       # ---------------- Runtime (NON-SECRET) ----------------
       - key: NODE_VERSION

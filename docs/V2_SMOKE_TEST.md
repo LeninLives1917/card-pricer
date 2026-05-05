@@ -335,7 +335,7 @@ Sourced from `git log v2 --oneline -50` plus the ⚠/⏭ rows in §2 and §4.
    - `ANTHROPIC_API_KEY` — required, `/api/identify*` 503 without it
    - `SUPABASE_URL` + `SUPABASE_SERVICE_ROLE_KEY` — required for auth
    - `STRIPE_SECRET_KEY` + `STRIPE_WEBHOOK_SECRET` + 6 price IDs — required for billing
-   - `TCGPLAYER_PRO_API_KEY` (or `TCGPLAYER_PRO_MOCK=true`) — required for sealed pricing per S17
+   - (V2.0.1: sealed pricing requires no env vars — Cardmarket sealed adapter is always available)
    - `OCR_FIRST_ENABLED` — leave **unset (defaults false)** at ship per Q3 plan
    - `READ_FROM_RELATIONAL` — leave **unset (defaults false)** at ship; flip later via `infra/deploy/sessions-readflip-runbook.md`
    - `BREVO_API_KEY` + `BREVO_SENDER_EMAIL` — required for `/api/quote-lead`

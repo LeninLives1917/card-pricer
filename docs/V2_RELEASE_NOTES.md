@@ -22,7 +22,7 @@
 ### New vendor-facing features
 
 - **Inventory subsystem.** `/api/v2/inventory/*` lets shop-plan vendors track buy → list → sold → P&L per item across Cardmarket / TCGPlayer / eBay / in-store. V2 ships full CRUD + state machine + audit-log events; Cardmarket / TCGPlayer / eBay outbound integrations are skeletons (not_yet_implemented) — in-store works end-to-end. [S18]
-- **Sealed product pricing.** `/api/v2/price-sealed` — boosters, ETBs, booster boxes, bundles via TCGPlayer Pro adapter (paid tier ~€60/mo). Mock mode (`TCGPLAYER_PRO_MOCK=true`) for staging without subscription. [S17]
+- **Sealed product pricing.** `/api/v2/price-sealed` — boosters, ETBs, booster boxes, bundles via Cardmarket sealed adapter (V2.0.1 swap; previously TCGPlayer Pro). Best-effort scrape with operator-supplied `manual_market_eur` override for Cloudflare-blocked attempts. **No API key or paid subscription required.** [S17 + V2.0.1]
 - **Vendor analytics dashboard.** `/api/admin/analytics` returns quotes/day sparkline, conversion %, top cards quoted, average basket. Surfaced as a new section in the admin tab. [S13]
 - **Widget V2.** Theming (`data-theme=light|dark|auto`), button shapes (`square|pill|round`), modal sizes (`default|compact|full`), opt-in `data-event-callback` named-function fallback, telemetry beacon to `/api/widget/loaded`, lazy-load opt-in. **V1-attribute parity is the non-negotiable contract** — a script tag with zero V2-only attributes produces a button + modal indistinguishable from V1 (verified by jsdom DOM-diff tests). [S9 + S23]
 
@@ -45,7 +45,7 @@
 - **`public/index.html` (7,200 lines) → `apps/vendor/`** as a shell (≤500 lines) + per-tab modules + a single `apiClient.js` module that owns ALL `/api/*` calls (kills audit risk R1 — wrapped-fetch behaviour collapsed into one place with explicit hooks). [S7]
 - **`public/quote.html` (740 lines) → `apps/quote/`** with per-concern modules (parse-lines, lookup, totals, shop-config, lead-gate, cardmarket-url). [S8]
 - **`apps/customer/`** — new app (`/customer` route) with magic-link sign-in, dashboard, account, offer-accept. [S21]
-- **Pricing engine extracted to `pricing/`** — adapters per source (pokemontcg, scryfall, swu-db, ygoprodeck, lorcana, tcgdex, justtcg, tcggo-rapidapi, ebay-sold, cardmarket-html, tcgplayer-pro), pure verify + price + identify-core, named tunable constants in `pricing/confidence.js`, sealed pipeline in `pricing/sealed/`, OCR-first pipeline in `pricing/ocr-first/`. [S6 + S15 + S17]
+- **Pricing engine extracted to `pricing/`** — adapters per source (pokemontcg, scryfall, swu-db, ygoprodeck, lorcana, tcgdex, justtcg, tcggo-rapidapi, ebay-sold, cardmarket-html, cardmarket-sealed), pure verify + price + identify-core, named tunable constants in `pricing/confidence.js`, sealed pipeline in `pricing/sealed/`, OCR-first pipeline in `pricing/ocr-first/`. [S6 + S15 + S17 + V2.0.1]
 - **Persistence layer extracted to `db/`** — schema doc, sessions dual-write/reader/cutover-flag, customer accounts/offers, inventory items/events/listings, live-sessions store + SSE bridge, card-prices Postgres store. [S1 + S10 + S11 + S16 + S18 + S20]
 - **Mobile-first restyle** of all four surfaces with breakpoints at 640px, 540px, 390px floor; touch-target audit (44×44 minimum). [S22]
 
@@ -84,7 +84,7 @@ The operator-facing surfaces *did* change. None are subtle; all are documented i
 2. **27 → 32 environment variables** declared in `infra/render.yaml` (was 27 + 5 added in this round). 8 are REQUIRED; the rest are OPTIONAL with documented degraded-mode behaviour.
 3. **NPM dependencies added:** `pino`, `prom-client`, `@sentry/node` (production); `pino-pretty`, `jsdom` (dev). Run `npm install` after `git pull`.
 4. **Supabase Site URL allow-list** must include `https://card-pricer-60qq.onrender.com/customer` (and any custom domain) for magic-link sign-in to work.
-5. **TCGPlayer Pro subscription** — if you want sealed pricing in production, sign up + set `TCGPLAYER_PRO_API_KEY`. Otherwise set `TCGPLAYER_PRO_MOCK=true` to exercise the pipeline without a real subscription. Without either, `/api/v2/price-sealed` returns 503 cleanly.
+5. **Sealed pricing — no subscription needed (V2.0.1).** `/api/v2/price-sealed` uses the Cardmarket sealed adapter, which builds canonical Cardmarket product URLs and best-effort scrapes them. Cloudflare blocks ~most of the time; when it does, the route returns the URL only with `blocked_by:'cloudflare'` and the operator supplies `manual_market_eur` from the live page. **No env vars required.** (V2.0.1 dropped the prior `TCGPLAYER_PRO_*` env vars.)
 6. **Sentry browser SDK** loaded from CDN; the orchestrator hand-off to S22 noted that `apps/{vendor,quote,customer}/index.html` have a TODO `<script>` tag awaiting the operator-chosen Sentry version + SRI hash. Optional — Sentry no-ops cleanly without DSN env vars.
 7. **`READ_FROM_RELATIONAL=false`** through V2 ship. Flip post-V2 per `infra/deploy/sessions-readflip-runbook.md` — separate operation from the cutover.
 8. **`OCR_FIRST_ENABLED=false`** through V2 ship. Flip after telemetry confirms `OCR_FIRST_FP_THRESHOLD` (2%) is not exceeded across a meaningful sample.
@@ -132,7 +132,7 @@ Sourced from every slice's commit body. Grouped by urgency:
 
 ### Pre-cutover (must do before merging `v2 → main`)
 
-- [ ] Set REQUIRED env vars on Render: `ANTHROPIC_API_KEY`, `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, all 6 `STRIPE_PRICE_*`, `BREVO_API_KEY`. Optional ones (`EBAY_*`, `JUSTTCG_API_KEY`, `RAPIDAPI_KEY`, `POKEMON_TCG_API_KEY`, `TCGPLAYER_PRO_API_KEY`, etc.) — set if you have them; degraded modes documented in `infra/env.example`.
+- [ ] Set REQUIRED env vars on Render: `ANTHROPIC_API_KEY`, `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, all 6 `STRIPE_PRICE_*`, `BREVO_API_KEY`. Optional ones (`EBAY_*`, `JUSTTCG_API_KEY`, `RAPIDAPI_KEY`, `POKEMON_TCG_API_KEY`, etc.) — set if you have them; degraded modes documented in `infra/env.example`. (V2.0.1 dropped the prior `TCGPLAYER_PRO_*` set — no longer used.)
 - [ ] Add prod URL to Supabase Site URL allow-list for magic-link callback.
 - [ ] Pick a Sentry version + grab its SRI hash. Update the `<script integrity="...">` placeholders in `apps/vendor/index.html`, `apps/quote/index.html`, `apps/customer/index.html`. (Or skip Sentry browser entirely — the modules no-op without a DSN.)
 - [ ] Run `infra/deploy/release-runbook.md §T-24h` checklist.

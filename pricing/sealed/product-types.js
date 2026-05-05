@@ -56,7 +56,7 @@ export const SEALED_CATEGORIES = Object.freeze([
  * complications.
  *
  * @typedef {object} SealedQuote
- * @property {string} source              Adapter name ('tcgplayer-pro').
+ * @property {string} source              Adapter name ('cardmarket-sealed' for V2.0.1).
  * @property {number|null} market_value_eur
  * @property {'EUR'|'USD'} raw_currency
  * @property {number|null} raw_value

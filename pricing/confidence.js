@@ -267,9 +267,10 @@ export const SCORE_WEIGHTS = Object.freeze({
 // Baseline 0.85; +0.05 if the upstream "lastUpdated" stamp is fresher than
 // SEALED_RECENT_THRESHOLD_HOURS; −0.10 if it's older than
 // SEALED_STALE_THRESHOLD_DAYS. The resulting score is clamped to [0, 1] by
-// the adapter (pricing/adapters/tcgplayer-pro.js → sealedConfidence()).
+// the adapter (pricing/adapters/cardmarket-sealed.js → sealedConfidence()).
 //
-// Pure refactor — pricing/adapters/tcgplayer-pro.js consumes these constants.
+// Pure refactor — pricing/adapters/cardmarket-sealed.js consumes these
+// constants (V2.0.1 swap from tcgplayer-pro to cardmarket-sealed).
 // No behaviour change vs inlining the magic numbers there; centralising here
 // keeps the "all confidence-affecting tunables live in one file" invariant
 // from the slice S2 contract intact.

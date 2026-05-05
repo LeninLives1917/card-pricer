@@ -71,7 +71,7 @@ card-pricer/
 │   │   ├── tcggo-rapidapi.js       ← TCGGO Cardmarket EUR + graded comps
 │   │   ├── ebay-sold.js            ← eBay Browse API, IE marketplace
 │   │   ├── cardmarket-html.js      ← best-effort scrape, mostly CF-blocked
-│   │   └── tcgplayer-pro.js        ← NEW — sealed product pricing (F5; paid tier ~€60/mo)
+│   │   └── cardmarket-sealed.js    ← NEW — sealed product pricing (F5; V2.0.1 swap from TCGPlayer Pro to Cardmarket scrape + manual override)
 │   ├── sealed/                     ← NEW — F5 sealed-product engine (A2)
 │   │   ├── product-types.js        ← Booster, ETB, BoosterBox, Bundle, …
 │   │   ├── verify.js               ← sealed verify (SKU-based, not card-number)
@@ -535,7 +535,7 @@ Operator-locked at end of phase 2. All ✓ / ✗ are final.
 | F2 | Condition-aware pricing with vendor spreads | ✓ already in V1 | A4 | S | low |
 | F3 | Bulk paste / CSV upload → full quote | ✓ V2 | A4 + A5 | M | medium — interacts with rate limits |
 | F4 | Set / edition disambiguation chooser | ✓ already in V1 (`candidates`) — surface better in V2 | A4 | S | low |
-| **F5** | **Sealed product pricing** (boosters, ETBs, bundles) | **✓ V2 (Q1)** | A2 | L | high — new data model + paid TCGPlayer Pro tier |
+| **F5** | **Sealed product pricing** (boosters, ETBs, bundles) | **✓ V2 (Q1)** | A2 | L | medium — new data model; V2.0.1 ships Cardmarket scrape + manual override (no paid tier required) |
 | F6 | Quote persistence — stable URL, recoverable | ✓ V2 | A1 + A5 | M | medium |
 | F7 | PDF export of quotes (vendor-branded) | ✓ V2 | A5 | M | low |
 | F8 | Vendor analytics dashboard | ✓ V2 | A1 + A4 | M | medium |
@@ -602,7 +602,7 @@ Aligned to `CARD_PRICER_V2_PROMPT.md` §3 + the expanded scope. Each row starts 
 | **S14 — Observability (F13)** | A8 | S5 ✓ | day 5 | pino middleware + `/api/version` + `/api/metrics` + Sentry SDKs (Q5) |
 | **S15 — OCR-first re-enable (F24, Q3)** | A2 + A7 | S6 ✓ | day 5 | `pricing/ocr-first/*`, `OCR_FIRST_ENABLED` env, RG-31..RG-40 fixtures |
 | **S16 — Sessions cutover dual-write (F17, Q1)** | A3 | S5 ✓ S11 ✓ | day 6 | `db/sessions/dual-write.js`, `READ_FROM_RELATIONAL` flag |
-| **S17 — Sealed pricing (F5, Q1)** | A2 | S6 ✓ | day 6 | `pricing/sealed/*`, `pricing/adapters/tcgplayer-pro.js`, `/api/v2/price-sealed` route |
+| **S17 — Sealed pricing (F5, Q1)** | A2 | S6 ✓ | day 6 | `pricing/sealed/*`, `pricing/adapters/cardmarket-sealed.js` (V2.0.1; was tcgplayer-pro.js), `/api/v2/price-sealed` route |
 | **S18 — Inventory backend (F18, Q1)** | A9 | S5 ✓ S1 ✓ | day 7 | `apps/server/routes/inventory.js`, `db/inventory/*`, `pricing/marketplaces/*` |
 | **S19 — Inventory vendor UI (F18, Q1)** | A9 + A4 | S18 contract | day 9 | new vendor tab `apps/vendor/modules/tabs/inventory.js` |
 | **S20 — Customer accounts backend (F19, Q1)** | A10 + A1 | S5 ✓ S1 ✓ | day 7 | `apps/server/routes/customer.js`, `routes/quote-offer.js`, `db/customers/*` |
@@ -688,7 +688,7 @@ One test per row in `V2_AUDIT.md` §1 (surface map) and §5 (hidden behaviours).
 |---|---|---|
 | F1-01 | `/api/v2/price` returns `v2.sources` array | every adapter in `candidates` shows up with confidence |
 | F1-02 | source priority: TCGGO active > pokemontcg | both return prices; TCGGO selected |
-| F5-01 | `/api/v2/price-sealed` returns sealed product price | ETB SKU → TCGPlayer Pro adapter → market price |
+| F5-01 | `/api/v2/price-sealed` returns sealed product price | ETB rich-shape input → Cardmarket sealed adapter (V2.0.1) → market price (scrape OR manual_market_eur override) |
 | F5-02 | sealed product not found → graceful 404 | invalid SKU |
 | F6-01 | quote persistence | POST /api/v2/quote → `{id, url}`; GET /api/v2/quote/:id returns identical content |
 | F8-01 | analytics endpoint | seed `quote_leads` + `scan_events`; assert daily counts match |

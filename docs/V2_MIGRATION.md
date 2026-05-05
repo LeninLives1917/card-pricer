@@ -123,9 +123,7 @@ V2 declares **32 env vars** in `infra/render.yaml`. V1 declared 7. The full list
 | `BUILT_AT` | `/api/version` returns `null` for `built_at` |
 | `METRICS_TOKEN` | `/api/metrics` requires admin JWT only (no Prom scraper bearer bypass) |
 | `LOG_LEVEL` | DEFAULT 'info' |
-| `TCGPLAYER_PRO_API_KEY` | `/api/v2/price-sealed` returns 503 (or use TCGPLAYER_PRO_MOCK=true on staging) |
-| `TCGPLAYER_PRO_BASE_URL` | DEFAULT 'https://api.tcgplayer.com/' |
-| `TCGPLAYER_PRO_MOCK` | DEFAULT 'false' |
+| (sealed pricing — V2.0.1) | No env vars required. Cardmarket sealed adapter is always available; uses Cardmarket scrape + operator manual override |
 | `NODE_ENV` | DEFAULT 'production' (controls pino's pretty/JSON mode) |
 | `PORT` | DEFAULT 3000 (Render sets this) |
 | `DEFAULT_BUY_PERCENTAGE` | DEFAULT 60 |

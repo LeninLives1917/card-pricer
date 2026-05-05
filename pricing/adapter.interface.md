@@ -418,7 +418,7 @@ relative ordering, not the exact ms.
 | `ebay-sold` | **30 min** | Sold listings don't change minute-to-minute. |
 | `tcgdex` | **24 h** | Read-only static-ish data. |
 | `swu-db`, `ygoprodeck`, `lorcana` | **24 h** | Verify-only adapters; ID data rarely changes. |
-| `tcgplayer-pro` (sealed, S17) | **1 h** | Sealed prices move slower than singles. |
+| `cardmarket-sealed` (sealed, S17 + V2.0.1) | **1 h** | Sealed prices move slower than singles. Cloudflare-blocked attempts cache the `blocked_by:'cloudflare'` envelope for 5 min. |
 
 Engine-level caches (orthogonal to adapter caches):
 
