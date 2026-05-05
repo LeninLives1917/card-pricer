@@ -1,3 +1,130 @@
-/* V2 placeholder — see docs/V2_ARCHITECTURE.md §1
-   Owner: A4 | Slice: S7
-   Purpose: per DESIGN_BRIEF.md */
+/* Card-Pricer V2 vendor — design tokens.
+   Single source of truth: DESIGN_BRIEF.md.
+   Every component primitive in components.css and every inline style
+   in modules/*.js consumes vars defined here. No raw hex codes elsewhere. */
+
+:root {
+  /* surfaces — warm dark */
+  --ink-100: #0c0a09;
+  --ink-200: #1c1917;
+  --ink-300: #292524;
+  --ink-400: #44403c;
+  --ink-500: #57534e;
+  --hairline: rgba(120, 113, 108, 0.18);
+
+  /* type */
+  --paper-100: #fafaf9;
+  --paper-200: #d6d3d1;
+  --paper-300: #a8a29e;
+  --paper-400: #78716c;
+
+  /* brand */
+  --accent: #d97706;
+  --accent-soft: #fbbf24;
+  --accent-mute: rgba(217, 119, 6, 0.12);
+
+  /* semantic — finance convention */
+  --up: #16a34a;
+  --down: #dc2626;
+  --up-soft: rgba(22, 163, 74, 0.14);
+  --down-soft: rgba(220, 38, 38, 0.14);
+
+  /* premium signal */
+  --rare: #eab308;
+  --rare-soft: rgba(234, 179, 8, 0.14);
+
+  /* radius — three values, picked deliberately */
+  --r-1: 6px;
+  --r-2: 8px;
+  --r-3: 12px;
+
+  /* density — 4 / 8 / 12 / 16 / 24 (no 32) */
+  --p-1: 4px;
+  --p-2: 8px;
+  --p-3: 12px;
+  --p-4: 16px;
+  --p-5: 24px;
+
+  /* motion */
+  --ease: cubic-bezier(.2, 0, 0, 1);
+  --t-fast: 120ms;
+  --t-mid: 180ms;
+
+  /* typography stacks */
+  --ff-display: 'Fraunces', Georgia, 'Times New Roman', serif;
+  --ff-ui: 'IBM Plex Sans', system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+  --ff-mono: 'IBM Plex Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+}
+
+/* Optional AMOLED variant — deeper inks, applied via body.amoled. */
+body.amoled {
+  --ink-100: #000000;
+  --ink-200: #0a0a0a;
+  --ink-300: #141414;
+  --ink-400: #2a2a2a;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  padding: 0;
+  background: var(--ink-100);
+  color: var(--paper-100);
+  font-family: var(--ff-ui);
+  font-size: 14px;
+  line-height: 1.45;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  overscroll-behavior-y: none;
+}
+
+body { min-height: 100vh; }
+
+/* Typographic utilities — DESIGN_BRIEF "what lives where". */
+.display {
+  font-family: var(--ff-display);
+  font-weight: 600;
+  font-style: italic;
+  letter-spacing: -0.01em;
+}
+
+.figure {
+  font-family: var(--ff-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.label {
+  font-family: var(--ff-ui);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--paper-300);
+}
+
+a { color: inherit; text-decoration: none; }
+
+::selection {
+  background: var(--accent-mute);
+  color: var(--paper-100);
+}
+
+/* Default focus — every interactive control honours this unless overridden. */
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.hidden { display: none !important; }
+
+/* Scanner-mode (?pair=ROOMID) hides chrome that doesn't apply to a phone. */
+body.scanner-mode .header,
+body.scanner-mode .tabs,
+body.scanner-mode .session-strip,
+body.scanner-mode #tab-results,
+body.scanner-mode #tab-log,
+body.scanner-mode #tab-settings,
+body.scanner-mode #tab-admin {
+  display: none !important;
+}
