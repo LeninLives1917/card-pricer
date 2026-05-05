@@ -256,3 +256,41 @@ export const SCORE_WEIGHTS = Object.freeze({
   // Regulation mark vs era — hard reject signal
   REG_MARK_ERA_FAIL: -100,
 });
+
+// =============================================================================
+// SEALED — slice S17 (TCGPlayer Pro adapter for sealed products: F5).
+// =============================================================================
+//
+// Sealed products are SKU-keyed and have no condition/printing/graded axis,
+// so their confidence rubric is much simpler than the single-card sources.
+//
+// Baseline 0.85; +0.05 if the upstream "lastUpdated" stamp is fresher than
+// SEALED_RECENT_THRESHOLD_HOURS; −0.10 if it's older than
+// SEALED_STALE_THRESHOLD_DAYS. The resulting score is clamped to [0, 1] by
+// the adapter (pricing/adapters/tcgplayer-pro.js → sealedConfidence()).
+//
+// Pure refactor — pricing/adapters/tcgplayer-pro.js consumes these constants.
+// No behaviour change vs inlining the magic numbers there; centralising here
+// keeps the "all confidence-affecting tunables live in one file" invariant
+// from the slice S2 contract intact.
+
+/** Sealed quote baseline confidence. Tuned to land just under
+ *  cardmarket-html (0.95) but above pokemontcg.io (0.70) — TCGPlayer's
+ *  paid-tier pricing data is more authoritative than the daily-snapshot
+ *  embedded fields, but lives downstream of cardmarket's live scrape on
+ *  the rare days that one succeeds. */
+export const SEALED_BASE_CONFIDENCE = 0.85;
+
+/** Boost applied when upstream data was refreshed within
+ *  SEALED_RECENT_THRESHOLD_HOURS. */
+export const SEALED_RECENT_BONUS = 0.05;
+
+/** Penalty applied when upstream data is older than
+ *  SEALED_STALE_THRESHOLD_DAYS. */
+export const SEALED_STALE_PENALTY = -0.10;
+
+/** Threshold (hours) below which a sealed quote earns SEALED_RECENT_BONUS. */
+export const SEALED_RECENT_THRESHOLD_HOURS = 24;
+
+/** Threshold (days) above which a sealed quote takes SEALED_STALE_PENALTY. */
+export const SEALED_STALE_THRESHOLD_DAYS = 7;
