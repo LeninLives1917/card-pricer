@@ -12,7 +12,7 @@
 // content, share text shape) are kept identical to V1 so we don't change
 // any user-visible workflow.
 
-import { postJson } from '../api-client.js';
+import { postJson, api } from '../api-client.js';
 import {
   state, currentSession, currentLog, saveAllSessions,
   setBuyPct, setCashPct, setCreditPct, getSetting,
@@ -25,6 +25,11 @@ let _filter = '';
 let _editMode = false;
 let _customerView = false;
 let _selectedForDelete = new Set();
+// Customer PDF is gated to the Shop plan — same gate as the embed-settings
+// surface in tabs/settings.js (plan === 'shop' || plan === 'beta'). The
+// flag is set by detectShopPlan() during init, then read by both the
+// button-visibility code and the exportPdfForCustomer guard.
+let _shopPlan = false;
 
 export function init() {
   wireSliders();
@@ -33,6 +38,25 @@ export function init() {
   window.addEventListener('cp:log-changed', renderAll);
   window.addEventListener('cp:card-corrected', renderAll);
   renderAll();
+  detectShopPlanAndGatePdf();
+}
+
+// Hide the Customer PDF button for users below the Shop plan. Server-side
+// the PDF is rendered entirely client-side so there's nothing to gate at
+// the API layer — this is purely a UX gate.
+async function detectShopPlanAndGatePdf() {
+  const btn = document.getElementById('sessActExportPdf');
+  // Default to hidden until we've confirmed the plan, so we don't flash
+  // the button to non-shop users on slow connections.
+  if (btn) btn.style.display = 'none';
+  try {
+    const r = await api.me();
+    const plan = r.ok ? r.body?.plan : null;
+    _shopPlan = (plan === 'shop' || plan === 'beta');
+  } catch {
+    _shopPlan = false;
+  }
+  if (btn) btn.style.display = _shopPlan ? '' : 'none';
 }
 
 function renderAll() {
@@ -395,6 +419,13 @@ function exportXlsx() {
 // pdf-export.js stays visible the whole time so the operator sees that
 // something is happening.
 async function exportPdfForCustomer() {
+  if (!_shopPlan) {
+    // Defence in depth — the button is already hidden for non-shop users,
+    // but if someone wires up the click manually (devtools, extension),
+    // bail with a clear message instead of generating the PDF anyway.
+    alert('Customer PDF export is available on the Shop plan. Upgrade in Settings.');
+    return;
+  }
   const sess = currentSession();
   if (!sess) return;
   // Show the Pokéball spinner up front so it covers the (potentially
