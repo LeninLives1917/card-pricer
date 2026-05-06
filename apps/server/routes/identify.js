@@ -303,6 +303,7 @@ router.post('/api/identify-binder',
       // detected N, identified M".
       const flat = [];
       let droppedFalsePositives = 0;
+      let droppedExtraCardsPerCrop = 0;
       for (let i = 0; i < results.length; i++) {
         const r = results[i];
         const namedCards = (r.cards || []).filter((c) => c && c.name && !c.verify_rejected);
@@ -311,22 +312,37 @@ router.post('/api/identify-binder',
           console.log(`[BINDER] crop ${validCrops[i]?.index ?? i}: no identifiable card — dropping false positive`);
           continue;
         }
+        // Each binder crop is supposed to contain ONE card. If identifyCore
+        // returned multiple, it means Sonnet saw something extra in the
+        // crop — typically a water-element splash on a holo art read as
+        // a Basic Water Energy, or a sliver of an adjacent card bleeding
+        // into the bbox. Take only the first card; log the rest as
+        // diagnostic info. This is what was causing the user-reported
+        // "9 cards detected but 10 priced" — Sonnet was returning a
+        // bonus phantom on one of the crops.
+        if (namedCards.length > 1) {
+          droppedExtraCardsPerCrop += namedCards.length - 1;
+          console.warn(
+            `[BINDER] crop ${validCrops[i]?.index ?? i}: identifyCore returned ${namedCards.length} cards — ` +
+            `keeping "${namedCards[0].name}" (${namedCards[0].set_code || '?'} ${namedCards[0].card_number || '?'}), ` +
+            `dropping: ${namedCards.slice(1).map((c) => `${c.name} ${c.set_code || '?'} ${c.card_number || '?'}`).join(', ')}`,
+          );
+        }
+        const primary = namedCards[0];
         const cropBuf = validCrops[i]?.buffer;
         const cropDataUrl = cropBuf
           ? 'data:image/jpeg;base64,' + cropBuf.toString('base64')
           : null;
-        for (const c of namedCards) {
-          flat.push({
-            ...c,
-            _binder_bbox: r.bbox,
-            _binder_image: cropDataUrl,
-          });
-        }
+        flat.push({
+          ...primary,
+          _binder_bbox: r.bbox,
+          _binder_image: cropDataUrl,
+        });
       }
       console.log(
         `[BINDER] done in ${Date.now() - t0}ms — ${bboxes.length} detected, ` +
         `${validCrops.length} cropped, ${flat.length} identified, ` +
-        `${droppedFalsePositives} false positives dropped ` +
+        `${droppedFalsePositives} false positives, ${droppedExtraCardsPerCrop} extra-per-crop ` +
         `(${results.filter((r) => r.cached).length} cached)`,
       );
       return res.json({
@@ -336,6 +352,7 @@ router.post('/api/identify-binder',
           cropped: validCrops.length,
           identified: flat.length,
           dropped: droppedFalsePositives,
+          dropped_extra: droppedExtraCardsPerCrop,
           image_w: W,
           image_h: H,
           detection_path: detectionPath,
