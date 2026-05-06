@@ -169,6 +169,39 @@ router.post('/api/identify-stream', identifyLimiter, requireAuth, enforceQuota, 
 // Quota: one binder request = one logScanEvent + one enforceQuota tick.
 // We deliberately do NOT charge per-card here; it's one operator action.
 // =============================================================================
+
+// Detect a "Basic <type> Energy" name. These are the most common false
+// positive in multi-card crops because basic-energy art is just a
+// uniform colored background with a small element symbol — anything
+// vaguely matching that pattern (a holo's coloured splash, a uniform
+// patch of card art) gets identified as one. Real basic energies do
+// exist as binder entries, but when they appear ALONGSIDE a non-energy
+// card from the same crop, the energy is the phantom.
+const BASIC_ENERGY_RE = /^\s*basic\s+(grass|fire|water|lightning|psychic|fighting|darkness|metal|fairy|dragon|colorless|colourless)\s+energy\s*$/i;
+
+function isBasicEnergyName(name) {
+  return BASIC_ENERGY_RE.test(name || '');
+}
+
+/**
+ * Choose which card to keep when identifyCore returned multiple from a
+ * single binder crop.
+ *
+ * Rule:
+ *   - If the candidates include ≥1 non-basic-energy card, return the
+ *     first non-basic-energy. The basic energies are the phantoms.
+ *   - Otherwise (all candidates are basic energies, or just one card
+ *     came back), return the first.
+ *
+ * Caller is expected to have already filtered out unnamed / verify-
+ * rejected cards.
+ */
+function pickPrimaryCard(namedCards) {
+  if (namedCards.length === 1) return namedCards[0];
+  const nonEnergy = namedCards.find((c) => !isBasicEnergyName(c.name));
+  return nonEnergy || namedCards[0];
+}
+
 router.post('/api/identify-binder',
   identifyLimiter,
   requireAuth,
@@ -313,22 +346,26 @@ router.post('/api/identify-binder',
           continue;
         }
         // Each binder crop is supposed to contain ONE card. If identifyCore
-        // returned multiple, it means Sonnet saw something extra in the
-        // crop — typically a water-element splash on a holo art read as
-        // a Basic Water Energy, or a sliver of an adjacent card bleeding
-        // into the bbox. Take only the first card; log the rest as
-        // diagnostic info. This is what was causing the user-reported
-        // "9 cards detected but 10 priced" — Sonnet was returning a
-        // bonus phantom on one of the crops.
+        // returned multiple, Sonnet saw something extra — typically a
+        // water/lightning/grass-element splash on a holo art read as a
+        // Basic Water Energy alongside the real card. Sonnet's order is
+        // not reliable: sometimes the phantom comes first (which would
+        // make "take first" drop the real card — an earlier bug).
+        //
+        // Decision rule: if multiple cards came back and exactly one is
+        // a non-energy, that's the real card and the rest are
+        // basic-energy phantoms. Otherwise the result is genuinely
+        // ambiguous — take the first and log everything for diagnosis.
+        const primary = pickPrimaryCard(namedCards);
         if (namedCards.length > 1) {
           droppedExtraCardsPerCrop += namedCards.length - 1;
+          const dropped = namedCards.filter((c) => c !== primary);
           console.warn(
             `[BINDER] crop ${validCrops[i]?.index ?? i}: identifyCore returned ${namedCards.length} cards — ` +
-            `keeping "${namedCards[0].name}" (${namedCards[0].set_code || '?'} ${namedCards[0].card_number || '?'}), ` +
-            `dropping: ${namedCards.slice(1).map((c) => `${c.name} ${c.set_code || '?'} ${c.card_number || '?'}`).join(', ')}`,
+            `keeping "${primary.name}" (${primary.set_code || '?'} ${primary.card_number || '?'}), ` +
+            `dropping: ${dropped.map((c) => `${c.name} ${c.set_code || '?'} ${c.card_number || '?'}`).join(', ')}`,
           );
         }
-        const primary = namedCards[0];
         const cropBuf = validCrops[i]?.buffer;
         const cropDataUrl = cropBuf
           ? 'data:image/jpeg;base64,' + cropBuf.toString('base64')
