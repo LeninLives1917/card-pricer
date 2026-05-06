@@ -171,12 +171,17 @@ export const IDENT_MODEL = 'claude-sonnet-4-6';
  * Model used by /api/read-set-code (the OCR-first short prompt that returns
  * just the set code + card number).
  *
- * Why same as IDENT_MODEL: consistent cost ceiling and consistent OCR
- * reading behaviour across the two paths. Slice S15 (OCR-first) may
- * downgrade this to a cheaper model after fixture tests confirm equivalent
- * accuracy on the short-form prompt.
+ * Downgraded to Haiku 4.5: the prompt is short-form OCR over a small
+ * region of the card ("read these 6-10 characters"). Haiku handles this
+ * well at ~3x lower cost and ~3x faster TTFT — important because this
+ * call is meant to be the FAST path. The OCR-first validation gate
+ * (OCR_FIRST_VALIDATE_MODEL below) stays on Sonnet to catch any
+ * mis-reads.
+ *
+ * If accuracy regressions appear, flip back to claude-sonnet-4-6 and
+ * re-run RG-31..RG-40 to confirm.
  */
-export const READ_SET_CODE_MODEL = 'claude-sonnet-4-6';
+export const READ_SET_CODE_MODEL = 'claude-haiku-4-5-20251001';
 
 /**
  * Model used by maybeDoubleCheck — the image-compare gate that runs when
@@ -199,15 +204,25 @@ export const OCR_FIRST_VALIDATE_MODEL = 'claude-sonnet-4-6';
 
 /**
  * Model used by /api/identify-binder for the *first* pass (bbox detection
- * across a binder-page photo). Vision-quality matters here — too small a
- * model misses cards in the corners or merges adjacent pockets — so this
- * stays on Sonnet 4.6.
+ * across a binder-page photo).
  *
- * Each card's actual identification still runs through identifyCore (uses
- * IDENT_MODEL above) per crop. So a binder page = 1 BINDER_DETECT_MODEL
- * call + N IDENT_MODEL calls + N verify passes.
+ * Downgraded to Haiku 4.5: bbox detection is a spatial-reasoning task
+ * (find rectangles in a grid layout) plus JSON output adherence — both
+ * Haiku strengths. Coordinate precision is ~2-3% looser around card
+ * edges, but sharp.extract tolerates a sliver of pocket border and
+ * identifyCore (still on Sonnet) handles the slight background bleed.
+ * Haiku is ~3x cheaper and ~3x faster TTFT, cutting the "Detecting
+ * cards…" wait from 3-5s to ~1s for a 25-30% drop in total binder
+ * round-trip latency.
+ *
+ * If a binder photo regularly drops cards in corners or merges adjacent
+ * pockets, flip back to claude-sonnet-4-6.
+ *
+ * Each card's actual identification still runs through identifyCore
+ * (uses IDENT_MODEL above) per crop. So a binder page = 1
+ * BINDER_DETECT_MODEL call + N IDENT_MODEL calls + N verify passes.
  */
-export const BINDER_DETECT_MODEL = 'claude-sonnet-4-6';
+export const BINDER_DETECT_MODEL = 'claude-haiku-4-5-20251001';
 
 // =============================================================================
 // scoreCandidate weights — hoisted in slice S6.
