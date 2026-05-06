@@ -123,7 +123,7 @@ app.use(adminRouter);       // /api/admin/*, /api/metrics
 app.use(billingRouter);     // /api/checkout, /api/portal, /api/stripe-webhook
 app.use(staticRoutes.earlyStatic);  // /service-worker.js, /, /index.html, /widget.js, /quote (BEFORE express.static)
 app.use(staticRoutes.staticAssets); // express.static('public', etag:false, maxAge:0)
-app.use(identifyRouter);    // /api/identify*, /api/identify-stream, /api/identify-manual, /api/read-set-code, /api/lookup-by-number, /api/report-bad-id, /api/correct-card, /api/v2/identify-ocr-first, /api/v2/quote/identify-manual
+app.use(identifyRouter);    // /api/identify*, /api/identify-stream, /api/identify-binder, /api/identify-manual, /api/read-set-code, /api/lookup-by-number, /api/report-bad-id, /api/correct-card, /api/v2/identify-ocr-first, /api/v2/quote/identify-manual
 app.use(cardDbRouter);      // /api/card-db-*
 app.use(priceRouter);       // /api/price, /api/v2/quote/price
 app.use(priceSealedRouter); // /api/v2/price-sealed (S17)

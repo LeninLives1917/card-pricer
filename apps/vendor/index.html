@@ -135,6 +135,7 @@
       <div class="surface" style="margin-bottom:var(--p-3); display:flex; gap:var(--p-2);">
         <button class="btn" data-mode="bulk">Bulk</button>
         <button class="btn" data-mode="text">Text</button>
+        <button class="btn" data-mode="binder">Binder page</button>
         <button class="btn ghost" id="manualEntryOpenBtn" style="margin-left:auto;">Manual entry</button>
       </div>
 
@@ -155,6 +156,20 @@
             <button class="btn ghost" id="bulkClearBtn">Clear</button>
           </div>
         </div>
+      </section>
+
+      <!-- BINDER PAGE PANEL -->
+      <section id="binderPanel" class="hidden">
+        <div class="bulk-drop" id="binderDrop">
+          <strong>Drop or tap a binder-page photo</strong>
+          <div class="hint">One image with 4&ndash;12 cards in a grid &mdash; we&rsquo;ll detect, crop, and price each one</div>
+          <input type="file" id="binderInput" accept="image/*" capture="environment" style="display:none;">
+        </div>
+        <div id="binderProgress" class="hidden" style="margin:var(--p-3) 0;">
+          <div class="bulk-progress"><div class="bulk-progress-bar" id="binderProgressBar"></div></div>
+          <div class="figure" id="binderProgressLabel" style="font-size:11px; color:var(--paper-300);">Detecting cards…</div>
+        </div>
+        <div id="binderStatus" style="font-size:12px; color:var(--paper-300); min-height:16px; margin-top:var(--p-2);"></div>
       </section>
 
       <!-- TEXT ENTRY PANEL -->

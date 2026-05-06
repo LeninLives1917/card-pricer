@@ -197,6 +197,18 @@ export const DOUBLE_CHECK_MODEL = 'claude-sonnet-4-6';
  */
 export const OCR_FIRST_VALIDATE_MODEL = 'claude-sonnet-4-6';
 
+/**
+ * Model used by /api/identify-binder for the *first* pass (bbox detection
+ * across a binder-page photo). Vision-quality matters here — too small a
+ * model misses cards in the corners or merges adjacent pockets — so this
+ * stays on Sonnet 4.6.
+ *
+ * Each card's actual identification still runs through identifyCore (uses
+ * IDENT_MODEL above) per crop. So a binder page = 1 BINDER_DETECT_MODEL
+ * call + N IDENT_MODEL calls + N verify passes.
+ */
+export const BINDER_DETECT_MODEL = 'claude-sonnet-4-6';
+
 // =============================================================================
 // scoreCandidate weights — hoisted in slice S6.
 // =============================================================================

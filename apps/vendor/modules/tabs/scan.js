@@ -55,6 +55,7 @@ export function init() {
   wireModeToggle();
   wireBulk();
   wireTextEntry();
+  wireBinder();
   wireManualEntry();
   renderBulk();
 }
@@ -66,12 +67,15 @@ function wireModeToggle() {
 }
 
 function setMode(mode) {
-  _mode = mode === 'text' ? 'text' : 'bulk';
+  _mode = mode === 'text' ? 'text'
+        : mode === 'binder' ? 'binder'
+        : 'bulk';
   document.querySelectorAll('[data-mode]').forEach((btn) => {
     btn.classList.toggle('active', btn.dataset.mode === _mode);
   });
   document.getElementById('bulkPanel')?.classList.toggle('hidden', _mode !== 'bulk');
   document.getElementById('textEntryPanel')?.classList.toggle('hidden', _mode !== 'text');
+  document.getElementById('binderPanel')?.classList.toggle('hidden', _mode !== 'binder');
 }
 
 // ============================================================
@@ -233,6 +237,109 @@ function makeErrorRow(parsed, errMsg) {
     error: errMsg || 'no match',
     _parsed_line: parsed.raw,
   };
+}
+
+// ============================================================
+// Binder page — single photo with 4–12 cards in a grid.
+// Server detects + crops, then runs the standard identify pipeline on
+// each crop in parallel (see /api/identify-binder in
+// apps/server/routes/identify.js). We loop the response, /api/price each
+// card, and add to the session log — same shape as text-entry.
+// ============================================================
+
+function wireBinder() {
+  const drop = document.getElementById('binderDrop');
+  const input = document.getElementById('binderInput');
+  if (drop && input) drop.addEventListener('click', () => input.click());
+  if (input) input.addEventListener('change', async (ev) => {
+    const file = ev.target.files?.[0];
+    ev.target.value = '';
+    if (!file) return;
+    await runBinder(file);
+  });
+  if (drop) {
+    drop.addEventListener('dragover', (e) => { e.preventDefault(); drop.style.borderColor = 'var(--accent)'; });
+    drop.addEventListener('dragleave', () => { drop.style.borderColor = ''; });
+    drop.addEventListener('drop', async (e) => {
+      e.preventDefault();
+      drop.style.borderColor = '';
+      const file = e.dataTransfer?.files?.[0];
+      if (file) await runBinder(file);
+    });
+  }
+}
+
+async function runBinder(file) {
+  const progress = document.getElementById('binderProgress');
+  const bar = document.getElementById('binderProgressBar');
+  const label = document.getElementById('binderProgressLabel');
+  const status = document.getElementById('binderStatus');
+  const setLabel = (s) => { if (label) label.textContent = s; };
+  const setStatus = (s) => { if (status) status.textContent = s; };
+  const setBar = (pct) => { if (bar) bar.style.width = pct + '%'; };
+
+  if (progress) progress.classList.remove('hidden');
+  setLabel('Detecting cards…');
+  setBar(15);
+  setStatus('');
+
+  const fd = new FormData();
+  fd.append('image', file);
+  let resp;
+  try {
+    resp = await fetch('/api/identify-binder', { method: 'POST', body: fd, credentials: 'include' });
+  } catch (e) {
+    setStatus('Network error — check your connection and try again.');
+    setBar(0);
+    return;
+  }
+  setBar(70);
+
+  if (!resp.ok) {
+    let msg = `Server error (${resp.status})`;
+    try {
+      const body = await resp.json();
+      msg = body?.error || msg;
+    } catch {}
+    setStatus(msg);
+    setBar(0);
+    return;
+  }
+
+  const body = await resp.json();
+  const cards = Array.isArray(body?.cards) ? body.cards : [];
+  const detected = body?.binder?.count ?? cards.length;
+  setLabel(`Pricing ${cards.length} card${cards.length === 1 ? '' : 's'}…`);
+  setStatus(`Detected ${detected} card${detected === 1 ? '' : 's'} on the page.`);
+  setBar(80);
+
+  if (!cards.length) {
+    setStatus('No cards detected on this page.');
+    setBar(0);
+    return;
+  }
+
+  // Price each card in parallel — same pattern as text-entry, just batched.
+  state.currentResults = [];
+  const sess = currentSession();
+  await Promise.all(cards.map(async (card) => {
+    const priced = await postJson('/api/price', {
+      card,
+      buyPercentage: state.buyPercentage,
+    });
+    const result = priced.ok ? priced.body : { card, cardmarket: null, ebay: null, buy_price: null };
+    state.currentResults.push(result);
+    if (sess) sess.log.unshift({ ...result, ts: Date.now() });
+  }));
+
+  saveAllSessions();
+  setBar(100);
+  setStatus(`Identified ${cards.length} of ${detected} card${detected === 1 ? '' : 's'}.`);
+  window.dispatchEvent(new CustomEvent('cp:results-changed'));
+  window.dispatchEvent(new CustomEvent('cp:log-changed'));
+  window.dispatchEvent(new CustomEvent('cp:nav', { detail: { tab: 'results' } }));
+  // Hide the progress bar after a beat so the user sees the final state.
+  setTimeout(() => { if (progress) progress.classList.add('hidden'); }, 1200);
 }
 
 // ============================================================

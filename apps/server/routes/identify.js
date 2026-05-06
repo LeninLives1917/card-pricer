@@ -47,6 +47,7 @@ import { READ_SET_CODE_MODEL } from '../../../pricing/confidence.js';
 import { lookupTCGdex } from '../../../pricing/adapters/tcgdex.js';
 import { lookupViaTCGGO } from '../../../pricing/adapters/tcggo-rapidapi.js';
 import { lookupViaJustTCG } from '../../../pricing/adapters/justtcg.js';
+import { detectBinderCards } from '../../../pricing/binder.js';
 import {
   CARD_DB,
   lookupLocalDb,
@@ -145,6 +146,139 @@ router.post('/api/identify-stream', identifyLimiter, requireAuth, enforceQuota, 
     res.end();
   }
 });
+
+// =============================================================================
+// /api/identify-binder — single binder-page photo → up to 12 cropped, identified
+// cards. NEW in V2. See pricing/binder.js for the bbox-detection helper.
+//
+// Flow:
+//   1. Multer drops the raw image into req.file.buffer.
+//   2. detectBinderCards(buffer) → Sonnet 4.6 returns normalised bboxes.
+//   3. sharp.metadata() gives us pixel dimensions for the crop maths.
+//   4. Each bbox is cropped via sharp.extract() in parallel.
+//   5. Each crop runs through identifyCore + verify in parallel — full
+//      single-card pipeline per pocket. With 12 cards that's ~24-30
+//      simultaneous Sonnet calls during the verify burst, which is the
+//      practical ceiling on the paid tier (RPM ~50, TPM ~80k). If we ever
+//      add multi-page binder scanning, drop to chunks of ~8.
+//   6. Response shape matches /api/identify: { cards: [...] } so the
+//      vendor session-tab handles binder results identically to single
+//      scans.
+//
+// Quota: one binder request = one logScanEvent + one enforceQuota tick.
+// We deliberately do NOT charge per-card here; it's one operator action.
+// =============================================================================
+router.post('/api/identify-binder',
+  identifyLimiter,
+  requireAuth,
+  enforceQuota,
+  upload.single('image'),
+  async (req, res) => {
+    logScanEvent(req.user.id, '/api/identify-binder');
+    const t0 = Date.now();
+    try {
+      const buffer = extractImageBuffer(req);
+      const mediaType = req.file?.mimetype || 'image/jpeg';
+
+      const meta = await sharp(buffer).metadata();
+      const W = meta.width || 0;
+      const H = meta.height || 0;
+      if (!W || !H) {
+        return res.status(400).json({ error: 'Could not read image dimensions' });
+      }
+
+      const detection = await detectBinderCards({ buffer, mediaType });
+      const bboxes = detection.cards || [];
+      console.log(`[BINDER] detect: ${bboxes.length} bbox(es) in ${Date.now() - t0}ms (${W}x${H})`);
+      if (!bboxes.length) {
+        return res.json({
+          cards: [],
+          binder: { count: 0, identified: 0, image_w: W, image_h: H },
+        });
+      }
+
+      // Crop each bbox in parallel. Sharp instances are independent so this
+      // is safe — and faster than serial extraction for big images.
+      const crops = await Promise.all(bboxes.map(async (bb, i) => {
+        const left   = Math.max(0, Math.round(bb.x * W));
+        const top    = Math.max(0, Math.round(bb.y * H));
+        const right  = Math.min(W, Math.round((bb.x + bb.w) * W));
+        const bottom = Math.min(H, Math.round((bb.y + bb.h) * H));
+        const width  = right - left;
+        const height = bottom - top;
+        if (width < 32 || height < 32) {
+          console.warn(`[BINDER] crop ${i}: too small (${width}x${height}) — skipping`);
+          return null;
+        }
+        try {
+          const cropBuf = await sharp(buffer)
+            .extract({ left, top, width, height })
+            .jpeg({ quality: 92 })
+            .toBuffer();
+          return { buffer: cropBuf, hint: bb.hint || '', bbox: { left, top, width, height }, index: i };
+        } catch (e) {
+          console.warn(`[BINDER] crop ${i} extract failed:`, e.message);
+          return null;
+        }
+      }));
+      const validCrops = crops.filter(Boolean);
+
+      // Identify each crop in parallel — full identifyCore + verify pipeline
+      // per pocket. See block comment above for the concurrency ceiling.
+      const results = await Promise.all(validCrops.map(async (crop) => {
+        try {
+          const out = await identifyCore({ buffer: crop.buffer, hint: crop.hint });
+          if (out.cached) {
+            return { cards: out.result.cards || [], bbox: crop.bbox, cached: true };
+          }
+          let cards = out.parsed.cards || [];
+          if (cards.length > 0) {
+            try {
+              cards = await verifyIdentified(cards);
+              cards = await doubleCheckAll(out.imageBase64, out.imageMediaType, cards);
+            } catch (e) {
+              console.warn(`[BINDER] verify failed for crop ${crop.index}, using unverified:`, e.message);
+            }
+          }
+          const anyRejected = cards.some((c) => c?.verify_rejected);
+          cards = stripInternals(cards);
+          if (out.cacheKey && !anyRejected) cacheSet(out.cacheKey, { cards });
+          return { cards, bbox: crop.bbox, cached: false };
+        } catch (e) {
+          console.warn(`[BINDER] identify failed for crop ${crop.index}:`, e.message);
+          return { cards: [], bbox: crop.bbox, error: e.message };
+        }
+      }));
+
+      // Flatten — each crop usually yields one card, but identifyCore is
+      // technically multi-card so don't drop any. Attach the source bbox
+      // so the UI can offer a "re-crop and retry this card" affordance.
+      const flat = [];
+      for (const r of results) {
+        for (const c of r.cards) flat.push({ ...c, _binder_bbox: r.bbox });
+      }
+      console.log(
+        `[BINDER] done in ${Date.now() - t0}ms — ${bboxes.length} detected, ` +
+        `${validCrops.length} cropped, ${flat.length} identified ` +
+        `(${results.filter((r) => r.cached).length} cached)`,
+      );
+      return res.json({
+        cards: flat,
+        binder: {
+          count: bboxes.length,
+          cropped: validCrops.length,
+          identified: flat.length,
+          image_w: W,
+          image_h: H,
+        },
+      });
+    } catch (err) {
+      if (err.status === 400) return res.status(400).json({ error: err.message });
+      console.error('[BINDER] error:', err.message);
+      res.status(500).json({ error: 'Failed to identify binder page', details: err.message });
+    }
+  }
+);
 
 // V1 server.js:2447-2672 — manual identify body, extracted to a shared
 // helper so both the auth'd V1 path and the public V2 quote path share
