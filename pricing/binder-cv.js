@@ -112,8 +112,18 @@ export const NORMALIZE_TO_MEDIAN = true;
 // Minimum interior stddev to count a cell as containing a card. Empty
 // binder pockets show through to the page or backing, with stddev close
 // to 0–10. Cards (even monochrome ones) have stddev ≥ ~20. 15 is the
-// safe threshold.
+// safe absolute threshold.
 export const MIN_CONTENT_STD = 15;
+
+// Relative content threshold — a cell whose interior stddev is below
+// MEDIAN_OF_PAGE * MIN_CONTENT_RATIO_TO_MEDIAN is dropped as a phantom.
+// The page-wide median establishes "what a card looks like on this
+// photo"; a region that's only half as varied is almost certainly an
+// empty pocket / page edge / glare patch that the absolute floor let
+// through. 0.5 is permissive: a basic energy with simple art (lower
+// stddev than secret-rare holos) won't be filtered by this rule unless
+// the page-wide median is dominated by holos.
+export const MIN_CONTENT_RATIO_TO_MEDIAN = 0.5;
 
 /**
  * Detect cards on a binder-page photo using projection-profile grid
@@ -199,27 +209,48 @@ export async function detectBinderCardsCV({ buffer } = {}) {
     normalizedRows = snapBandsToLength(rowBands, medianH, H);
   }
 
-  const cards = [];
+  // Two-pass cell collection so we can compute a page-wide median
+  // content stddev BEFORE dropping cells. The median establishes "what
+  // a real card looks like on this photo"; cells far below that median
+  // are phantoms (empty pockets, page edges, glare) that the absolute
+  // floor let through.
+  const candidates = [];
   for (const row of normalizedRows) {
     for (const col of normalizedCols) {
       const aspect = col.length / row.length;
       if (aspect < ASPECT_MIN || aspect > ASPECT_MAX) continue;
-
-      // Empty-pocket filter still uses the (post-snap) coordinates —
-      // the snapped cell is centered on the original detected centre
-      // so it still hits real card content.
       const contentStd = regionStddev(pixels, W, H, col.start, row.start, col.length, row.length);
       if (contentStd < MIN_CONTENT_STD) continue;
-
-      cards.push({
-        x: col.start / W,
-        y: row.start / H,
-        w: col.length / W,
-        h: row.length / H,
-        // CV detector never produces hints — that's an OCR job. Keep the
-        // field absent so identifyCore doesn't see an empty string.
-      });
+      candidates.push({ row, col, contentStd });
     }
+  }
+
+  // Median content stddev across cells that already passed the absolute
+  // floor. If only one cell survives, the median == that cell, so the
+  // relative filter below is a no-op (nothing to compare to).
+  const stds = candidates.map((c) => c.contentStd).sort((a, b) => a - b);
+  const medianStd = stds.length === 0 ? 0
+    : stds.length % 2 === 1 ? stds[Math.floor(stds.length / 2)]
+    : (stds[stds.length / 2 - 1] + stds[stds.length / 2]) / 2;
+  const relativeFloor = medianStd * MIN_CONTENT_RATIO_TO_MEDIAN;
+
+  const cards = [];
+  for (const cand of candidates) {
+    if (cand.contentStd < relativeFloor) {
+      // Phantom cell — content too uniform compared to the rest of
+      // the page. Almost certainly an empty pocket region that the
+      // absolute floor let through (e.g. binder edge, page text,
+      // glare patch with some texture).
+      continue;
+    }
+    cards.push({
+      x: cand.col.start / W,
+      y: cand.row.start / H,
+      w: cand.col.length / W,
+      h: cand.row.length / H,
+      // CV detector never produces hints — that's an OCR job. Keep the
+      // field absent so identifyCore doesn't see an empty string.
+    });
   }
 
   // Same row-then-column ordering as pricing/binder.js parser.
