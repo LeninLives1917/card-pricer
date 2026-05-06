@@ -33,7 +33,11 @@ export function render() {
     const bp = entry.buy_price || {};
     const mv = entry.market_value || bp.market_value || cm.price || cm.trend || 0;
     const buy = entry.custom_buy ?? bp.suggested ?? 0;
-    const thumb = entry.image || card.image_url || '';
+    // Dual-thumb: scanned image (if any) + catalogue ref. Falls back to
+    // a single ref thumb for text-only / manual-entry results.
+    const userImg = entry.image || '';
+    const refImg = entry.reference_image || card.image_url || card.reference_image || '';
+    const thumbHtml = renderRowThumbs(userImg, refImg);
     if (entry.error) {
       return `
         <div class="session-log-row" data-result-idx="${idx}" style="cursor:pointer; border-left:3px solid #c14a3a;">
@@ -48,7 +52,7 @@ export function render() {
     }
     return `
       <div class="session-log-row" data-result-idx="${idx}" style="cursor:pointer;">
-        <div class="thumb" style="${thumb ? `background-image:url('${escapeAttr(thumb)}')` : ''}"></div>
+        ${thumbHtml}
         <div>
           <div class="name">${escapeHtml(card.name || 'Unknown')}</div>
           <div class="meta">${escapeHtml((card.set_code || '').toUpperCase())} ${escapeHtml(card.card_number || '')}${card.rarity ? ' · ' + escapeHtml(card.rarity) : ''}</div>
@@ -76,4 +80,19 @@ function escapeHtml(s) {
 }
 function escapeAttr(s) {
   return String(s == null ? '' : s).replace(/"/g, '&quot;').replace(/</g, '&lt;');
+}
+
+// Same dual-thumb renderer as session.js — kept inline rather than
+// extracted because the two surfaces have distinct enough markup that
+// sharing a helper across modules wasn't worth a new file.
+function renderRowThumbs(userImg, refImg) {
+  if (userImg && refImg) {
+    return `
+      <div class="thumb-pair" style="display:flex; gap:3px; flex-shrink:0;">
+        <div class="thumb" style="width:30px; background-image:url('${escapeAttr(userImg)}'); background-size:cover; background-position:center;" title="Scanned"></div>
+        <div class="thumb" style="width:30px; background-image:url('${escapeAttr(refImg)}'); background-size:cover; background-position:center;" title="Identified"></div>
+      </div>`;
+  }
+  const single = userImg || refImg || '';
+  return `<div class="thumb" style="${single ? `background-image:url('${escapeAttr(single)}')` : ''}"></div>`;
 }

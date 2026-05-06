@@ -252,10 +252,23 @@ router.post('/api/identify-binder',
 
       // Flatten — each crop usually yields one card, but identifyCore is
       // technically multi-card so don't drop any. Attach the source bbox
-      // so the UI can offer a "re-crop and retry this card" affordance.
+      // and the cropped image (as a data URL) so the UI can show
+      // "what you scanned" alongside "what we identified". 12 cards × ~80KB
+      // q92 JPEG ≈ 1MB response — acceptable for a one-shot binder upload.
       const flat = [];
-      for (const r of results) {
-        for (const c of r.cards) flat.push({ ...c, _binder_bbox: r.bbox });
+      for (let i = 0; i < results.length; i++) {
+        const r = results[i];
+        const cropBuf = validCrops[i]?.buffer;
+        const cropDataUrl = cropBuf
+          ? 'data:image/jpeg;base64,' + cropBuf.toString('base64')
+          : null;
+        for (const c of r.cards) {
+          flat.push({
+            ...c,
+            _binder_bbox: r.bbox,
+            _binder_image: cropDataUrl,
+          });
+        }
       }
       console.log(
         `[BINDER] done in ${Date.now() - t0}ms — ${bboxes.length} detected, ` +

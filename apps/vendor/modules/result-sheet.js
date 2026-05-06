@@ -52,7 +52,11 @@ export function renderResultSheet() {
   const sell = entry.custom_sell ?? Math.round(mv * (markup / 100) * 100) / 100;
 
   const isPending = !!entry._pending;
-  const thumb = entry.image || card.image_url || '';
+  // Dual-image header: user's scan (if any) + catalogue reference. For
+  // text/manual entries (no entry.image), only the catalogue ref is shown.
+  const userImg = entry.image || '';
+  const refImg = entry.reference_image || card.image_url || card.reference_image || '';
+  const thumbBlock = renderSheetThumbs(userImg, refImg);
   const cmUrl = buildCardmarketUrl(card, cm);
 
   // Graded badge — DESIGN_BRIEF status-badge rare register.
@@ -84,7 +88,7 @@ export function renderResultSheet() {
 
   body.innerHTML = `
     <div class="sheet-card-head" style="display:flex; gap:var(--p-3); align-items:flex-start;">
-      <div class="sheet-card-thumb" style="width:72px; aspect-ratio:5/7; border-radius:var(--r-2); background:var(--ink-300) center/cover; ${thumb ? `background-image:url('${escapeAttr(thumb)}')` : ''}"></div>
+      ${thumbBlock}
       <div style="flex:1; min-width:0;">
         <div>
           <span class="sheet-card-name" data-action="correct-card" title="Tap to correct">${escapeHtml(card.name || 'Unknown')}</span>
@@ -297,4 +301,28 @@ function escapeHtml(s) {
 
 function escapeAttr(s) {
   return String(s == null ? '' : s).replace(/"/g, '&quot;').replace(/</g, '&lt;');
+}
+
+// Result-sheet header thumbs. When both images exist (image-driven scan),
+// render two side-by-side card thumbs with small "Scanned" / "Identified"
+// captions so the operator can verify the match at a glance. For text /
+// manual entries that only have a catalogue ref, we keep the original
+// single 72px thumb so the existing sheet rhythm doesn't shift.
+function renderSheetThumbs(userImg, refImg) {
+  const baseStyle = 'width:64px; aspect-ratio:5/7; border-radius:var(--r-2); background:var(--ink-300) center/cover;';
+  if (userImg && refImg) {
+    return `
+      <div style="display:flex; gap:6px; flex-shrink:0;">
+        <div style="display:flex; flex-direction:column; align-items:center; gap:3px;">
+          <div class="sheet-card-thumb" style="${baseStyle} background-image:url('${escapeAttr(userImg)}');"></div>
+          <span class="data-badge" style="font-size:9px;">Scanned</span>
+        </div>
+        <div style="display:flex; flex-direction:column; align-items:center; gap:3px;">
+          <div class="sheet-card-thumb" style="${baseStyle} background-image:url('${escapeAttr(refImg)}');"></div>
+          <span class="data-badge" style="font-size:9px;">Identified</span>
+        </div>
+      </div>`;
+  }
+  const single = userImg || refImg || '';
+  return `<div class="sheet-card-thumb" style="width:72px; aspect-ratio:5/7; border-radius:var(--r-2); background:var(--ink-300) center/cover; ${single ? `background-image:url('${escapeAttr(single)}')` : ''}"></div>`;
 }

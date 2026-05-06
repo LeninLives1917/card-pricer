@@ -194,7 +194,12 @@ function renderSessionLog() {
     const cash = Math.round(mv * (state.cashPct / 100) * 100) / 100;
     const credit = Math.round(mv * (state.creditPct / 100) * 100) / 100;
     const sell = Math.round(mv * (markup / 100) * 100) / 100;
-    const thumb = e.image || card.image_url || '';
+    // Dual-thumb: when an image was used to find the card, show "what
+    // we scanned" + "what we identified" side-by-side. For text/manual
+    // entries (no e.image), only the catalogue ref is shown.
+    const userImg = e.image || '';
+    const refImg = e.reference_image || card.image_url || card.reference_image || '';
+    const thumbHtml = renderRowThumbs(userImg, refImg);
     const dup = e.duplicate_count > 0 ? `<span class="data-badge" style="margin-left:6px;">×${e.duplicate_count + 1}</span>` : '';
     const want = e.want_hit ? `<span class="status-badge live" style="margin-left:6px;">WANT</span>` : '';
     const status = e.status === 'bought' ? `<span class="status-badge up">BOUGHT</span>`
@@ -206,7 +211,7 @@ function renderSessionLog() {
     return `
       <div class="session-log-row" data-log-idx="${i}" style="cursor:pointer;">
         ${editCb}
-        <div class="thumb" style="${thumb ? `background-image:url('${escapeAttr(thumb)}')` : ''}"></div>
+        ${thumbHtml}
         <div>
           <div class="name">${escapeHtml(card.name || 'Unknown')}${dup}${want}${status ? ' ' + status : ''}</div>
           <div class="meta">${escapeHtml((card.set_code || '').toUpperCase())} ${escapeHtml(card.card_number || '')}${card.rarity ? ' · ' + escapeHtml(card.rarity) : ''}</div>
@@ -581,4 +586,21 @@ function escapeHtml(s) {
 }
 function escapeAttr(s) {
   return String(s == null ? '' : s).replace(/"/g, '&quot;').replace(/</g, '&lt;');
+}
+
+// Row-level dual-thumb renderer. When both images exist (image scan
+// result), splits the existing 64px thumb slot into two narrower thumbs
+// — operator's source on the left, identified catalogue art on the
+// right. When only the ref exists (text / manual entry), falls back to
+// the original single-thumb layout so widths line up.
+function renderRowThumbs(userImg, refImg) {
+  if (userImg && refImg) {
+    return `
+      <div class="thumb-pair" style="display:flex; gap:3px; flex-shrink:0;">
+        <div class="thumb" style="width:30px; background-image:url('${escapeAttr(userImg)}'); background-size:cover; background-position:center;" title="Scanned"></div>
+        <div class="thumb" style="width:30px; background-image:url('${escapeAttr(refImg)}'); background-size:cover; background-position:center;" title="Identified"></div>
+      </div>`;
+  }
+  const single = userImg || refImg || '';
+  return `<div class="thumb" style="${single ? `background-image:url('${escapeAttr(single)}')` : ''}"></div>`;
 }

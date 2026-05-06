@@ -320,16 +320,20 @@ async function runBinder(file) {
   }
 
   // Price each card in parallel — same pattern as text-entry, just batched.
+  // Carry the binder crop into entry.image so the result rows / sheet show
+  // "what we scanned" next to "what we identified" (same convention as
+  // single + bulk scans, where the client attaches the source photo).
   state.currentResults = [];
   const sess = currentSession();
   await Promise.all(cards.map(async (card) => {
+    const cropImg = card._binder_image || '';
     const priced = await postJson('/api/price', {
       card,
       buyPercentage: state.buyPercentage,
     });
     const result = priced.ok ? priced.body : { card, cardmarket: null, ebay: null, buy_price: null };
     state.currentResults.push(result);
-    if (sess) sess.log.unshift({ ...result, ts: Date.now() });
+    if (sess) sess.log.unshift({ ...result, image: cropImg, ts: Date.now() });
   }));
 
   saveAllSessions();
