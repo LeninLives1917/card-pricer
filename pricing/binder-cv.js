@@ -8,19 +8,26 @@
 // crops, even with temperature: 0 and a tighter prompt. CV grid
 // detection is pixel-precise by construction.
 //
-// Algorithm — projection profile + run length:
+// Algorithm — gap-based projection profile:
 //
 //   1. Resize the photo to ~800px wide (speed), greyscale it.
 //   2. For each column X, compute the std-deviation of pixel values
 //      across Y. Cards are visually rich (high stddev — varied art,
 //      text, holos); the gaps between pockets are smooth plastic or
 //      paper backing (low stddev).
-//   3. Smooth the profile with a small box filter to suppress noise.
-//   4. Threshold at the 35th percentile — values above are "card
-//      column", below are "gap column".
-//   5. Find contiguous runs of "card column" → vertical bands.
-//   6. Repeat steps 2–5 across rows → horizontal bands.
-//   7. Grid cells = vertical_bands × horizontal_bands.
+//   3. Smooth the profile with a small box filter.
+//   4. Find GAPS — runs where the smoothed stddev is at-or-below the
+//      30th percentile, length ≥ MIN_GAP_FRAC of image width. Gaps
+//      are the inter-pocket plastic / page backing.
+//   5. Derive CELL bands as the regions BETWEEN consecutive gaps.
+//      This is the key correctness move: a card has high stddev in
+//      its centre but LOW stddev along its colored frame border, so
+//      naively finding "high-stddev runs" returns only card centres
+//      (the previous bug — gave super-zoomed crops). Finding gaps
+//      and taking everything between gives the full edge-to-edge
+//      card extent.
+//   6. Repeat for rows.
+//   7. Grid cells = column_bands × row_bands.
 //   8. For each cell:
 //        - Reject if aspect ratio is outside [0.55, 0.95] (cards are ~5:7).
 //        - Reject if the cell's interior stddev is below MIN_CONTENT_STD
@@ -51,17 +58,28 @@ export const PROC_WIDTH = 800;
 // PROC_WIDTH=800 a radius of 4 averages over 9 pixels (~1% of the image).
 export const SMOOTH_RADIUS = 4;
 
-// Percentile of profile values to use as the "is this a card?" threshold.
-// 0.35 means columns/rows in the bottom 35% of stddev are gaps. Lower =
-// more permissive (catches faint cards but lets noise through); higher =
-// stricter. Tuned for typical binder photography (page background lighter
-// than cards).
-export const COL_THRESHOLD_PCT = 0.35;
-export const ROW_THRESHOLD_PCT = 0.35;
+// Multiplier on the profile mean that defines the gap cutoff. Values
+// below `mean * GAP_CUTOFF_FRAC` are treated as gaps (inter-pocket
+// plastic / page backing). Mean works as a separator for bimodal
+// distributions (gap-stddev clusters near 0, card-stddev far above)
+// regardless of the gap-vs-card fraction — which a fixed percentile
+// can't do, because we don't know in advance whether a page is half
+// gaps (sparse layout) or 5% gaps (cards crammed edge-to-edge).
+//
+// 0.6 means "anything under 60% of the average column stddev is a gap".
+// Tuned for typical binder photos; lower = stricter (gaps must be very
+// uniform); higher = looser (more permissive, risks mid-card splitting).
+export const GAP_CUTOFF_FRAC = 0.6;
 
-// Minimum band size as fraction of image. Bands smaller than this are
-// noise — there's no card 1% of the page wide. 8% allows up to ~12 bands
-// per axis (which would be a 12-pocket page — already at the binder spec).
+// Minimum gap width as fraction of image dimension. A real inter-pocket
+// gap is at least 1.5% of the image — anything smaller is a low-variance
+// blip inside a card (e.g. a uniform white region of card art) and
+// shouldn't split the cell.
+export const MIN_GAP_FRAC = 0.015;
+
+// Minimum cell band size as fraction of image. Cells smaller than this
+// are noise. 8% allows up to ~12 bands per axis (the binder spec
+// maximum: a 12-pocket page).
 export const MIN_BAND_FRAC = 0.08;
 
 // Card aspect ratio = ~5:7 → w/h ≈ 0.71. Allow ±~25% to account for
@@ -120,15 +138,17 @@ export async function detectBinderCardsCV({ buffer } = {}) {
 
   const colStd = projectionStddev(pixels, W, H, 'col');
   const colSmooth = smooth1d(colStd, SMOOTH_RADIUS);
-  const colMask = thresholdAtPercentile(colSmooth, COL_THRESHOLD_PCT);
-  const colBands = findRuns(colMask).filter((b) => b.length >= W * MIN_BAND_FRAC);
+  const colBands = cellBandsFromGaps(colSmooth, W, GAP_CUTOFF_FRAC, MIN_GAP_FRAC, MIN_BAND_FRAC);
 
   const rowStd = projectionStddev(pixels, W, H, 'row');
   const rowSmooth = smooth1d(rowStd, SMOOTH_RADIUS);
-  const rowMask = thresholdAtPercentile(rowSmooth, ROW_THRESHOLD_PCT);
-  const rowBands = findRuns(rowMask).filter((b) => b.length >= H * MIN_BAND_FRAC);
+  const rowBands = cellBandsFromGaps(rowSmooth, H, GAP_CUTOFF_FRAC, MIN_GAP_FRAC, MIN_BAND_FRAC);
 
-  if (colBands.length === 0 || rowBands.length === 0) {
+  // Need ≥2 bands on each axis to form a real grid. One band per axis means
+  // the entire image read as a single cell — almost certainly the gap
+  // detector failed (heavy lighting unevenness, no inter-pocket gap visible,
+  // single-card photo). Bail out so the route falls back to Claude.
+  if (colBands.length < 2 || rowBands.length < 2) {
     return { cards: [], reason: 'no-grid-detected', ms: Date.now() - t0 };
   }
 
@@ -250,6 +270,70 @@ export function thresholdAtPercentile(profile, pct) {
     mask[i] = profile[i] > threshold ? 1 : 0;
   }
   return mask;
+}
+
+/**
+ * Derive cell bands from a 1D profile by finding GAPS (low-value regions)
+ * and treating everything between consecutive gaps as a cell.
+ *
+ * Why gap-based: a card has high stddev in its centre but lower stddev
+ * along its colored frame border. Naively finding "high-value runs"
+ * gives only the noisy interior of each card — undersized bboxes that
+ * crop into the art and miss the name banner / set-code stripe. Finding
+ * gaps and taking the regions between them gives the full card extent.
+ *
+ * Cutoff selection: `cutoff = mean(profile) * gapCutoffFrac`. Mean
+ * works for bimodal distributions because it lands cleanly between the
+ * two modes regardless of their relative size. A fixed percentile
+ * can't do this — it requires knowing the gap-vs-card fraction in
+ * advance, which we don't.
+ *
+ * @param {Float32Array|Uint8Array|Array<number>} profile  1D values
+ * @param {number} totalLength    the profile's length (= W or H)
+ * @param {number} gapCutoffFrac  fraction of profile mean below which a
+ *                                value counts as gap (e.g. 0.6 means
+ *                                "below 60% of the average")
+ * @param {number} minGapFrac     minimum gap width as fraction of totalLength
+ * @param {number} minBandFrac    minimum cell width as fraction of totalLength
+ * @returns {Array<{start: number, length: number}>}
+ */
+export function cellBandsFromGaps(profile, totalLength, gapCutoffFrac, minGapFrac, minBandFrac) {
+  // Compute the profile mean and derive the gap cutoff from it.
+  let sum = 0;
+  for (let i = 0; i < profile.length; i++) sum += profile[i];
+  const mean = sum / profile.length;
+  const gapCutoff = mean * gapCutoffFrac;
+
+  // Build a gap mask: 1 where the smoothed profile is below cutoff.
+  const gapMask = new Uint8Array(profile.length);
+  for (let i = 0; i < profile.length; i++) {
+    gapMask[i] = profile[i] < gapCutoff ? 1 : 0;
+  }
+
+  // Real gaps are at least minGapFrac of the image wide; smaller "gaps"
+  // are uniform sub-regions of card art (e.g. a white name banner) and
+  // shouldn't split the cell.
+  const minGap = Math.max(1, Math.round(totalLength * minGapFrac));
+  const gaps = findRuns(gapMask).filter((g) => g.length >= minGap);
+
+  // Cell bands = the regions BETWEEN consecutive gaps. Treat the start
+  // and end of the image as implicit gaps so cards touching either edge
+  // still form a band.
+  const cells = [];
+  const minBand = Math.max(1, Math.round(totalLength * minBandFrac));
+  let cursor = 0;
+  for (const gap of gaps) {
+    const length = gap.start - cursor;
+    if (length >= minBand) {
+      cells.push({ start: cursor, length });
+    }
+    cursor = gap.start + gap.length;
+  }
+  // Final segment after the last gap.
+  if (totalLength - cursor >= minBand) {
+    cells.push({ start: cursor, length: totalLength - cursor });
+  }
+  return cells;
 }
 
 /**

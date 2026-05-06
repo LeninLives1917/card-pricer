@@ -16,6 +16,7 @@ import {
   thresholdAtPercentile,
   findRuns,
   regionStddev,
+  cellBandsFromGaps,
 } from '../../pricing/binder-cv.js';
 
 // Helpers to build synthetic greyscale "images" as flat Uint8Arrays.
@@ -203,6 +204,114 @@ test('regionStddev: ignores cell border (samples interior 60%)', () => {
   // x ∈ [4, 16) and y ∈ [4, 16) — which is the uniform interior.
   const std = regionStddev(buf, W, H, 0, 0, 20, 20);
   assert.ok(std < 1, `expected near-zero (interior is uniform), got ${std}`);
+});
+
+// ── cellBandsFromGaps ────────────────────────────────────────────────────
+//
+// The correctness move that fixed the "super zoomed in" bug: instead of
+// finding "card-like columns" and risking that a card's lower-variance
+// border gets thresholded out (yielding a band that's just the card's
+// noisy centre), we find GAPS and take the regions between them — full
+// edge-to-edge cell extents.
+
+// gapCutoffFrac is interpreted as: cutoff = mean(profile) * gapCutoffFrac.
+// 0.6 is the production default and works for the bimodal stddev profiles
+// we get from real binder photos.
+
+test('cellBandsFromGaps: 3-card profile with two clear gaps yields 3 cells', () => {
+  // Simulate a profile across 100 columns with three "card" zones (high
+  // values) separated by two "gap" zones (low values).
+  //   [0..30]   = card 0 (value 100)
+  //   [30..38]  = gap   (value 5)
+  //   [38..68]  = card 1 (value 100)
+  //   [68..76]  = gap   (value 5)
+  //   [76..100] = card 2 (value 100)
+  const profile = new Float32Array(100);
+  for (let i = 0; i < 100; i++) {
+    if ((i >= 30 && i < 38) || (i >= 68 && i < 76)) profile[i] = 5;
+    else profile[i] = 100;
+  }
+  // mean ≈ 84.8; cutoff = 84.8 * 0.6 ≈ 50.9. Values 5 < 50.9 → gap.
+  const cells = cellBandsFromGaps(profile, 100, 0.6, 0.05, 0.10);
+  assert.equal(cells.length, 3, `expected 3 cells, got ${cells.length}: ${JSON.stringify(cells)}`);
+  // First card spans [0..30].
+  assert.equal(cells[0].start, 0);
+  assert.equal(cells[0].length, 30);
+  // Second card spans [38..68].
+  assert.equal(cells[1].start, 38);
+  assert.equal(cells[1].length, 30);
+  // Third card spans [76..100].
+  assert.equal(cells[2].start, 76);
+  assert.equal(cells[2].length, 24);
+});
+
+test('cellBandsFromGaps: tiny "gap" inside a card (low-variance art region) is NOT split', () => {
+  // 100-column profile with a single card-zone but a 2-column dip in
+  // the middle (e.g. a white area on the card art). With minGapFrac=0.05
+  // (5 columns), the 2-column dip is too small to count — the cell
+  // stays unified.
+  const profile = new Float32Array(100);
+  profile.fill(100);
+  profile[48] = 5;
+  profile[49] = 5;
+  const cells = cellBandsFromGaps(profile, 100, 0.6, 0.05, 0.10);
+  assert.equal(cells.length, 1, 'sub-threshold gap should NOT split the cell');
+  assert.equal(cells[0].start, 0);
+  assert.equal(cells[0].length, 100);
+});
+
+test('cellBandsFromGaps: cards touching the image edges still form bands', () => {
+  // [0..40] card | [40..50] gap | [50..100] card.
+  const profile = new Float32Array(100);
+  for (let i = 0; i < 100; i++) {
+    profile[i] = (i >= 40 && i < 50) ? 5 : 100;
+  }
+  const cells = cellBandsFromGaps(profile, 100, 0.6, 0.05, 0.10);
+  assert.equal(cells.length, 2);
+  assert.equal(cells[0].start, 0);
+  assert.equal(cells[0].length, 40);
+  assert.equal(cells[1].start, 50);
+  assert.equal(cells[1].length, 50);
+});
+
+test('cellBandsFromGaps: gap-fraction independent (works at 30%, 70%, etc.)', () => {
+  // Same algorithm should handle a "sparse layout" page where most of
+  // the axis is gap (e.g. 1 card on a mostly-empty page). 70% gap, 30% card.
+  const profile = new Float32Array(100);
+  for (let i = 0; i < 100; i++) profile[i] = 5;        // gap
+  for (let i = 35; i < 65; i++) profile[i] = 100;       // 30-col card
+  const cells = cellBandsFromGaps(profile, 100, 0.6, 0.05, 0.10);
+  // Should find the single card. mean ≈ 33.5; cutoff ≈ 20.1. Value 5 < 20.1.
+  assert.equal(cells.length, 1);
+  assert.equal(cells[0].start, 35);
+  assert.equal(cells[0].length, 30);
+});
+
+test('cellBandsFromGaps: filters out cells smaller than minBandFrac', () => {
+  // Profile with a tiny "card" sliver between two big gaps:
+  // [0..30] gap | [30..32] card (only 2px wide) | [32..70] gap | [70..100] card
+  const profile = new Float32Array(100);
+  for (let i = 0; i < 100; i++) {
+    if ((i >= 30 && i < 32) || (i >= 70 && i < 100)) profile[i] = 100;
+    else profile[i] = 5;
+  }
+  // minBandFrac=0.10 → cells must be ≥10 columns. The 2-column "card"
+  // is dropped; only the 30-column one survives.
+  const cells = cellBandsFromGaps(profile, 100, 0.6, 0.05, 0.10);
+  assert.equal(cells.length, 1);
+  assert.equal(cells[0].start, 70);
+  assert.equal(cells[0].length, 30);
+});
+
+test('cellBandsFromGaps: no gaps at all → entire profile is one band', () => {
+  // All-uniform profile → no values below cutoff, no gaps found.
+  // Result: one cell spanning the full length. The detector's "≥2
+  // bands per axis" guard then bails to Claude.
+  const profile = new Float32Array(100);
+  profile.fill(100);
+  const cells = cellBandsFromGaps(profile, 100, 0.6, 0.05, 0.10);
+  assert.equal(cells.length, 1);
+  assert.equal(cells[0].length, 100);
 });
 
 // End-to-end "is the projection profile actually finding bands?" test
