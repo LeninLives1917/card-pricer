@@ -48,6 +48,7 @@ import { lookupTCGdex } from '../../../pricing/adapters/tcgdex.js';
 import { lookupViaTCGGO } from '../../../pricing/adapters/tcggo-rapidapi.js';
 import { lookupViaJustTCG } from '../../../pricing/adapters/justtcg.js';
 import { detectBinderCards } from '../../../pricing/binder.js';
+import { detectBinderCardsCV } from '../../../pricing/binder-cv.js';
 import {
   CARD_DB,
   lookupLocalDb,
@@ -187,13 +188,36 @@ router.post('/api/identify-binder',
         return res.status(400).json({ error: 'Could not read image dimensions' });
       }
 
-      const detection = await detectBinderCards({ buffer, mediaType });
+      // Two detectors, used in cascade:
+      //   1. CV grid detection (pricing/binder-cv.js) — ~100ms, free,
+      //      deterministic, pixel-precise. Works on cleanly-photographed
+      //      pages with visible inter-pocket gaps. The common case.
+      //   2. Sonnet bbox detection (pricing/binder.js) — ~3s, costs an
+      //      Anthropic call, handles the awkward cases CV can't (heavy
+      //      perspective, edge-to-edge cards, single-card photos).
+      // CV runs first; if it returns < 2 cards we fall back to Claude.
+      // The threshold is intentional: CV returning 0 or 1 means it
+      // couldn't find a grid at all, not that the page only has one
+      // card — those genuinely-sparse pages would be handled fine by
+      // Claude and we'd rather not mis-call them.
+      let detection;
+      let detectionPath = 'cv';
+      const cvOut = await detectBinderCardsCV({ buffer });
+      console.log(`[BINDER] CV detect: ${cvOut.cards.length} bbox(es) in ${cvOut.ms}ms (${cvOut.reason})`);
+      if (cvOut.cards.length >= 2) {
+        detection = cvOut;
+      } else {
+        console.log('[BINDER] CV insufficient — falling back to Claude bbox detection');
+        const claudeT0 = Date.now();
+        detection = await detectBinderCards({ buffer, mediaType });
+        detectionPath = 'claude';
+        console.log(`[BINDER] Claude detect: ${detection.cards?.length || 0} bbox(es) in ${Date.now() - claudeT0}ms`);
+      }
       const bboxes = detection.cards || [];
-      console.log(`[BINDER] detect: ${bboxes.length} bbox(es) in ${Date.now() - t0}ms (${W}x${H})`);
       if (!bboxes.length) {
         return res.json({
           cards: [],
-          binder: { count: 0, identified: 0, image_w: W, image_h: H },
+          binder: { count: 0, identified: 0, image_w: W, image_h: H, detection_path: detectionPath },
         });
       }
 
@@ -314,6 +338,7 @@ router.post('/api/identify-binder',
           dropped: droppedFalsePositives,
           image_w: W,
           image_h: H,
+          detection_path: detectionPath,
         },
       });
     } catch (err) {
