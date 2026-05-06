@@ -17,6 +17,8 @@ import {
   findRuns,
   regionStddev,
   cellBandsFromGaps,
+  medianLength,
+  snapBandsToLength,
 } from '../../pricing/binder-cv.js';
 
 // Helpers to build synthetic greyscale "images" as flat Uint8Arrays.
@@ -312,6 +314,101 @@ test('cellBandsFromGaps: no gaps at all → entire profile is one band', () => {
   const cells = cellBandsFromGaps(profile, 100, 0.6, 0.05, 0.10);
   assert.equal(cells.length, 1);
   assert.equal(cells[0].length, 100);
+});
+
+// ── medianLength ────────────────────────────────────────────────────────
+
+test('medianLength: odd count returns middle element', () => {
+  const bands = [
+    { start: 0, length: 100 },
+    { start: 200, length: 105 },
+    { start: 400, length: 95 },
+  ];
+  assert.equal(medianLength(bands), 100);
+});
+
+test('medianLength: even count averages the two middle elements', () => {
+  const bands = [
+    { start: 0, length: 80 },
+    { start: 100, length: 100 },
+    { start: 200, length: 110 },
+    { start: 300, length: 130 },
+  ];
+  assert.equal(medianLength(bands), 105); // avg of 100 and 110
+});
+
+test('medianLength: empty / single returns sensible default', () => {
+  assert.equal(medianLength([]), 0);
+  assert.equal(medianLength([{ start: 0, length: 50 }]), 50);
+});
+
+test('medianLength: outliers do not pull the median (unlike mean)', () => {
+  // Three sane cells at length 100, one outlier at length 500.
+  // Mean = (100+100+100+500)/4 = 200; median = 100. Median is right.
+  const bands = [
+    { start: 0, length: 100 },
+    { start: 200, length: 100 },
+    { start: 400, length: 100 },
+    { start: 600, length: 500 },
+  ];
+  assert.equal(medianLength(bands), 100);
+});
+
+// ── snapBandsToLength ───────────────────────────────────────────────────
+
+test('snapBandsToLength: snaps each band to target length, centred on detected centre', () => {
+  const bands = [
+    { start: 10, length: 100 },  // centre = 60
+    { start: 200, length: 95 },  // centre = 247.5
+    { start: 400, length: 105 }, // centre = 452.5
+  ];
+  const out = snapBandsToLength(bands, 100, 1000);
+  // Every band now has length 100 and is centred on its detected centre.
+  for (const b of out) assert.equal(b.length, 100);
+  assert.equal(out[0].start, 10);  // 60 - 50
+  assert.equal(out[1].start, 198); // round(247.5 - 50) = 198
+  assert.equal(out[2].start, 403); // round(452.5 - 50) = 403
+});
+
+test('snapBandsToLength: clamps left edge — band touching x=0 cannot start at -5', () => {
+  // Band centred at x=20 with target length 100 would start at -30.
+  const bands = [{ start: 0, length: 40 }]; // centre = 20
+  const out = snapBandsToLength(bands, 100, 1000);
+  assert.equal(out[0].start, 0);
+  assert.ok(out[0].length <= 100, `length should not exceed target: ${out[0].length}`);
+  assert.ok(out[0].start + out[0].length <= 1000, 'shouldn\'t overflow right edge');
+});
+
+test('snapBandsToLength: clamps right edge — band touching totalLength cannot extend past it', () => {
+  // Band at the right edge of a 1000-wide axis.
+  const bands = [{ start: 950, length: 40 }]; // centre = 970
+  const out = snapBandsToLength(bands, 100, 1000);
+  // Centre 970 with length 100 → start at 920, end at 1020. Clamp to 1000.
+  assert.ok(out[0].start + out[0].length <= 1000);
+});
+
+test('snapBandsToLength: target length 0 returns bands unchanged', () => {
+  const bands = [{ start: 10, length: 50 }];
+  const out = snapBandsToLength(bands, 0, 1000);
+  assert.equal(out[0].start, 10);
+  assert.equal(out[0].length, 50);
+});
+
+test('snapBandsToLength: pulls undersized bands up to target (the "top frame cropped" fix)', () => {
+  // 3 bands detected. Two are correct length 200, one is a top-frame-cut
+  // version at length 170 (missed the top 30px). After snapping all to
+  // median length, the undersized one is back at 200 and centred on
+  // its detected centre — recovering the missing top pixels.
+  const bands = [
+    { start: 50, length: 200 },   // ok, centre = 150
+    { start: 300, length: 170 },  // top cut, detected centre = 385 (would be 400 if full)
+    { start: 550, length: 200 },  // ok, centre = 650
+  ];
+  const median = medianLength(bands); // = 200
+  const out = snapBandsToLength(bands, median, 1000);
+  assert.equal(out[1].length, 200);
+  // Centred on 385: start should be 285 (was 300). It moved UP — recovered ~15px of top.
+  assert.equal(out[1].start, 285);
 });
 
 // End-to-end "is the projection profile actually finding bands?" test

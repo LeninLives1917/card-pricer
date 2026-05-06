@@ -95,6 +95,19 @@ export const MIN_BAND_FRAC = 0.08;
 // slightly cropped or angled cards. Outside this range = not a card.
 export const ASPECT_MIN = 0.55;
 export const ASPECT_MAX = 0.95;
+export const TARGET_ASPECT = 5 / 7; // ≈ 0.714 — the ideal w/h for a trading card.
+
+// After gap detection, we know all cards on a binder page are the same
+// size as each other (they live in identical pockets). Snap every cell
+// to the MEDIAN width and MEDIAN height of detected bands, centered on
+// each cell's detected position. Any individual cell that the gap
+// detector mis-sized — most commonly the "top frame classified as gap"
+// shaving the top edge off — gets pulled to the consensus and gains the
+// missing pixels back. The median is robust to one or two off-by-a-bit
+// cells; mean would let outliers pull the consensus.
+//
+// Set to false to disable normalization (debug aid).
+export const NORMALIZE_TO_MEDIAN = true;
 
 // Minimum interior stddev to count a cell as containing a card. Empty
 // binder pockets show through to the page or backing, with stddev close
@@ -167,12 +180,34 @@ export async function detectBinderCardsCV({ buffer } = {}) {
     return { cards: [], reason: 'no-grid-detected', ms: Date.now() - t0 };
   }
 
+  // Median-snap cells to consensus card size. All cards on a binder page
+  // are the same size (identical pockets) so any individual band that's
+  // off by a few pixels gets pulled to the median. Also reject the whole
+  // detection if median dimensions don't form a card-shaped rectangle.
+  let normalizedCols = colBands;
+  let normalizedRows = rowBands;
+  if (NORMALIZE_TO_MEDIAN) {
+    const medianW = medianLength(colBands);
+    const medianH = medianLength(rowBands);
+    const medianAspect = medianW / medianH;
+    if (medianAspect < ASPECT_MIN || medianAspect > ASPECT_MAX) {
+      // Median dimensions don't look like a card. Detection is unreliable
+      // — bail to Claude rather than ship junk crops.
+      return { cards: [], reason: `bad-median-aspect-${medianAspect.toFixed(2)}`, ms: Date.now() - t0 };
+    }
+    normalizedCols = snapBandsToLength(colBands, medianW, W);
+    normalizedRows = snapBandsToLength(rowBands, medianH, H);
+  }
+
   const cards = [];
-  for (const row of rowBands) {
-    for (const col of colBands) {
+  for (const row of normalizedRows) {
+    for (const col of normalizedCols) {
       const aspect = col.length / row.length;
       if (aspect < ASPECT_MIN || aspect > ASPECT_MAX) continue;
 
+      // Empty-pocket filter still uses the (post-snap) coordinates —
+      // the snapped cell is centered on the original detected centre
+      // so it still hits real card content.
       const contentStd = regionStddev(pixels, W, H, col.start, row.start, col.length, row.length);
       if (contentStd < MIN_CONTENT_STD) continue;
 
@@ -349,6 +384,56 @@ export function cellBandsFromGaps(profile, totalLength, gapCutoffFrac, minGapFra
     cells.push({ start: cursor, length: totalLength - cursor });
   }
   return cells;
+}
+
+/**
+ * Median of an array of band lengths. Used to determine the "consensus"
+ * card size on a binder page (every card on the page is the same size).
+ *
+ * @param {Array<{start: number, length: number}>} bands
+ * @returns {number}
+ */
+export function medianLength(bands) {
+  if (!bands || bands.length === 0) return 0;
+  const lengths = bands.map((b) => b.length).sort((a, b) => a - b);
+  const mid = Math.floor(lengths.length / 2);
+  return lengths.length % 2 === 1
+    ? lengths[mid]
+    : (lengths[mid - 1] + lengths[mid]) / 2;
+}
+
+/**
+ * Snap each band to the target length, keeping its detected centre.
+ * Clamps to [0, totalLength] so cells touching the image edge don't
+ * overflow.
+ *
+ * Why centre-preserving: the detected band's start might be wrong (top
+ * frame mis-classified as gap) but its centre is roughly correct because
+ * the centre lies in the noisy interior of the card. Re-extending around
+ * the centre to the consensus size restores any pixels lost off the
+ * top or extending past the bottom.
+ *
+ * @param {Array<{start: number, length: number}>} bands
+ * @param {number} targetLength  the length every band should snap to
+ * @param {number} totalLength   axis dimension (= W or H), for clamping
+ * @returns {Array<{start: number, length: number}>}
+ */
+export function snapBandsToLength(bands, targetLength, totalLength) {
+  if (targetLength <= 0) return bands.slice();
+  return bands.map((b) => {
+    const centre = b.start + b.length / 2;
+    let start = Math.round(centre - targetLength / 2);
+    let length = Math.round(targetLength);
+    // Clamp to image bounds without changing the length when possible.
+    if (start < 0) {
+      length = Math.max(0, length + start); // shrink, since we hit an edge
+      start = 0;
+    }
+    if (start + length > totalLength) {
+      length = Math.max(0, totalLength - start);
+    }
+    return { start, length };
+  });
 }
 
 /**
