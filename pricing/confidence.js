@@ -206,23 +206,21 @@ export const OCR_FIRST_VALIDATE_MODEL = 'claude-sonnet-4-6';
  * Model used by /api/identify-binder for the *first* pass (bbox detection
  * across a binder-page photo).
  *
- * Downgraded to Haiku 4.5: bbox detection is a spatial-reasoning task
- * (find rectangles in a grid layout) plus JSON output adherence — both
- * Haiku strengths. Coordinate precision is ~2-3% looser around card
- * edges, but sharp.extract tolerates a sliver of pocket border and
- * identifyCore (still on Sonnet) handles the slight background bleed.
- * Haiku is ~3x cheaper and ~3x faster TTFT, cutting the "Detecting
- * cards…" wait from 3-5s to ~1s for a 25-30% drop in total binder
- * round-trip latency.
+ * Reverted to Sonnet 4.6 after a real-world binder scan came back with
+ * cards that didn't match the page — accuracy too low on Haiku for
+ * this task. The cost (~$0.011/page) and ~2s latency are worth it given
+ * downstream identifyCore is wholly dependent on correct crops; a wrong
+ * bbox cascades into a wrong ID and a wrong customer offer.
  *
- * If a binder photo regularly drops cards in corners or merges adjacent
- * pockets, flip back to claude-sonnet-4-6.
+ * If you want to retry Haiku later, the diagnostic is the dual-thumb
+ * UI shipped in c0ef056: "Scanned" thumbs that don't match a real
+ * card on the page = bbox detection problem.
  *
  * Each card's actual identification still runs through identifyCore
  * (uses IDENT_MODEL above) per crop. So a binder page = 1
  * BINDER_DETECT_MODEL call + N IDENT_MODEL calls + N verify passes.
  */
-export const BINDER_DETECT_MODEL = 'claude-haiku-4-5-20251001';
+export const BINDER_DETECT_MODEL = 'claude-sonnet-4-6';
 
 // =============================================================================
 // scoreCandidate weights — hoisted in slice S6.
