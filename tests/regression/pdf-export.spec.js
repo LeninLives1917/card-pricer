@@ -76,39 +76,40 @@ test('buildRow multiplies all three figures by quantity (duplicate_count + 1)', 
   assert.equal(r.creditRaw, 21);
 });
 
-test('buildRow image priority: entry.reference_image > card.image_url > card.reference_image', () => {
+test('buildRow catalogue image priority: entry.reference_image > card.image_url > card.reference_image', () => {
   // entry.reference_image wins (this is what /api/price actually sets —
   // the primary path for priced session entries).
   assert.equal(buildRow({
     reference_image: 'TOP',
     card: { image_url: 'A', reference_image: 'B' },
-    image: 'C',
   }, 50, 70).image, 'TOP');
 
   // card.image_url next.
   assert.equal(buildRow({
     card: { image_url: 'A', reference_image: 'B' },
-    image: 'C',
   }, 50, 70).image, 'A');
 
   // card.reference_image when image_url missing.
   assert.equal(buildRow({
     card: { reference_image: 'B' },
-    image: 'C',
   }, 50, 70).image, 'B');
 
-  // entry.image (operator scan photo) is deliberately NOT used in the
-  // customer PDF — we only print catalogue art so the quote looks like
-  // a Cardmarket page, not a phone snap of the cards on the desk.
-  assert.equal(buildRow({
-    card: {},
-    image: 'C',
-  }, 50, 70).image, '');
-
   // Empty when nothing set.
+  assert.equal(buildRow({ card: {} }, 50, 70).image, '');
+});
+
+test('buildRow exposes userImage from entry.image (the operator scan)', () => {
+  // For image-driven scans, customer PDF should show BOTH the scan and
+  // the catalogue art so the customer can verify the match.
   assert.equal(buildRow({
-    card: {},
-  }, 50, 70).image, '');
+    card: { reference_image: 'CAT' },
+    image: 'data:image/jpeg;base64,SCAN',
+  }, 50, 70).userImage, 'data:image/jpeg;base64,SCAN');
+
+  // Text/manual entries have no scan; userImage stays empty.
+  assert.equal(buildRow({
+    card: { reference_image: 'CAT' },
+  }, 50, 70).userImage, '');
 });
 
 test('buildRow handles missing card cleanly (Unknown name, blank labels)', () => {
@@ -298,6 +299,45 @@ test('renderPrintHtml omits the link when no Cardmarket URL is available', () =>
   const body = bodyOf(renderPrintHtml(ctx));
   assert.doesNotMatch(body, /class="card-cm-foot"/);
   assert.doesNotMatch(body, /<a [^>]*>Pikachu<\/a>/);
+});
+
+// ── Dual-thumb (image scan vs text/manual) ────────────────────────────────
+
+test('renderPrintHtml renders dual thumbs (Scanned + Identified) when both images exist', () => {
+  const ctx = sampleCtx();
+  ctx.rows[0] = buildRow({
+    card: { name: 'Pikachu', set_code: 'MEG', card_number: '172', reference_image: 'https://example.com/cat.png' },
+    market_value: 10,
+    image: 'data:image/jpeg;base64,SCAN',
+  }, 50, 70);
+  const body = bodyOf(renderPrintHtml(ctx));
+  // Both <img> sources are present.
+  assert.match(body, /src="data:image\/jpeg;base64,SCAN"/);
+  assert.match(body, /src="https:\/\/example\.com\/cat\.png"/);
+  // Dual-thumb structural markers.
+  assert.match(body, /class="card-thumbs dual"/);
+  assert.match(body, /class="card-thumb-cap">Scanned</);
+  assert.match(body, /class="card-thumb-cap">Identified</);
+  // Outer <article> gets the has-dual-thumb modifier so CSS widens the column.
+  assert.match(body, /<article class="card has-dual-thumb"/);
+});
+
+test('renderPrintHtml renders single thumb (no captions, no dual class) for text-only rows', () => {
+  const ctx = sampleCtx();
+  ctx.rows[0] = buildRow({
+    card: { name: 'Pikachu', set_code: 'MEG', card_number: '172', reference_image: 'https://example.com/cat.png' },
+    market_value: 10,
+    // No entry.image — text/manual entry.
+  }, 50, 70);
+  const body = bodyOf(renderPrintHtml(ctx));
+  // Catalogue image only.
+  assert.match(body, /src="https:\/\/example\.com\/cat\.png"/);
+  // No dual-thumb wrapper / captions.
+  assert.doesNotMatch(body, /class="card-thumbs dual"/);
+  assert.doesNotMatch(body, /class="card-thumb-cap"/);
+  // No has-dual-thumb modifier on the article.
+  assert.match(body, /<article class="card"/);
+  assert.doesNotMatch(body, /<article class="card has-dual-thumb"/);
 });
 
 test('renderPrintHtml disclaimer says "Near-Mint English" not "trend"', () => {

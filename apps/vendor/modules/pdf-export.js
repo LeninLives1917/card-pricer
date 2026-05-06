@@ -16,21 +16,25 @@
 // fall out of CSS. The trade-off is a manual "Save as PDF" step in the
 // print dialog — acceptable for an operator-driven action.
 //
-// Image source priority (all official catalogue art — same image
-// Cardmarket displays on its product pages):
-//   1. entry.reference_image   — set by /api/price (apps/server/routes/price.js)
-//                                from the rapidapi_cm or scryfall/pokemontcg
-//                                game-API result; this is the primary path
-//                                for priced session entries.
-//   2. card.image_url          — older code paths that store the image on
-//                                the card object directly.
-//   3. card.reference_image    — set by manualIdentifyCore for the manual /
-//                                text-entry path before pricing runs.
-// We deliberately DO NOT fall back to entry.image (the operator's scan
-// photo): a customer-facing quote should show the catalogue card, not a
-// phone snap of the cards they brought in. Cards that never got a
-// verified DB hit print without an image rather than with a low-quality
-// scan.
+// Each row in the customer PDF can show TWO images:
+//
+//   userImage — the operator's source scan (entry.image): proves which
+//               specific physical card the customer handed over. Empty
+//               for text/manual entries (no scan exists).
+//   image     — the catalogue art: pokemontcg.io / scryfall reference,
+//               same image Cardmarket displays. Priority:
+//                 1. entry.reference_image   (set by /api/price)
+//                 2. card.image_url          (legacy code paths)
+//                 3. card.reference_image    (manualIdentifyCore path)
+//
+// Layout rule:
+//   - both present (image scan)  → side-by-side: "Scanned" + "Identified"
+//   - only catalogue (text/manual) → single thumb, original layout
+//   - neither (rare edge case)     → blank slot
+//
+// This matches the dual-thumb behaviour shipped to the in-app result
+// surfaces (session log, results pane, result-sheet modal) so the
+// customer-facing PDF tells the same story.
 
 import { getSetting } from './state.js';
 
@@ -212,6 +216,8 @@ function buildRow(entry, cashPct, creditPct) {
   const creditRaw = round2(market * (creditPct / 100));
   const qty = (entry.duplicate_count || 0) + 1;
   const image = entry.reference_image || card.image_url || card.reference_image || '';
+  // Source scan (operator's photo); only present for image-driven scans.
+  const userImage = entry.image || '';
   // Cardmarket link priority:
   //   1. cm.url               — direct product page (rapidapi_cm path)
   //   2. cm.filtered_url      — filtered search (lang=en + condition)
@@ -237,6 +243,7 @@ function buildRow(entry, cashPct, creditPct) {
     rarity: card.rarity || '',
     qty,
     image,
+    userImage,
     cardmarketUrl,
     marketRaw: market * qty,
     cashRaw: cashRaw * qty,
@@ -298,24 +305,44 @@ function renderPrintHtml(ctx) {
   if (showCredit) offerCols.push({ label: `Store credit (${creditPct}%)`, key: 'credit', total: totals.credit });
 
   const cardsHtml = rows.map((r) => {
-    // Image gets crossorigin removed (it forces CORS preflight that
-    // pokemontcg.io / scryfall don't honour for hotlinks, leaving the
-    // <img> broken in the PDF). referrer-policy stays so we don't leak
-    // Render's host as the referrer.
-    const img = r.image
+    // crossorigin is OFF on every <img>: the attribute forces a CORS
+    // preflight that pokemontcg.io / scryfall don't honour for hotlinks,
+    // leaving the image broken in the PDF. We never read pixels via
+    // canvas so we don't need it. referrer-policy stays so we don't
+    // leak Render's host as the referrer to the catalogue source.
+    const refImg = r.image
       ? `<img src="${escapeAttr(r.image)}" alt="" referrerpolicy="no-referrer">`
       : '';
-    // Wrap thumb + name in a Cardmarket hyperlink when we have one. PDF
-    // viewers preserve <a href> as clickable links — the customer can tap
-    // through to verify the listing themselves.
+    const userImg = r.userImage
+      ? `<img src="${escapeAttr(r.userImage)}" alt="" referrerpolicy="no-referrer">`
+      : '';
+    // When we have BOTH the operator's scan and the catalogue art, render
+    // a side-by-side "Scanned / Identified" pair so the customer can
+    // verify the match. When we only have the catalogue (text/manual
+    // entries), fall back to the original single-thumb layout.
+    const thumbsBlock = (r.userImage && r.image)
+      ? `<div class="card-thumbs dual">
+           <div class="card-thumb-cell">
+             <div class="card-thumb">${userImg}</div>
+             <span class="card-thumb-cap">Scanned</span>
+           </div>
+           <div class="card-thumb-cell">
+             <div class="card-thumb">${refImg}</div>
+             <span class="card-thumb-cap">Identified</span>
+           </div>
+         </div>`
+      : `<div class="card-thumb">${refImg || userImg}</div>`;
+    // Wrap the name in a Cardmarket hyperlink when we have one. PDF
+    // viewers preserve <a href> as a clickable link — the customer can
+    // tap through to verify the listing themselves.
     const linkOpen  = r.cardmarketUrl ? `<a href="${escapeAttr(r.cardmarketUrl)}" target="_blank" rel="noopener" class="card-link">` : '';
     const linkClose = r.cardmarketUrl ? `</a>` : '';
     const linkFoot = r.cardmarketUrl
       ? `<a class="card-cm-foot" href="${escapeAttr(r.cardmarketUrl)}" target="_blank" rel="noopener">View on Cardmarket →</a>`
       : '';
     return `
-    <article class="card">
-      <div class="card-thumb">${img}</div>
+    <article class="card${(r.userImage && r.image) ? ' has-dual-thumb' : ''}">
+      ${thumbsBlock}
       <div class="card-body">
         <h3 class="card-name">${linkOpen}${escapeHtml(r.name)}${linkClose}${r.qty > 1 ? ` <span class="qty">×${r.qty}</span>` : ''}</h3>
         <p class="card-set">${escapeHtml(r.setLabel)}${r.setName ? ' · ' + escapeHtml(r.setName) : ''}${r.rarity ? ' · ' + escapeHtml(r.rarity) : ''}</p>
@@ -399,6 +426,12 @@ function renderPrintHtml(ctx) {
     page-break-inside: avoid;
     break-inside: avoid;
   }
+  /* When the row carries both a scan AND a catalogue image, widen the
+     thumb column so two ~46px thumbs fit side by side without squeezing
+     the body text. ~100px total (46 + 6 gap + 46 + 2 padding slack). */
+  article.card.has-dual-thumb {
+    grid-template-columns: 100px 1fr;
+  }
   .card-thumb {
     width: 64px;
     aspect-ratio: 5 / 7;
@@ -413,6 +446,28 @@ function renderPrintHtml(ctx) {
     width: 100%; height: 100%;
     object-fit: cover;
     display: block;
+  }
+  /* Dual-thumb wrapper: two thumb-cells side-by-side, each with a tiny
+     "Scanned" / "Identified" caption underneath so the customer can tell
+     which is which at a glance. */
+  .card-thumbs.dual {
+    display: flex;
+    gap: 6px;
+  }
+  .card-thumb-cell {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+  }
+  .card-thumbs.dual .card-thumb {
+    width: 46px;
+  }
+  .card-thumb-cap {
+    font-size: 6.5pt;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: #877c6f;
   }
   .card-body { min-width: 0; }
   .card-name {
