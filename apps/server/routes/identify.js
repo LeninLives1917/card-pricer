@@ -197,13 +197,21 @@ router.post('/api/identify-binder',
         });
       }
 
-      // Crop each bbox in parallel. Sharp instances are independent so this
-      // is safe — and faster than serial extraction for big images.
+      // Crop each bbox in parallel, with a small outward pad so that crops
+      // where Sonnet bound the box a hair INTO the card still capture the
+      // top name banner / bottom set-code stripe. ~4% pad on each side
+      // (clamped to image bounds) — wide enough to recover hair-trimmed
+      // edges, narrow enough that adjacent pockets don't bleed in. This
+      // padding is what lets identifyCore reliably read the set code on
+      // crops where Haiku/Sonnet's bbox was slightly over-eager.
+      const PAD = 0.04;
       const crops = await Promise.all(bboxes.map(async (bb, i) => {
-        const left   = Math.max(0, Math.round(bb.x * W));
-        const top    = Math.max(0, Math.round(bb.y * H));
-        const right  = Math.min(W, Math.round((bb.x + bb.w) * W));
-        const bottom = Math.min(H, Math.round((bb.y + bb.h) * H));
+        const padX = bb.w * PAD;
+        const padY = bb.h * PAD;
+        const left   = Math.max(0, Math.round((bb.x - padX) * W));
+        const top    = Math.max(0, Math.round((bb.y - padY) * H));
+        const right  = Math.min(W, Math.round((bb.x + bb.w + padX) * W));
+        const bottom = Math.min(H, Math.round((bb.y + bb.h + padY) * H));
         const width  = right - left;
         const height = bottom - top;
         if (width < 32 || height < 32) {
@@ -255,14 +263,28 @@ router.post('/api/identify-binder',
       // and the cropped image (as a data URL) so the UI can show
       // "what you scanned" alongside "what we identified". 12 cards × ~80KB
       // q92 JPEG ≈ 1MB response — acceptable for a one-shot binder upload.
+      //
+      // Filter: drop crops that produced ZERO cards or only cards without
+      // a name. A bbox with nothing identifiable behind it is almost
+      // always a Sonnet false positive (glare, sleeve, empty pocket); it
+      // shouldn't reach the operator's session log as a junk row. The
+      // skipped count is reported back so the UI can surface "we
+      // detected N, identified M".
       const flat = [];
+      let droppedFalsePositives = 0;
       for (let i = 0; i < results.length; i++) {
         const r = results[i];
+        const namedCards = (r.cards || []).filter((c) => c && c.name && !c.verify_rejected);
+        if (namedCards.length === 0) {
+          droppedFalsePositives++;
+          console.log(`[BINDER] crop ${validCrops[i]?.index ?? i}: no identifiable card — dropping false positive`);
+          continue;
+        }
         const cropBuf = validCrops[i]?.buffer;
         const cropDataUrl = cropBuf
           ? 'data:image/jpeg;base64,' + cropBuf.toString('base64')
           : null;
-        for (const c of r.cards) {
+        for (const c of namedCards) {
           flat.push({
             ...c,
             _binder_bbox: r.bbox,
@@ -272,7 +294,8 @@ router.post('/api/identify-binder',
       }
       console.log(
         `[BINDER] done in ${Date.now() - t0}ms — ${bboxes.length} detected, ` +
-        `${validCrops.length} cropped, ${flat.length} identified ` +
+        `${validCrops.length} cropped, ${flat.length} identified, ` +
+        `${droppedFalsePositives} false positives dropped ` +
         `(${results.filter((r) => r.cached).length} cached)`,
       );
       return res.json({
@@ -281,6 +304,7 @@ router.post('/api/identify-binder',
           count: bboxes.length,
           cropped: validCrops.length,
           identified: flat.length,
+          dropped: droppedFalsePositives,
           image_w: W,
           image_h: H,
         },

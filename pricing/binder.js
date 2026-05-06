@@ -33,13 +33,27 @@ For EACH visible card on the page, return a tight bounding box in normalised coo
 Output ONLY valid JSON in exactly this shape — no markdown, no explanation:
 { "cards": [ { "x": 0.05, "y": 0.08, "w": 0.30, "h": 0.42, "hint": "Pikachu" } ] }
 
+WHAT COUNTS AS A TRADING CARD:
+- A rectangular card with a clear printed frame, art region, and readable text (card name, HP, set symbol, attacks, etc.)
+- Rounded corners and the card's own coloured border are typically visible
+- The card is face-up (showing art, not the back-pattern)
+
+WHAT TO SKIP — DO NOT RETURN BOXES FOR THESE:
+- Empty binder pockets (you'll see the page background, lining, or another sheet through them)
+- Glare patches, lens flare, light reflections on the plastic pocket
+- Fingerprints, smudges, dust on the pocket plastic
+- Empty card sleeves, dividers, paper inserts
+- Face-down cards (a uniform card-back pattern with no name visible)
+- The binder ring/spine or the page itself
+- Anything that isn't unambiguously a face-up trading card
+
+CRITICAL — bias toward FALSE NEGATIVES, not false positives. If you're uncertain whether something is a card, OMIT IT. A missed card is a minor inconvenience; a hallucinated card creates a wrong customer offer that costs the operator money.
+
 Rules:
-- The box must contain ONLY the card art + frame. Exclude the binder pocket border, thumbprints, glare highlights outside the card.
-- "hint" is the card name IF you can read it confidently; OMIT the field entirely if unsure. Never guess.
-- Skip empty pockets — only return boxes for actually-present cards.
+- The bounding box MUST be tight against the card's printed edge. Do NOT include binder pocket border, neighbouring cards, or surrounding glare in the box. But also do not crop INTO the card — make sure the full card name banner at the top and the set-code stripe at the bottom are inside the box.
+- "hint" is the card name IF you can read it confidently. OMIT the field entirely when unsure. Never guess.
 - Order top-to-bottom, then left-to-right within each row.
-- If you see fewer than 4 cards, still return what you see — the page may be partially filled.
-- If the image is not a binder page (single card, random object, blank page), return { "cards": [] }.`;
+- If the image is not a binder page (single card, random object, blank page, fewer than 2 visible cards), return { "cards": [] }.`;
 
 /**
  * Detect cards on a binder-page photo. Returns up to 12 normalised bboxes.
