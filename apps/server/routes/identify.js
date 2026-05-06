@@ -199,12 +199,16 @@ router.post('/api/identify-binder',
 
       // Crop each bbox in parallel, with a small outward pad so that crops
       // where Sonnet bound the box a hair INTO the card still capture the
-      // top name banner / bottom set-code stripe. ~4% pad on each side
-      // (clamped to image bounds) — wide enough to recover hair-trimmed
-      // edges, narrow enough that adjacent pockets don't bleed in. This
-      // padding is what lets identifyCore reliably read the set code on
-      // crops where Haiku/Sonnet's bbox was slightly over-eager.
-      const PAD = 0.04;
+      // top name banner / bottom set-code stripe. 2% pad on each side
+      // (clamped to image bounds) — half of the original 4% after we
+      // observed off-centre bboxes growing into adjacent pockets at 4%.
+      // Smaller pad means a misaligned bbox stays misaligned (rather than
+      // smearing into the next card and corrupting identifyCore).
+      const PAD = 0.02;
+      // Trading-card aspect ratio is ~5:7 (w/h ≈ 0.71). Logging w/h on
+      // every bbox makes it obvious when Sonnet returns garbage shapes
+      // (e.g. 1.4 = double-width, 0.3 = sliver) — those are the rows
+      // most likely to mis-identify, so worth surfacing in logs.
       const crops = await Promise.all(bboxes.map(async (bb, i) => {
         const padX = bb.w * PAD;
         const padY = bb.h * PAD;
@@ -218,6 +222,9 @@ router.post('/api/identify-binder',
           console.warn(`[BINDER] crop ${i}: too small (${width}x${height}) — skipping`);
           return null;
         }
+        const ratio = width / height;
+        const ratioFlag = (ratio < 0.55 || ratio > 0.95) ? ' [SUSPECT — not card-shaped]' : '';
+        console.log(`[BINDER] crop ${i}: ${width}x${height} px, w/h=${ratio.toFixed(2)}${ratioFlag}${bb.hint ? `, hint="${bb.hint}"` : ''}`);
         try {
           const cropBuf = await sharp(buffer)
             .extract({ left, top, width, height })

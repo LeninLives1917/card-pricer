@@ -49,8 +49,14 @@ WHAT TO SKIP — DO NOT RETURN BOXES FOR THESE:
 
 CRITICAL — bias toward FALSE NEGATIVES, not false positives. If you're uncertain whether something is a card, OMIT IT. A missed card is a minor inconvenience; a hallucinated card creates a wrong customer offer that costs the operator money.
 
-Rules:
-- The bounding box MUST be tight against the card's printed edge. Do NOT include binder pocket border, neighbouring cards, or surrounding glare in the box. But also do not crop INTO the card — make sure the full card name banner at the top and the set-code stripe at the bottom are inside the box.
+BOUNDING BOX DISCIPLINE (read carefully — this is the most common failure mode):
+- The card MUST be CENTRED inside the box. Equal margin on left/right; equal margin on top/bottom. If you imagine a frame, the frame's edges should kiss the card's printed edges symmetrically.
+- All four edges of the printed card MUST be inside the box: name banner at the top, set-code stripe at the bottom, and the full coloured frame on left and right.
+- Do NOT include the binder pocket border, neighbouring cards, surrounding glare, or background outside the card.
+- A trading card has an aspect ratio of about 5:7 (taller than wide, ratio ~0.71). Your bounding box should reflect this — w/h ≈ 0.7. A square-ish or very wide box almost certainly means you have included a neighbouring pocket or excluded part of the card.
+- If the photo is taken at a slight angle and the card is rotated within the pocket, draw the box around the card's actual rotated bounds — still axis-aligned but as tight as possible.
+
+Other rules:
 - "hint" is the card name IF you can read it confidently. OMIT the field entirely when unsure. Never guess.
 - Order top-to-bottom, then left-to-right within each row.
 - If the image is not a binder page (single card, random object, blank page, fewer than 2 visible cards), return { "cards": [] }.`;
@@ -75,6 +81,12 @@ export async function detectBinderCards({ buffer, mediaType, deps } = {}) {
     const resp = await anthropic.messages.create({
       model: BINDER_DETECT_MODEL,
       max_tokens: 2048,
+      // Deterministic detection: same binder photo should always produce the
+      // same bboxes. Without temperature: 0 we saw the model return a card
+      // 100% correctly on one run and miss / hallucinate on the next, even
+      // though the image was byte-identical. 0 also slightly nudges the
+      // model toward conservative, well-defined boxes.
+      temperature: 0,
       messages: [{
         role: 'user',
         content: [
