@@ -53,10 +53,19 @@ import sharp from 'sharp';
 // calculation) while keeping per-page processing under 200ms.
 export const PROC_WIDTH = 800;
 
-// 1D box-filter radius for smoothing the projection profile. Suppresses
-// per-pixel noise from texture without obscuring genuine gaps. At
-// PROC_WIDTH=800 a radius of 4 averages over 9 pixels (~1% of the image).
-export const SMOOTH_RADIUS = 4;
+// 1D box-filter radius as a FRACTION of the axis length. At 0.015 the
+// smoothing window is 3% of the axis (radius*2+1 / total) — wide enough
+// to absorb thin low-stddev features inside cards (notably the colored
+// FRAME at the top and bottom of each card, ~1–2% of card height,
+// which would otherwise read as a gap and pull the cell start downward,
+// producing the "top of card cropped off, more of card below visible"
+// symptom). Narrow enough to leave inter-card gaps (~5–10% of axis
+// height in a 3×3 layout) clearly visible.
+//
+// Fraction-based instead of fixed-px so the smoothing scales with image
+// resolution: a 600-tall photo gets a 9px radius, a 1067-tall photo gets
+// a 16px radius.
+export const SMOOTH_RADIUS_FRAC = 0.015;
 
 // Multiplier on the profile mean that defines the gap cutoff. Values
 // below `mean * GAP_CUTOFF_FRAC` are treated as gaps (inter-pocket
@@ -136,12 +145,18 @@ export async function detectBinderCardsCV({ buffer } = {}) {
   const H = raw.info.height;
   const pixels = raw.data;
 
+  // Smoothing radius scales with the axis length so it works at any
+  // photo resolution (see SMOOTH_RADIUS_FRAC comment). Per-axis values
+  // because the photo isn't necessarily square.
+  const colSmoothRadius = Math.max(2, Math.round(W * SMOOTH_RADIUS_FRAC));
+  const rowSmoothRadius = Math.max(2, Math.round(H * SMOOTH_RADIUS_FRAC));
+
   const colStd = projectionStddev(pixels, W, H, 'col');
-  const colSmooth = smooth1d(colStd, SMOOTH_RADIUS);
+  const colSmooth = smooth1d(colStd, colSmoothRadius);
   const colBands = cellBandsFromGaps(colSmooth, W, GAP_CUTOFF_FRAC, MIN_GAP_FRAC, MIN_BAND_FRAC);
 
   const rowStd = projectionStddev(pixels, W, H, 'row');
-  const rowSmooth = smooth1d(rowStd, SMOOTH_RADIUS);
+  const rowSmooth = smooth1d(rowStd, rowSmoothRadius);
   const rowBands = cellBandsFromGaps(rowSmooth, H, GAP_CUTOFF_FRAC, MIN_GAP_FRAC, MIN_BAND_FRAC);
 
   // Need ≥2 bands on each axis to form a real grid. One band per axis means
