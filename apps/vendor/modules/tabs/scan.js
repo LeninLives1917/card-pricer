@@ -13,7 +13,7 @@
 // /api/identify-stream → /api/price → session log). Text-entry calls
 // /api/identify-manual per row, then /api/price (skips the AI step).
 
-import { postJson } from '../api-client.js';
+import { postJson, uploadMultipart } from '../api-client.js';
 import { state, currentSession, saveAllSessions, getSetting } from '../state.js';
 import { parseTextEntryLines } from '../text-parse.js';
 import {
@@ -285,29 +285,20 @@ async function runBinder(file) {
 
   const fd = new FormData();
   fd.append('image', file);
-  let resp;
-  try {
-    resp = await fetch('/api/identify-binder', { method: 'POST', body: fd, credentials: 'include' });
-  } catch (e) {
-    setStatus('Network error — check your connection and try again.');
-    setBar(0);
-    return;
-  }
+  // Route through uploadMultipart (api-client.js) so the Supabase JWT
+  // Authorization header is attached. A raw fetch() returns "auth required"
+  // because requireAuth on the server reads the Bearer token from there.
+  const r = await uploadMultipart('/api/identify-binder', fd);
   setBar(70);
 
-  if (!resp.ok) {
-    let msg = `Server error (${resp.status})`;
-    try {
-      const body = await resp.json();
-      msg = body?.error || msg;
-    } catch {}
-    setStatus(msg);
+  if (!r.ok) {
+    setStatus(r.error || `Server error (${r.status})`);
     setBar(0);
     return;
   }
 
-  const body = await resp.json();
-  const cards = Array.isArray(body?.cards) ? body.cards : [];
+  const body = r.body || {};
+  const cards = Array.isArray(body.cards) ? body.cards : [];
   const detected = body?.binder?.count ?? cards.length;
   setLabel(`Pricing ${cards.length} card${cards.length === 1 ? '' : 's'}…`);
   setStatus(`Detected ${detected} card${detected === 1 ? '' : 's'} on the page.`);

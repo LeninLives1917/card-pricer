@@ -15,7 +15,7 @@
 //           nothing because no handler was wired. Bumping the version
 //           evicts every cached module on next load.
 
-const CACHE_VERSION = 'cardpricer-v2.8';
+const CACHE_VERSION = 'cardpricer-v2.9';
 
 const SHELL = [
   '/',
