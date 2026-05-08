@@ -153,17 +153,22 @@ Sourced from every slice's commit body. Grouped by urgency:
 - [ ] Trigger sessions read-flip per `infra/deploy/sessions-readflip-runbook.md` after dual-write stable ≥2 weeks.
 - [ ] Drop `user_state.state` column once read-flip stable (with rollback migration).
 - [ ] Drop `apps/widget/widget-v1.js` after stable month (Q4 rollback artefact lifetime).
-- [ ] DELETE route for `/api/v2/customer/me` (S21 hand-off — backend has the function, no route).
+- [x] DELETE route for `/api/v2/customer/me` — shipped 2026-05-09 (`apps/server/routes/customer.js`). Drops `customer_accounts` row only; full GDPR cascade (auth.users, quote_offers, quote_leads.email PII) is separate scope — see `memory/customer_delete_cascade_gap.md`.
 - [ ] Real Cardmarket / TCGPlayer / eBay marketplace integrations (S18 follow-ups).
 - [ ] Image upload route for inventory listings (S18 follow-up).
 - [ ] Per-shop P&L view for multi-shop vendors (S18 follow-up).
 - [ ] CSV / Manabox bulk-import for historical inventory (S18 follow-up).
 - [ ] Quote URL expiry — currently permanent; GDPR retention policy needed (S12 follow-up).
-- [ ] Brevo-failure ordering — V2's `/api/quote-lead` skips `persistLead` if Brevo throws on the BREVO-configured branch (S26 found; fix by re-ordering to fire-persist-first).
-- [ ] Fold `pricing/ocr-first/parse.js` into a shared module so the V1 client `extractCardNumber` duplicate at `public/index.html:4105` doesn't drift (S15 hand-off).
-- [ ] `tests/regression/` deferred RG-NNs: RG-11, RG-12, RG-13, RG-16, RG-17, RG-20, RG-27, RG-30 (S26 has effort estimates).
+- [x] Brevo-failure ordering — resolved 2026-05-09. `handleQuoteLead(body, req, deps)` extracted; persist-first contract codified at `apps/server/routes/quote-lead.js:304-308`; 3 regression tests in `tests/regression/quote-lead-brevo-failure.spec.js`.
+- [x] Fold `pricing/ocr-first/parse.js` — resolved 2026-05-09 via drift-detection test `tests/regression/parse-drift.spec.js` (37 cases) instead of source dedup. V1 `extractCardNumber` retained: still load-bearing for the Tesseract live-scan loop; deletion rejected.
+- [x] `tests/regression/` deferred RG-NNs: RG-11, RG-12, RG-13, RG-16, RG-17, RG-20, RG-27, RG-30 — all closed 2026-05-08/09. See `docs/V2_SMOKE_TEST.md` §6.3 for spec-file citations.
 - [ ] OCR-first kill-switch flip — once telemetry confirms FP rate <2% across a meaningful sample.
 - [ ] `READ_FROM_RELATIONAL` flip — once dual-write stable.
+
+### Completed in V2.1 (shipped 2026-05-09)
+
+- ✅ **Image-completion cascade (option 2)** — `resolveImageFallback(card, deps={})` in `pricing/price.js`; resolution order: CARD_DB → game-specific CDN → null; write-through to CARD_DB on CDN hit. 11 regression tests in `tests/regression/image-fallback.spec.js`.
+- ✅ **Lint guard against raw `fetch('/api/...')` calls** — `tests/regression/no-raw-api-fetch.spec.js` (30 file-by-file tests). Guards audit risk R1 with an automated check.
 
 ---
 

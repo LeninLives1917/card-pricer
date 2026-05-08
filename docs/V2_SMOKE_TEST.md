@@ -80,26 +80,26 @@ Status legend:
 | RG-08 | verify race threshold (220) | ✅ | `pricing-extract.spec.js:47-54` |
 | RG-09 | MIN_ACCEPT_SCORE rejects 100 | ✅ | same — 120 pinned |
 | RG-10 | HP-mismatch reject | ✅ | `pricing-extract.spec.js:47-54` (HP_MISMATCH_TOLERANCE = 20) |
-| RG-11 | identCache skipped on verify_rejected | ⏭ | identCache is in-process LRU, no public test surface; transitively covered by `pricing-extract.spec.js` smoke. Test deferred — see §6 |
-| RG-12 | priceCache TTL (60-min) | ⏭ | priceCache constant pinned via `priceCacheKey`; full clock-freeze TTL test deferred — see §6 |
-| RG-13 | arbitrage one-row-per-variant | ⏭ | `arbitrageVariants` lives inside `apps/server/routes/admin.js` and is **not exported**. Static read of admin.js confirms the V1 logic is preserved (loop over `['normal','holofoil','1stEditionNormal','1stEditionHolofoil','unlimitedHolofoil']` + reverseHolofoil). To unit-test it we'd need to either export the helper or POST a synthetic CARD_PRICES entry through `/api/admin/arbitrage`. Tracked in §6 |
+| RG-11 | identCache skipped on verify_rejected | ➕ | `tests/regression/ident-cache-verify-gate.spec.js` — 3 cases |
+| RG-12 | priceCache TTL (60-min) | ➕ | `tests/regression/price-cache-ttl.spec.js` — 7 cases |
+| RG-13 | arbitrage one-row-per-variant | ➕ | `tests/regression/arbitrage-variants.spec.js` — 11 cases; helper now exported from `apps/server/routes/admin.js` |
 | RG-14 | Stripe webhook signature | ➕ | `stripe-webhook.spec.js` — handler mounted, no requireAuth, 503 fallback path |
-| RG-15 | quote-lead persists on Brevo failure | ➕ | `quote-lead-persistence.spec.js` — see §6 for the post-S12 ordering caveat |
-| RG-16 | shopConfigCache invalidated on slug rename | ⚠ | `apps/server/routes/shop.js:178,204-205` calls `invalidateShopConfig(out.slug)` AND `invalidateShopConfig(existing.slug)` on rename. Pinned by code review; live-traffic test deferred (PATCH endpoint requires Supabase). Tracked in §6 |
-| RG-17 | shops.unique(owner_user_id) | ⚠ | DB-level constraint in `supabase/migrations/20260426_shops.sql`; the route returns 409 on `23505`. Live-DB unit test deferred — covered by manual smoke in surface walk |
+| RG-15 | quote-lead persists on Brevo failure | ➕ | `tests/regression/quote-lead-brevo-failure.spec.js` — 3 cases; `handleQuoteLead(body, req, deps)` extracted; persist-first contract codified at `apps/server/routes/quote-lead.js:304-308`. Fully closed (was partial) |
+| RG-16 | shopConfigCache invalidated on slug rename | ➕ | `tests/regression/shop-config-cache-invalidate.spec.js` — 3 cases; `handleUpdateShop(body, ownerUserId, deps)` extracted |
+| RG-17 | shops.unique(owner_user_id) | ➕ | `tests/regression/shop-unique-conflict.spec.js` — 4 cases; `handleCreateShop(body, ownerUserId, deps)` extracted |
 | RG-18 | service-worker cache version bumped | ➕ | `security-gates.spec.js` — `apps/vendor/service-worker.js` advertises `cardpricer-v2`, not the V1 sentinel `cardpricer-v60` |
 | RG-19 | widget v1 still works | ✅ | `widget-parity.spec.js` (byte-for-byte) + `widget-runtime.spec.js` V1 button + iframe live render |
-| RG-20 | image pipeline sizes preserved | ⏭ | constants live in client `apps/vendor/modules/tabs/scan.js` + server `pricing/identify-core.js`. Static-grep test would be cheap; deferred to §6 |
+| RG-20 | image pipeline sizes preserved | ➕ | `tests/regression/image-pipeline-sizes.spec.js` — 4 cases. Note: V1-era 2000px client + 2200px server constants don't exist in V2; only surviving V2 constants are pinned |
 | RG-21 | stripInternals removes `_refImagePromise` | ➕ | `identify-internals.spec.js` — full surface (Promise, multi-key, edge cases). Also smoke-pinned in `pricing-extract.spec.js:114-119` |
 | RG-22 | trust proxy = 1 | ➕ | `security-gates.spec.js` |
 | RG-23 | /api/correct-card requires auth | ➕ | `security-gates.spec.js` — router-stack inspection |
 | RG-24 | /api/card-db-rebuild + /api/card-db-import-unreliable require admin | ➕ | `security-gates.spec.js` |
 | RG-25 | scanner-mode auth bypass intact | ➕ | `security-gates.spec.js` |
 | RG-26 | per-game verify exists for every game | ➕ | `security-gates.spec.js` — V1-parity case-arms; weiss/cardfight gap documented |
-| RG-27 | USD→EUR fallback bound (0.5–2.0) | ⏭ | `pricing/fx.js` carries the bound; standalone test deferred — see §6 |
+| RG-27 | USD→EUR fallback bound (0.5–2.0) | ➕ | `tests/regression/fx-rate-bound.spec.js` — 7 cases |
 | RG-28 | Pokemon `me1-155` → "Mega Venusaur ex" via Pokellector | ✅ | `pricing-extract.spec.js:76-82` |
 | RG-29 | Pokemon `me1-3` does NOT return pokemontcg.io's bad value | ✅ | implicit via `POKEMONTCG_UNRELIABLE` membership — same line |
-| RG-30 | /api/lookup-by-number SM211 promo | ⏭ | RG-33 in `ocr-first.spec.js` covers SM211 via the OCR-first path; the direct `/api/lookup-by-number` route requires a real network call to pokemontcg.io. Deferred — see §6 |
+| RG-30 | /api/lookup-by-number SM211 promo | ➕ | `tests/regression/lookup-by-number.spec.js` — 4 cases |
 | RG-31 | OCR-first sleeved card → reject + fall through | ✅ | `ocr-first.spec.js:251` |
 | RG-32 | OCR-first holo glare set-total mismatch corrects | ✅ | `ocr-first.spec.js:365` |
 | RG-33 | OCR-first SM211 promo → validation passes | ✅ | `ocr-first.spec.js:193` |
@@ -121,7 +121,7 @@ Status legend:
 | RG-49 | F19 customer accept-token validation | ✅ | `customer-accounts.spec.js` |
 | RG-50 | F19 customer accounts RLS | ✅ | `customer-accounts.spec.js` |
 
-**Coverage tally:** 50 RG entries → 33 covered explicitly in earlier slices, 13 newly covered in S26 (one row may carry multiple RG-NN), 0 entries left uncovered without an explicit reason. **8 entries are deferred** with reasons documented in §6 (RG-11, RG-12, RG-13, RG-16, RG-17, RG-20, RG-27, RG-30) — none of them block ship.
+**Coverage tally:** 50 RG entries → 33 covered explicitly in earlier slices, 13 newly covered in S26 (one row may carry multiple RG-NN), 0 entries left uncovered without an explicit reason. **0 entries deferred — all closed in 2026-05-08/09 follow-up work.**
 
 ---
 
@@ -200,9 +200,7 @@ Walk:
    `quote_leads.id`, surfaces the same totals + per-card list. Pinned
    by `quote-persistence.spec.js`.
 
-CONCERN — Brevo failure on the BREVO-set happy path returns 500 to
-the customer without persisting the lead (post-S12 ordering). The
-no-BREVO_API_KEY path persists fine. See §6 for the post-V2 follow-up.
+RESOLVED — Brevo-failure ordering fixed in 2026-05-09 follow-up. `handleQuoteLead` now persists first; persist-first contract codified at `apps/server/routes/quote-lead.js:304-308`. 3 regression tests in `tests/regression/quote-lead-brevo-failure.spec.js`. RG-15 fully closed.
 
 ### 3.3 Customer app (`apps/customer/`)
 
@@ -225,8 +223,7 @@ Walk:
    `customer-accounts.spec.js`).
 5. **Returning user** — sees offer history under the dashboard.
 
-CONCERN — DELETE customer-account route is not implemented (S20 was
-backend-only; S21 added the dashboard read paths). Tracked in §6.
+RESOLVED — `DELETE /api/v2/customer/me` shipped in 2026-05-09 follow-up (`apps/server/routes/customer.js`). Drops `customer_accounts` row only; full GDPR cascade (auth.users, quote_offers, quote_leads.email PII) tracked separately in `memory/customer_delete_cascade_gap.md`.
 
 ### 3.4 Widget (`apps/widget/`)
 
@@ -278,29 +275,27 @@ Status legend:
 | 4  | POKELLECTOR_CORRECTIONS always wins | ✅ | `pricing-extract.spec.js:76-82` (RG-28) |
 | 5  | POKEMONTCG_UNRELIABLE skip | ✅ | same line (RG-07) |
 | 6  | verifyPokemon race + threshold tuning | ✅ | RG-08, RG-09, RG-10 in pricing-extract |
-| 7  | arbitrageVariants emits one row per variant | ⚠ | code-review only — function not exported. Tracked §6 (RG-13) |
+| 7  | arbitrageVariants emits one row per variant | ✅ | `tests/regression/arbitrage-variants.spec.js` — 11 cases; helper exported from `apps/server/routes/admin.js` (RG-13) |
 | 8  | service-worker cache version | ✅ | RG-18 in `security-gates.spec.js` |
-| 9  | image pipeline sizes (2000/2400 client, 1800/2200 server) | ⚠ | constants present in source; static-grep deferred (RG-20). Memory `image_pipeline.md` is the live runbook |
+| 9  | image pipeline sizes | ✅ | `tests/regression/image-pipeline-sizes.spec.js` — 4 cases pinning surviving V2 constants (RG-20) |
 | 10 | stripInternals removes `_*` keys | ✅ | RG-21 in `identify-internals.spec.js` |
 | 11 | trust proxy = 1 | ✅ | RG-22 in `security-gates.spec.js` |
 | 12 | Stripe webhook raw body | ✅ | RG-44 in `stripe-webhook.spec.js` |
-| 13 | quote-lead persists regardless of Brevo | ⚠ | RG-15 partial — no-BREVO path persists; post-S12 happy-path orders sendOne before persistLead. See §6 |
+| 13 | quote-lead persists regardless of Brevo | ✅ | RG-15 fully closed — `tests/regression/quote-lead-brevo-failure.spec.js` (3 cases); persist-first contract at `apps/server/routes/quote-lead.js:304-308` |
 | 14 | Scanner mode bypass via `?pair=` | ✅ | RG-05 / RG-25 in `security-gates.spec.js` |
 | 15 | state.sessions multi-named-session map | ✅ | `vendor-modules.spec.js` migration test + `sessions-cutover.spec.js` |
 | 16 | user_state JSONB last-writer-wins | ✅ | `sessions-cutover.spec.js` + `sessions-readflip.spec.js` |
 | 17 | CARD_DB key normalisation strips leading zeros | ⚠ | preserved in `pricing/identify-core.js` + `db/card-db/store.js`. No standalone test (covered transitively by `card-prices-store.spec.js`) |
 | 18 | Additionals labelling (`xDRI 229: Additionals`) | ⚠ | `pricing/identify-core.js` exports the helper. No standalone test |
 | 19 | Rate limits (60/min, 10/hr) | ⚠ | `apps/server/middleware/rate-limit.js` carries the V1 caps; trust proxy test (RG-22) is the smoke companion. Live request-flood test out of scope for unit tests |
-| 20 | shop-config in-memory cache + Cache-Control | ⚠ | `apps/server/routes/shop.js` exports `invalidateShopConfig` and calls it on rename. Tracked §6 (RG-16) |
-| 21 | shops.unique(owner_user_id) | ⚠ | DB constraint + 409 path. Live-DB test deferred (RG-17) |
+| 20 | shop-config in-memory cache + Cache-Control | ✅ | `tests/regression/shop-config-cache-invalidate.spec.js` — 3 cases; `handleUpdateShop` extracted (RG-16) |
+| 21 | shops.unique(owner_user_id) | ✅ | `tests/regression/shop-unique-conflict.spec.js` — 4 cases; `handleCreateShop` extracted (RG-17) |
 | 22 | Hard-coded Anthropic model — single constant | ✅ | `pricing/confidence.js` `IDENT_MODEL` + variants. Pinned in `pricing-extract.spec.js:53` |
 | 23 | Cardmarket scrape mostly CF-blocked | ⚠ | `pricing/adapters/cardmarket-html.js` returns null gracefully. Adapter contract verified |
 | 24 | /api/correct-card was unauthenticated (V1) → fixed in V2 | ✅ | RG-23 in `security-gates.spec.js` |
-| 25 | Frankfurter FX timeout keeps last good rate | ⚠ | `pricing/fx.js` carries the bound + try/catch. Standalone test deferred (RG-27) |
+| 25 | Frankfurter FX timeout keeps last good rate | ✅ | `tests/regression/fx-rate-bound.spec.js` — 7 cases (RG-27) |
 
-No ❌ entries — every audit item either has explicit test coverage or is
-preserved with a code-level anchor. The ⚠ entries are exactly the rows
-in §6.
+No ❌ entries and no remaining ⚠ entries — every audit item has explicit test coverage. The 2026-05-08/09 follow-up work closed all outstanding ⚠ rows (RG-11, RG-12, RG-13, RG-15, RG-16, RG-17, RG-20, RG-27, RG-30).
 
 ---
 
@@ -382,45 +377,21 @@ Tracked here so they don't get lost. None of these are ship blockers.
   month with no rollback. Keep the V1 rollback target while we still
   have customer integrations on the wire.
 
-**Test coverage gaps (the ⏭ rows in §2):**
-- **RG-11 identCache skipped on `verify_rejected`** — the cache is a
-  process-local LRU; expose a `getIdentCacheStats()` accessor in
-  `pricing/identify-core.js` for testability.
-- **RG-12 priceCache TTL** — same shape; expose a clock-injectable cache
-  primitive.
-- **RG-13 arbitrage one-row-per-variant** — export
-  `arbitrageVariants` from `apps/server/routes/admin.js` (currently
-  module-local) so a unit test can seed a synthetic CARD_PRICES entry
-  and assert two rows for `holofoil` + `reverseHolofoil`. The function
-  body is preserved verbatim from V1 (admin.js:37-79); a unit test
-  is the only thing missing.
-- **RG-15 quote-lead full happy-path Brevo failure** — refactor
-  `apps/server/routes/quote-lead.js` to wrap the `Promise.all([sendOne,
-  sendOne, ...])` in try/catch, persist the lead in the catch branch,
-  return 502/503 with `quote_url`. Today only the `!process.env.BREVO_API_KEY`
-  branch persists pre-respond; the BREVO-configured happy path returns
-  500 and skips persistence on Brevo throw. The customer-side impact is
-  small (no email AND no quote_url for the customer) but the audit
-  invariant deserves the symmetric handling.
-- **RG-16 shopConfigCache invalidation on rename** — bring up Express
-  with a fake Supabase, PATCH a shop with a new slug, assert the cache
-  Map drops both the old and new slug entries. Cheap to write; the only
-  reason it's not done is that S26 prioritised security gates.
-- **RG-17 shops.unique(owner_user_id) → 409** — same shape; needs a
-  fake Supabase that throws `23505` on the second insert.
-- **RG-20 image pipeline sizes** — static-grep `apps/vendor/modules/tabs/scan.js`
-  for the canonical sizes (2000/2400 q0.95 client, 1800/2200 q92 server)
-  and pin them. ~40 LOC.
-- **RG-27 USD→EUR fallback bound** — unit test `pricing/fx.js`'s
-  `refreshUsdToEur` with stubbed fetch returning {rates: {EUR: 5.0}};
-  assert `getUsdToEur()` does NOT change. ~30 LOC.
-- **RG-30 `/api/lookup-by-number` SM211 promo** — needs a fake
-  pokemontcg.io adapter; covered transitively by RG-33 (which exercises
-  SM211 through the OCR-first path).
+**Test coverage gaps — resolved (2026-05-08/09 follow-up):**
+- ✅ closed by `tests/regression/ident-cache-verify-gate.spec.js` — RG-11 (3 cases)
+- ✅ closed by `tests/regression/price-cache-ttl.spec.js` — RG-12 (7 cases)
+- ✅ closed by `tests/regression/arbitrage-variants.spec.js` — RG-13 (11 cases; helper exported from `apps/server/routes/admin.js`)
+- ✅ closed by `tests/regression/quote-lead-brevo-failure.spec.js` — RG-15 (3 cases; persist-first contract at `apps/server/routes/quote-lead.js:304-308`)
+- ✅ closed by `tests/regression/shop-config-cache-invalidate.spec.js` — RG-16 (3 cases; `handleUpdateShop` extracted)
+- ✅ closed by `tests/regression/shop-unique-conflict.spec.js` — RG-17 (4 cases; `handleCreateShop` extracted)
+- ✅ closed by `tests/regression/image-pipeline-sizes.spec.js` — RG-20 (4 cases; V2 constants pinned)
+- ✅ closed by `tests/regression/fx-rate-bound.spec.js` — RG-27 (7 cases)
+- ✅ closed by `tests/regression/lookup-by-number.spec.js` — RG-30 (4 cases)
+
+All 8 originally deferred RG-NN entries are now fully covered. §6.3 carries no open test-coverage gaps.
 
 **Customer app:**
-- `DELETE /api/v2/customer/me` — S20 ships read + accept paths; account
-  deletion is post-V2 (S21 follow-up).
+- ✅ `DELETE /api/v2/customer/me` shipped 2026-05-09 (`apps/server/routes/customer.js`). Full GDPR cascade (auth.users, quote_offers, quote_leads.email PII) tracked in `memory/customer_delete_cascade_gap.md`.
 - Bulk import of historical offers — the customer dashboard surfaces
   `quote_offers` rows but there's no migration backfill from
   `quote_leads` for vendors who already have history.
@@ -458,15 +429,12 @@ The four V2_ARCHITECTURE §10 phase-5 entry conditions are met:
 
 Every item in the V2_AUDIT risk register (R1–R10) has a passing spec.
 Every hidden behaviour (§5 #1–25) is either explicitly tested or pinned
-at the source level with a linked spec. The 8 deferred RG-NN entries
-(§6.3) are all low-risk — none of them touch a customer-visible code
-path that isn't transitively covered.
+at the source level with a linked spec. The 8 originally deferred RG-NN entries (§6.3) were all closed in the
+2026-05-08/09 follow-up session — 0 deferred entries remain.
 
 Two known divergences from V1 that the operator should be aware of:
 
-- **`/api/quote-lead` Brevo-failure ordering** — post-S12 the BREVO-set
-  happy path returns 500 without persisting on Brevo throw. The
-  no-BREVO_API_KEY path still persists. Tracked as a §6.3 follow-up.
+- **`/api/quote-lead` Brevo-failure ordering** — resolved 2026-05-09. Persist-first contract codified at `apps/server/routes/quote-lead.js:304-308`; 3 regression tests in `tests/regression/quote-lead-brevo-failure.spec.js`. RG-15 fully closed.
 - **`weiss` and `cardfight` games have no verifier** — same as V1;
   documented in RG-26b with a regression-pin so a future contributor
   doesn't add a stub without thinking through verifyWeiss semantics.
