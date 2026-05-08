@@ -462,9 +462,10 @@ test('S20: quote-offer router exposes all 5 documented routes', () => {
   assert.ok(findRoute(quoteOfferRouter, 'POST', '/api/v2/quote-offer/:token/decline'), 'POST .../decline');
 });
 
-test('S20: customer router exposes all 4 documented routes', () => {
-  assert.ok(findRoute(customerRouter, 'GET',   '/api/v2/customer/me'),         'GET   /me');
-  assert.ok(findRoute(customerRouter, 'PATCH', '/api/v2/customer/me'),         'PATCH /me');
-  assert.ok(findRoute(customerRouter, 'GET',   '/api/v2/customer/offers'),     'GET   /offers');
-  assert.ok(findRoute(customerRouter, 'POST',  '/api/v2/customer/magic-link'), 'POST  /magic-link');
+test('S20/S21: customer router exposes all 5 documented routes', () => {
+  assert.ok(findRoute(customerRouter, 'GET',    '/api/v2/customer/me'),         'GET    /me');
+  assert.ok(findRoute(customerRouter, 'PATCH',  '/api/v2/customer/me'),         'PATCH  /me');
+  assert.ok(findRoute(customerRouter, 'DELETE', '/api/v2/customer/me'),         'DELETE /me');
+  assert.ok(findRoute(customerRouter, 'GET',    '/api/v2/customer/offers'),     'GET    /offers');
+  assert.ok(findRoute(customerRouter, 'POST',   '/api/v2/customer/magic-link'), 'POST   /magic-link');
 });

@@ -19,6 +19,7 @@ import { requireAuth } from '../middleware/auth.js';
 import {
   getOrCreateCustomerAccount,
   updateCustomerAccount,
+  deleteCustomerAccount,
 } from '../../../db/customers/accounts.js';
 import { getOffersForCustomer } from '../../../db/customers/offers.js';
 
@@ -84,6 +85,28 @@ router.patch('/api/v2/customer/me', requireAuth, async (req, res) => {
   } catch (e) {
     console.error('[CUSTOMER PATCH /me] failed:', e.message);
     res.status(500).json({ error: e.message || 'update failed' });
+  }
+});
+
+// DELETE /api/v2/customer/me — auth required. Deletes the customer_account
+// row for the authenticated user. Hard-deletes from customer_accounts;
+// auth.users cascade is handled at the DB level when the Supabase auth user
+// is later removed. user_id always comes from the JWT — never the body.
+router.delete('/api/v2/customer/me', requireAuth, async (req, res) => {
+  if (!supabase) return res.status(503).json({ error: 'unavailable' });
+  try {
+    const ok = await deleteCustomerAccount(req.user.id, supabase);
+    if (!ok) {
+      // deleteCustomerAccount returns false only on Supabase errors (logged in
+      // db/customers/accounts.js). A non-existent row returns true (idempotent),
+      // so false here means a real backend failure — surface as 5xx.
+      return res.status(500).json({ error: 'delete failed' });
+    }
+    console.log('[CUSTOMER DELETE /me] deleted user_id=%s', req.user.id);
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('[CUSTOMER DELETE /me] failed:', e.message);
+    res.status(500).json({ error: 'delete failed' });
   }
 });
 
