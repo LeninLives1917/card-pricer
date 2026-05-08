@@ -51,31 +51,35 @@ test('RG-15: quote-lead.js declares the persistLead helper that hits quote_leads
   );
   assert.match(
     SRC,
-    /supabase\.from\(\s*['"]quote_leads['"]\s*\)\.insert\(/,
+    /supabase(?:Client)?\.from\(\s*['"]quote_leads['"]\s*\)\.insert\(/,
     'quote-lead.js must insert into quote_leads — that is the audit invariant'
   );
 });
 
 test('RG-15: no-BREVO_API_KEY early-return path persists the lead before responding', () => {
-  // The early-return branch (operator forgot to set BREVO_API_KEY) is
-  // the cleanest "Brevo not reachable" smoke test the audit cares about.
-  // We pin the structure: inside the `if (!process.env.BREVO_API_KEY)`
-  // branch, persistLead is awaited BEFORE res.json fires.
+  // The early-return branch (operator forgot to set BREVO_API_KEY — or the
+  // injected brevoApiKey dep is falsy) is the cleanest "Brevo not reachable"
+  // smoke test the audit cares about. We pin the structure: inside the
+  // `if (!brevoApiKey)` branch, persistLead is awaited BEFORE the return fires.
+  //
+  // NOTE: the handler was refactored (DI extraction) so the guard is now
+  // `if (!brevoApiKey)` (the injected dep) rather than the literal
+  // `if (!process.env.BREVO_API_KEY)`. The semantic invariant is identical.
 
   const branch = SRC.match(
-    /if\s*\(\s*!process\.env\.BREVO_API_KEY\s*\)\s*{([\s\S]*?)\n\s{4}}/
+    /if\s*\(\s*!brevoApiKey\s*\)\s*{([\s\S]*?)\n\s{2}}/
   );
-  assert.ok(branch, 'expected the !BREVO_API_KEY early-return branch in quote-lead.js');
+  assert.ok(branch, 'expected the !brevoApiKey early-return branch in quote-lead.js');
 
   const body = branch[1];
   const persistIdx = body.indexOf('persistLead');
-  const responseIdx = body.indexOf('res.json');
+  const responseIdx = body.indexOf('return {');
   assert.ok(persistIdx >= 0,
     'no-BREVO branch must call persistLead — otherwise leads are dropped when Brevo is not configured');
   assert.ok(responseIdx >= 0,
-    'no-BREVO branch must still respond');
+    'no-BREVO branch must still return a response object');
   assert.ok(persistIdx < responseIdx,
-    'persistLead must be awaited BEFORE res.json — V2_AUDIT §5.13 / R6');
+    'persistLead must be awaited BEFORE return — V2_AUDIT §5.13 / R6');
 });
 
 test('RG-15: quote_leads insert carries the audit-required denormalised fields', () => {
