@@ -21,9 +21,15 @@ import { fetchJustTCGPrice } from './adapters/justtcg.js';
 import { fetchRapidAPICardmarketPrice } from './adapters/tcggo-rapidapi.js';
 import { priceEbaySold } from './adapters/ebay-sold.js';
 import { priceMagicCard } from './adapters/scryfall.js';
-import { pricePokemonCard } from './adapters/pokemontcg.js';
+import { verifyMagic } from './adapters/scryfall.js';
+import { pricePokemonCard, fetchPokemonImageByCdnLookup } from './adapters/pokemontcg.js';
+import { verifyLorcana } from './adapters/lorcana.js';
+import { verifyYuGiOh } from './adapters/ygoprodeck.js';
+import { verifySWU } from './adapters/swu-db.js';
 import { CONDITION_MULTIPLIERS } from './conditions.js';
 import { getUsdToEur } from './fx.js';
+import { resolveSetCode } from './set-aliases.js';
+import { lookupLocalDb, cacheCardResult } from '../apps/server/_card-db-boot.js';
 
 // =============================================================================
 // PRICE CACHE — V1 server.js:4682-4715
@@ -66,6 +72,16 @@ export function priceCacheSet(key, data) {
   priceCache.set(key, { ts: Date.now(), data });
 }
 
+// Exported for regression tests only — not part of the public API.
+export { PRICE_CACHE_TTL_MS };
+export function _testGetEntryTs(key) {
+  return priceCache.get(key)?.ts ?? null;
+}
+export function _testSetEntryTs(key, ts) {
+  const entry = priceCache.get(key);
+  if (entry) priceCache.set(key, { ...entry, ts });
+}
+
 // Re-export per-source helpers so route handlers + the v2 envelope share
 // one import path. Legacy /api/price route imports the V1-shape helpers
 // directly; /api/v2/price assembles via priceCard().
@@ -81,6 +97,79 @@ export {
   getUsdToEur,
   CONDITION_MULTIPLIERS,
 };
+
+/**
+ * resolveImageFallback — server-side image cascade for /api/price responses
+ * where the upstream price source returned no image URL.
+ *
+ * Cascade order:
+ *   1. CARD_DB in-memory lookup (zero cost)
+ *   2. Game-specific CDN lookup
+ *   3. null — client handles gracefully
+ *
+ * On a CDN hit after a CARD_DB miss, writes through to CARD_DB so the next
+ * identical request hits the in-memory path. Fire-and-forget; errors are swallowed.
+ *
+ * @param {object} card  Partial card object with game / set_code / card_number.
+ * @returns {Promise<string|null>}
+ */
+export async function resolveImageFallback(card, deps = {}) {
+  const {
+    lookupLocalDb: _lookupLocalDb = lookupLocalDb,
+    cacheCardResult: _cacheCardResult = cacheCardResult,
+    fetchPokemonImageByCdnLookup: _fetchPokemonImageByCdnLookup = fetchPokemonImageByCdnLookup,
+    verifyMagic: _verifyMagic = verifyMagic,
+    verifyLorcana: _verifyLorcana = verifyLorcana,
+    verifyYuGiOh: _verifyYuGiOh = verifyYuGiOh,
+    verifySWU: _verifySWU = verifySWU,
+    resolveSetCode: _resolveSetCode = resolveSetCode,
+  } = deps;
+
+  const resolved = _resolveSetCode(card.set_code);
+  const setId = resolved?.setId;
+  if (!setId || !card.card_number) return null;
+
+  // 1. CARD_DB — in-memory, zero cost
+  const local = _lookupLocalDb(setId, card.card_number);
+  if (local?.reference_image) return local.reference_image;
+
+  // 2. Game-specific CDN
+  let image = null;
+  try {
+    if (card.game === 'pokemon') {
+      image = await _fetchPokemonImageByCdnLookup(setId, card.card_number);
+    } else if (card.game === 'magic') {
+      image = (await _verifyMagic(card))?.image || null;
+    } else if (card.game === 'lorcana') {
+      image = (await _verifyLorcana(card))?.image || null;
+    } else if (card.game === 'yugioh') {
+      image = (await _verifyYuGiOh(card))?.image || null;
+    } else if (card.game === 'swu') {
+      image = (await _verifySWU(card))?.image || null;
+    }
+  } catch (err) {
+    console.warn('[image-fallback] CDN lookup failed:', err.message);
+    return null;
+  }
+
+  // 3. Write-through to CARD_DB on CDN hit (fire-and-forget)
+  if (image) {
+    try {
+      _cacheCardResult(setId, card.card_number, {
+        name: card.name || '',
+        set_name: card.set_name || '',
+        set_code: card.set_code || setId.toUpperCase(),
+        rarity: card.rarity || '',
+        hp: card.hp || '',
+        reference_image: image,
+        cardmarket_url: card.cardmarket_url || null,
+        tcgplayer_url: card.tcgplayer_url || null,
+      });
+    } catch { /* swallow — write-through is best-effort */ }
+  }
+
+  return image;
+}
 
 /**
  * priceCard — V2 fan-out + source selection. Wraps the legacy fetchers and
@@ -325,6 +414,10 @@ export async function priceCard(verifiedCard, opts = {}) {
 
   pricing.hotness = scoreHotness(pricing, card, bestPrice);
   console.log(`[HOTNESS] ${card.name}: ${pricing.hotness.score}/100 (${pricing.hotness.label}) — ${pricing.hotness.reasons.join('; ') || 'default'}`);
+
+  if (!pricing.reference_image) {
+    pricing.reference_image = await resolveImageFallback(card);
+  }
 
   return pricing;
 }

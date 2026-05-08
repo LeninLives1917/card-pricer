@@ -537,6 +537,31 @@ export async function verifyPokemon(card) {
 }
 
 // =============================================================================
+// fetchPokemonImageByCdnLookup — image-only CDN fetch for the fallback cascade
+// =============================================================================
+
+/**
+ * Lean image-only lookup against pokemontcg.io. Used by the server-side
+ * image-fallback cascade in pricing/price.js when CARD_DB has no image.
+ * Does NOT refactor pricePokemonCard — this is a separate, minimal helper.
+ *
+ * @param {string} setId      pokemontcg.io set ID (e.g. 'sv1')
+ * @param {string} cardNumber card number string (e.g. '45' or '45/198')
+ * @returns {Promise<string|null>}
+ */
+export async function fetchPokemonImageByCdnLookup(setId, cardNumber) {
+  const num = String(cardNumber).replace(/\/.*/, '');
+  const resp = await axios.get('https://api.pokemontcg.io/v2/cards', {
+    params: { q: `number:${num} set.id:${setId}`, pageSize: 5 },
+    timeout: 8000,
+  });
+  const cards = resp.data?.data;
+  if (!cards?.length) return null;
+  const exact = cards.find(c => c.number === num) || cards[0];
+  return exact.images?.large || exact.images?.small || null;
+}
+
+// =============================================================================
 // pricePokemonCard (V1 server.js:4842)
 // =============================================================================
 

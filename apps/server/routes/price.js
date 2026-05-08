@@ -16,7 +16,7 @@ import { pricePokemonCard } from '../../../pricing/adapters/pokemontcg.js';
 import { fetchJustTCGPrice } from '../../../pricing/adapters/justtcg.js';
 import { fetchRapidAPICardmarketPrice } from '../../../pricing/adapters/tcggo-rapidapi.js';
 import { priceEbaySold } from '../../../pricing/adapters/ebay-sold.js';
-import { priceCacheKey, priceCacheGet, priceCacheSet } from '../../../pricing/price.js';
+import { priceCacheKey, priceCacheGet, priceCacheSet, resolveImageFallback } from '../../../pricing/price.js';
 import { getUsdToEur } from '../../../pricing/fx.js';
 
 const router = express.Router();
@@ -309,6 +309,9 @@ async function handlePrice(req, res) {
     pricing.hotness = hotness;
     console.log(`[HOTNESS] ${card.name}: ${hotness.score}/100 (${hotness.label}) — ${hotness.reasons.join('; ') || 'default'}`);
 
+    if (!pricing.reference_image) {
+      pricing.reference_image = await resolveImageFallback(card);
+    }
     priceCacheSet(cacheKey, pricing);
     res.json(pricing);
   } catch (err) {
