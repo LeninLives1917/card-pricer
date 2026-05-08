@@ -158,56 +158,87 @@ router.get('/api/shop', requireAuth, async (req, res) => {
   }
 });
 
-router.post('/api/shop', requireAuth, requirePlan(SHOP_PLANS), async (req, res) => {
-  if (!supabase) return res.status(503).json({ error: 'unavailable' });
-  const { errs, out } = validateShopPayload(req.body, { partial: false });
-  if (errs.length) return res.status(400).json({ error: errs.join('; ') });
+/**
+ * Core handler for POST /api/shop. Exported for unit-testing with injected deps.
+ *
+ * @param {object} body              — req.body fields
+ * @param {string} ownerUserId       — req.user.id (already auth-gated by caller)
+ * @param {object} deps
+ * @param {object|null} deps.supabaseClient — Supabase client (or null)
+ * @returns {{ status: number, body: object }}
+ */
+export async function handleCreateShop(body, ownerUserId, deps = {}) {
+  const { supabaseClient = supabase } = deps;
+  if (!supabaseClient) return { status: 503, body: { error: 'unavailable' } };
+  const { errs, out } = validateShopPayload(body, { partial: false });
+  if (errs.length) return { status: 400, body: { error: errs.join('; ') } };
   try {
-    const { data, error } = await supabase.from('shops').insert({
-      owner_user_id: req.user.id,
+    const { data, error } = await supabaseClient.from('shops').insert({
+      owner_user_id: ownerUserId,
       ...out
     }).select().maybeSingle();
     if (error) {
       if (error.code === '23505') {
         const detail = String(error.message || '').toLowerCase();
-        if (detail.includes('owner_user_id')) return res.status(409).json({ error: 'you already have a shop — use PATCH /api/shop to update' });
-        return res.status(409).json({ error: 'slug already taken' });
+        if (detail.includes('owner_user_id')) return { status: 409, body: { error: 'you already have a shop — use PATCH /api/shop to update' } };
+        return { status: 409, body: { error: 'slug already taken' } };
       }
-      return res.status(400).json({ error: error.message });
+      return { status: 500, body: { error: error.message } };
     }
     invalidateShopConfig(out.slug);
-    res.json(data);
+    return { status: 200, body: data };
   } catch (e) {
     console.error('[POST /api/shop]', e.message);
-    res.status(500).json({ error: 'create failed' });
+    return { status: 500, body: { error: 'create failed' } };
   }
+}
+
+router.post('/api/shop', requireAuth, requirePlan(SHOP_PLANS), async (req, res) => {
+  const { status, body } = await handleCreateShop(req.body, req.user.id);
+  res.status(status).json(body);
 });
 
-router.patch('/api/shop', requireAuth, requirePlan(SHOP_PLANS), async (req, res) => {
-  if (!supabase) return res.status(503).json({ error: 'unavailable' });
-  const { errs, out } = validateShopPayload(req.body, { partial: true });
-  if (errs.length) return res.status(400).json({ error: errs.join('; ') });
-  if (!Object.keys(out).length) return res.status(400).json({ error: 'no fields to update' });
+/**
+ * Core handler for PATCH /api/shop. Exported for unit-testing with injected deps.
+ *
+ * @param {object} body              — req.body fields
+ * @param {string} ownerUserId       — req.user.id (already auth-gated by caller)
+ * @param {object} deps
+ * @param {object|null} deps.supabaseClient       — Supabase client (or null)
+ * @param {function}    deps.invalidateShopConfig — cache-bust fn (injectable for tests)
+ * @returns {{ status: number, body: object }}
+ */
+export async function handleUpdateShop(body, ownerUserId, deps = {}) {
+  const { supabaseClient = supabase, invalidateShopConfig: invalidate = invalidateShopConfig } = deps;
+  if (!supabaseClient) return { status: 503, body: { error: 'unavailable' } };
+  const { errs, out } = validateShopPayload(body, { partial: true });
+  if (errs.length) return { status: 400, body: { error: errs.join('; ') } };
+  if (!Object.keys(out).length) return { status: 400, body: { error: 'no fields to update' } };
   try {
-    const { data: existing } = await supabase.from('shops').select('slug').eq('owner_user_id', req.user.id).maybeSingle();
-    const { data, error } = await supabase
+    const { data: existing } = await supabaseClient.from('shops').select('slug').eq('owner_user_id', ownerUserId).maybeSingle();
+    const { data, error } = await supabaseClient
       .from('shops')
       .update(out)
-      .eq('owner_user_id', req.user.id)
+      .eq('owner_user_id', ownerUserId)
       .select()
       .maybeSingle();
     if (error) {
-      if (error.code === '23505') return res.status(409).json({ error: 'slug already taken' });
-      return res.status(400).json({ error: error.message });
+      if (error.code === '23505') return { status: 409, body: { error: 'slug already taken' } };
+      return { status: 400, body: { error: error.message } };
     }
-    if (!data) return res.status(404).json({ error: 'no shop to update — POST /api/shop first' });
-    if (existing?.slug) invalidateShopConfig(existing.slug);
-    if (data.slug) invalidateShopConfig(data.slug);
-    res.json(data);
+    if (!data) return { status: 404, body: { error: 'no shop to update — POST /api/shop first' } };
+    if (existing?.slug) invalidate(existing.slug);
+    if (data.slug) invalidate(data.slug);
+    return { status: 200, body: data };
   } catch (e) {
     console.error('[PATCH /api/shop]', e.message);
-    res.status(500).json({ error: 'update failed' });
+    return { status: 500, body: { error: 'update failed' } };
   }
+}
+
+router.patch('/api/shop', requireAuth, requirePlan(SHOP_PLANS), async (req, res) => {
+  const { status, body } = await handleUpdateShop(req.body, req.user.id);
+  res.status(status).json(body);
 });
 
 export default router;

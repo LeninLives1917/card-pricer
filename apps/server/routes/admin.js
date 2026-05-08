@@ -34,7 +34,7 @@ const PLAN_MRR = {
 };
 
 // V1 server.js:409-454.
-function arbitrageVariants(entry, usdToEurRate, direction = 'us_to_eu') {
+export function arbitrageVariants(entry, usdToEurRate, direction = 'us_to_eu') {
   if (!entry?.tcg || !entry?.cm) return [];
   const cm = entry.cm;
   const tcg = entry.tcg;

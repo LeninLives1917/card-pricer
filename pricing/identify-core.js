@@ -216,6 +216,13 @@ export function cacheSet(key, val) {
   }
 }
 
+// Test-only accessor — returns true if the cache currently holds an entry for
+// `key` without altering LRU order. Prefixed per the _test convention
+// (see pricing/phash.js __seedIndex / __resetIndex).
+export function _testCacheHas(key) {
+  return identCache.has(key);
+}
+
 // =============================================================================
 // extractImageBuffer — pull raw bytes off either multer file upload OR base64
 // data URL body. Throws Error with .status=400 on bad inputs.
