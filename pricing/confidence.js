@@ -320,3 +320,22 @@ export const SEALED_RECENT_THRESHOLD_HOURS = 24;
 
 /** Threshold (days) above which a sealed quote takes SEALED_STALE_PENALTY. */
 export const SEALED_STALE_THRESHOLD_DAYS = 7;
+
+// =============================================================================
+// PHASH — perceptual-hash card lookup tunables (PR 1)
+// =============================================================================
+
+/**
+ * Maximum Hamming distance (out of 64 bits) at which a pHash index lookup
+ * is considered a match. 8/64 = 12.5% bit difference — safe ceiling for
+ * "same card, different scan" while staying well below "different card" (20+).
+ * See docs/design/phash-lookup.md §"Match threshold".
+ */
+export const PHASH_HAMMING_MAX = 8;
+
+/**
+ * Minimum Sonnet confidence required before writing a new hash → identity
+ * entry into the pHash index. Independent of SEALED_BASE_CONFIDENCE — tuned
+ * separately per docs/design/phash-lookup.md §"Match threshold".
+ */
+export const PHASH_WRITE_MIN = 0.85; // write-through gate — see docs/design/phash-lookup.md §"Match threshold"
