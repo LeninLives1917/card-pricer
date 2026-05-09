@@ -210,20 +210,32 @@ async function main() {
   // Load existing phash index (for skip/resume logic).
   await loadIndex();
 
-  // Build the skip-set from the existing phash file. Keyed by card identity
-  // (set_id-number) regardless of format version — the crawler skips cards
-  // that already have any hash entry so re-runs are resumable.
+  // Build the skip-set from the existing phash file.
+  // v1 format (flat object, no version field): ALL cards must be reprocessed
+  //   for the v2 upgrade (5 variants × 3 hash types = 15 entries per card).
+  // v2 format ({ version:2, phash:{}, dhash:{}, whash:{} }): skip only cards
+  //   that are fully v2 — present in all three hash maps.
   let existingCardIds = new Set();
   if (fs.existsSync(PHASH_FILE)) {
-    const existing = JSON.parse(fs.readFileSync(PHASH_FILE, 'utf8'));
-    // Support v1 (flat object) and v2 ({ version:2, phash:{}, dhash:{}, whash:{} }).
-    const phashEntries = existing.version === 2
-      ? Object.values(existing.phash || {})
-      : Object.values(existing);
-    for (const card of phashEntries) {
-      if (card && card.set_id) existingCardIds.add(`${card.set_id}-${card.number}`);
+    const parsed = JSON.parse(fs.readFileSync(PHASH_FILE, 'utf8'));
+    if (parsed.version === 2) {
+      function identitySetFor(hashMap) {
+        const ids = new Set();
+        for (const card of Object.values(hashMap)) {
+          if (card?.set_id && card?.number) ids.add(`${card.set_id}-${card.number}`);
+        }
+        return ids;
+      }
+      const phashIds = identitySetFor(parsed.phash || {});
+      const dhashIds = identitySetFor(parsed.dhash || {});
+      const whashIds = identitySetFor(parsed.whash || {});
+      // A card is fully v2 only when it appears in all three maps.
+      existingCardIds = new Set([...phashIds].filter(id => dhashIds.has(id) && whashIds.has(id)));
+      console.log(`[phash-crawler] v2 index detected — ${existingCardIds.size} cards already fully v2 (phash+dhash+whash), will skip`);
+    } else {
+      // v1 index: skip-set stays empty; every card gets reprocessed.
+      console.log('[phash-crawler] v1 index detected — all cards will be reprocessed for v2 upgrade');
     }
-    console.log(`[phash-crawler] loaded ${existingCardIds.size} already-hashed cards from ${PHASH_FILE}`);
   }
 
   // Phase 1: fetch card lists from pokemontcg.io (SET_CONCURRENCY in-flight).
