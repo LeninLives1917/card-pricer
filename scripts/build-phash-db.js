@@ -41,6 +41,7 @@ const REPO_ROOT = join(__dirname, '..');
 const CARD_DB_FILE = join(REPO_ROOT, 'data', 'card-db.json');
 const PHASH_FILE = join(REPO_ROOT, 'data', 'card-phashes.json');
 const SKIP_LOG = join(REPO_ROOT, 'data', 'phash-crawler-skipped.log');
+const MARKER_PATH = join(REPO_ROOT, 'data', '.crawl-active');
 
 const SET_CONCURRENCY = 4;    // parallel set-fetch requests against pokemontcg.io
 const IMG_CONCURRENCY = 5;    // parallel image downloads
@@ -161,7 +162,7 @@ const PRESERVED_SOURCES = new Set(['pokellector', 'manual', 'tcggo', 'fallback']
  * the server's _card-db-boot.js never reads a partial write.
  */
 function flushCardDb(cardDbObj) {
-  const json = JSON.stringify(cardDbObj, null, 2);
+  const json = JSON.stringify(cardDbObj);
   const tmpPath = CARD_DB_FILE + '.tmp';
   fs.writeFileSync(tmpPath, json, 'utf8');
   fs.renameSync(tmpPath, CARD_DB_FILE);
@@ -171,7 +172,15 @@ function flushCardDb(cardDbObj) {
 // Main
 // =============================================================================
 
+function removeMarker() {
+  try { fs.unlinkSync(MARKER_PATH); } catch (e) { if (e.code !== 'ENOENT') throw e; }
+}
+
+process.on('SIGINT', () => { removeMarker(); process.exit(130); });
+process.on('SIGTERM', () => { removeMarker(); process.exit(143); });
+
 async function main() {
+  fs.writeFileSync(MARKER_PATH, new Date().toISOString(), 'utf8');
   const startMs = Date.now();
   console.log(`[phash-crawler] starting${isDryRun ? ' (DRY RUN — first set only)' : ''}${API_KEY ? ' [authenticated]' : ' [unauthenticated]'}`);
 
@@ -308,6 +317,7 @@ async function main() {
   // Final flush — pHash index and card-db enrichment.
   await flushNow();
   flushCardDb(cardDbObj);
+  removeMarker();
 
   const elapsedMin = ((Date.now() - startMs) / 60_000).toFixed(1);
   const total = hashed + skipped;
@@ -329,6 +339,7 @@ async function main() {
 }
 
 main().catch(err => {
+  removeMarker();
   console.error('[phash-crawler] FATAL:', err);
   process.exit(1);
 });

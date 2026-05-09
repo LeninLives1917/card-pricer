@@ -1,5 +1,6 @@
 node_modules/
 .env
+data/.crawl-active
 *.log
 npm-debug.log*
 .DS_Store

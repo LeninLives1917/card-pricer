@@ -36,6 +36,7 @@ const REPO_ROOT = join(__dirname, '..', '..');
 
 const CARD_DB_FILE = join(REPO_ROOT, 'data', 'card-db.json');
 const CARD_PRICES_FILE = join(REPO_ROOT, 'data', 'card-prices.json');
+const CRAWL_MARKER = join(REPO_ROOT, 'data', '.crawl-active');
 
 export const CARD_DB = new Map();
 export const CARD_PRICES = new Map();
@@ -220,6 +221,10 @@ export function lookupLocalDb(setId, cardNumber) {
 
 export function saveCardDbToFile() {
   try {
+    if (fs.existsSync(CRAWL_MARKER)) {
+      console.log('[CARD-DB] crawler active — skipping dirty save (will resume after crawl)');
+      return;
+    }
     const dataDir = join(REPO_ROOT, 'data');
     if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
 
