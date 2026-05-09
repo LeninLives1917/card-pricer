@@ -3,6 +3,8 @@
 //
 // Offline crawler — builds data/card-phashes.json by fetching card images
 // directly from pokemontcg.io (NOT from entry.image in card-db.json).
+// Also enriches data/card-db.json with full card metadata from the same API
+// response, so pHash hits resolve to fully-enriched entries on Render.
 //
 // Usage:
 //   node scripts/build-phash-db.js
@@ -14,6 +16,17 @@
 //
 // API key (optional): set POKEMONTCG_API_KEY env var for higher rate limits.
 // Expected runtime: ~40 min for ~20k cards at concurrency 5 (unauthenticated).
+//
+// Source-priority for card-db enrichment:
+//   Overwritten : source === 'sheet' || source === 'pokemontcg' || no entry yet
+//   Preserved   : source === 'pokellector' | 'manual' | 'tcggo' | 'fallback'
+//                 (these are higher-trust manual corrections — never overwrite)
+//
+// Race with server dirty-save: the production server flushes its in-memory
+// CARD_DB to card-db.json every 5 min. This crawler checkpoints every 500
+// hashes (~80 s at observed rate), so crawler writes dominate. The atomic
+// write-to-tmp + rename pattern below guarantees no partial reads by the
+// server's _card-db-boot.js even if a boot coincides with a checkpoint.
 
 import fs from 'fs';
 import { fileURLToPath } from 'url';
@@ -76,7 +89,8 @@ function apiHeaders() {
 
 /**
  * Fetch all cards for a given setId from pokemontcg.io, paginating as needed.
- * Returns an array of { id, imageUrl } objects (imageUrl may be null).
+ * Returns an array of { id, imageUrl, enriched } objects (imageUrl may be null).
+ * enriched is the fully-built card-db entry ready for merging.
  * On non-retryable HTTP error, logs and returns null (caller skips the set).
  */
 async function fetchSetCards(setId) {
@@ -105,13 +119,52 @@ async function fetchSetCards(setId) {
 
     for (const card of body.data ?? []) {
       const imageUrl = card.images?.large || card.images?.small || null;
-      cards.push({ id: card.id, imageUrl });
+      const enriched = buildEnrichedEntry(card);
+      cards.push({ id: card.id, imageUrl, enriched });
     }
 
     page++;
   } while ((page - 1) * PAGE_SIZE < totalCount);
 
   return cards;
+}
+
+/**
+ * Build a card-db entry from a pokemontcg.io API card object.
+ * Uses CDN redirect URLs for cardmarketUrl and tcgplayerUrl (derived from
+ * card.id) — these are identical to card.cardmarket.url / card.tcgplayer.url
+ * but don't require those optional fields to be present in the response.
+ */
+function buildEnrichedEntry(card) {
+  const entry = {
+    name: card.name,
+    setName: card.set?.name || '',
+    setCode: card.set?.ptcgoCode || (card.set?.id || '').toUpperCase(),
+    rarity: card.rarity || '',
+    hp: card.hp || '',
+    supertype: card.supertype || '',
+    subtypes: card.subtypes || [],
+    image: card.images?.large || card.images?.small || '',
+    cardmarketUrl: `https://prices.pokemontcg.io/cardmarket/${card.id}`,
+    tcgplayerUrl: `https://prices.pokemontcg.io/tcgplayer/${card.id}`,
+    source: 'pokemontcg',
+  };
+  return entry;
+}
+
+// Sources that must NOT be overwritten — they represent higher-trust manual
+// corrections (e.g. pokellector entries fix known pokemontcg.io data errors).
+const PRESERVED_SOURCES = new Set(['pokellector', 'manual', 'tcggo', 'fallback']);
+
+/**
+ * Atomically write cardDbObj to CARD_DB_FILE using a tmp-file + rename so
+ * the server's _card-db-boot.js never reads a partial write.
+ */
+function flushCardDb(cardDbObj) {
+  const json = JSON.stringify(cardDbObj, null, 2);
+  const tmpPath = CARD_DB_FILE + '.tmp';
+  fs.writeFileSync(tmpPath, json, 'utf8');
+  fs.renameSync(tmpPath, CARD_DB_FILE);
 }
 
 // =============================================================================
@@ -122,7 +175,7 @@ async function main() {
   const startMs = Date.now();
   console.log(`[phash-crawler] starting${isDryRun ? ' (DRY RUN — first set only)' : ''}${API_KEY ? ' [authenticated]' : ' [unauthenticated]'}`);
 
-  // Load card-db for the set-ID list (we no longer read entry.image from it).
+  // Load card-db: used for set-ID discovery AND as the enrichment target.
   if (!fs.existsSync(CARD_DB_FILE)) {
     console.error(`[phash-crawler] FATAL: ${CARD_DB_FILE} not found`);
     process.exit(1);
@@ -157,10 +210,14 @@ async function main() {
   }
 
   // Phase 1: fetch card lists from pokemontcg.io (SET_CONCURRENCY in-flight).
-  // Build a combined work list of { id, imageUrl } across all sets.
+  // Build a combined work list of { id, imageUrl, enriched } across all sets.
+  // Enrichment happens here — every card returned by the API is merged into
+  // cardDbObj regardless of whether its pHash is already known.
   let workItems = [];
-  const setHashCounts = {};   // setId -> count of hashed cards, for final summary
+  const setHashCounts = {};    // setId -> count of newly hashed cards
+  const setEnrichCounts = {};  // setId -> count of enriched card-db entries
   const fetchedSets = new Set();
+  let totalEnriched = 0;
 
   console.log('[phash-crawler] fetching card lists from pokemontcg.io …');
 
@@ -172,8 +229,17 @@ async function main() {
     }
     fetchedSets.add(setId);
     setHashCounts[setId] = 0;
+    setEnrichCounts[setId] = 0;
 
-    for (const { id, imageUrl } of cards) {
+    for (const { id, imageUrl, enriched } of cards) {
+      // Enrich card-db: preserve higher-trust manual sources, overwrite sheet/pokemontcg.
+      const existing = cardDbObj[id];
+      if (!existing || !PRESERVED_SOURCES.has(existing.source)) {
+        cardDbObj[id] = enriched;
+        setEnrichCounts[setId]++;
+        totalEnriched++;
+      }
+
       if (!imageUrl) {
         logSkip(id, 'no image URL in API response');
         continue;
@@ -231,29 +297,34 @@ async function main() {
 
     if (sinceLastSave >= SAVE_EVERY) {
       await flushNow();
+      flushCardDb(cardDbObj);
       sinceLastSave = 0;
-      console.log(`[phash-crawler] checkpoint: ${hashed} hashed, ${skipped} skipped`);
+      console.log(`[phash-crawler] checkpoint: ${hashed} hashed, ${skipped} skipped, ${totalEnriched} card-db enriched`);
     }
   }
 
   await asyncPool(IMG_CONCURRENCY, workItems, processCard);
 
-  // Final flush
+  // Final flush — pHash index and card-db enrichment.
   await flushNow();
+  flushCardDb(cardDbObj);
 
   const elapsedMin = ((Date.now() - startMs) / 60_000).toFixed(1);
   const total = hashed + skipped;
 
-  // Per-set summary (only sets that had new hashes)
-  const perSetSummary = Object.entries(setHashCounts)
-    .filter(([, n]) => n > 0)
-    .map(([s, n]) => `${s}:${n}`)
+  // Per-set summary (only sets that had new hashes or enrichment)
+  const activeSets = new Set([
+    ...Object.keys(setHashCounts).filter(s => setHashCounts[s] > 0),
+    ...Object.keys(setEnrichCounts).filter(s => setEnrichCounts[s] > 0),
+  ]);
+  const perSetSummary = [...activeSets].sort()
+    .map(s => `${s}: hashes=${setHashCounts[s] ?? 0} enriched=${setEnrichCounts[s] ?? 0}`)
     .join(', ');
 
   console.log(
-    `[phash-crawler] done — hashed: ${hashed}, skipped: ${skipped}, total: ${total}, ` +
-    `sets: ${fetchedSets.size}, elapsed: ${elapsedMin} min` +
-    (perSetSummary ? `\n[phash-crawler] per-set hashes: ${perSetSummary}` : '')
+    `[phash-crawler] done — hashed: ${hashed}, skipped: ${skipped}, ` +
+    `card-db-enriched: ${totalEnriched}, sets: ${fetchedSets.size}, elapsed: ${elapsedMin} min` +
+    (perSetSummary ? `\n[phash-crawler] per-set: ${perSetSummary}` : '')
   );
 }
 

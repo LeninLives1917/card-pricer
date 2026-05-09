@@ -62,7 +62,12 @@ emit `set_id`. `resolveSetCode` converts `set_code → setId` at the write bound
 +    const phashHit = lookupByPhash(phash, PHASH_HAMMING_MAX);
 +    if (phashHit) {
 +      const fullCard = lookupLocalDb(phashHit.card.set_id, phashHit.card.number);
-+      if (fullCard) {
++      // Only return enriched on hit IF CARD_DB has image data. On a fresh
++      // Render persistent disk, CARD_DB entries are sheets-baseline (source:
++      // 'sheet') with reference_image=null. Returning a card without an
++      // image breaks client rendering — fall through to Sonnet so the user
++      // gets a fully-populated card via the existing identify path.
++      if (fullCard && fullCard.reference_image) {
 +        console.log(`[PHASH] HIT distance=${phashHit.distance} set_id=${phashHit.card.set_id} number=${phashHit.card.number}`);
 +        return {
 +          cached: true,
@@ -72,9 +77,14 @@ emit `set_id`. `resolveSetCode` converts `set_code → setId` at the write bound
 +          cacheKey,
 +        };
 +      }
-+      // fullCard is null: CARD_DB doesn't have the entry (rare — index was
-+      // populated from CARD_DB). Fall through to Sonnet.
-+      console.warn(`[PHASH] HIT set_id=${phashHit.card.set_id} number=${phashHit.card.number} but lookupLocalDb returned null — falling through to Sonnet`);
++      // fullCard is null OR fullCard.reference_image is null. Fall through
++      // to Sonnet. The pHash index is correct (the visual fingerprint
++      // matches a known card identity) but we can't enrich without the
++      // CARD_DB image data. The Sonnet path will populate everything,
++      // and the image-cascade write-through (resolveImageFallback in
++      // pricing/price.js) will then fill in CARD_DB.image so future
++      // pHash hits on this card return enriched cleanly.
++      console.warn(`[PHASH] HIT set_id=${phashHit.card.set_id} number=${phashHit.card.number} but lookupLocalDb has no image — falling through to Sonnet`);
 +    }
 +  }
 +
