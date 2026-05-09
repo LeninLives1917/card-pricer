@@ -1,19 +1,19 @@
 #!/usr/bin/env node
 // scripts/build-phash-db.js
 //
-// Offline crawler — builds data/card-phashes.json by fetching each card's
-// reference image from card-db.json and computing its pHash.
+// Offline crawler — builds data/card-phashes.json by fetching card images
+// directly from pokemontcg.io (NOT from entry.image in card-db.json).
 //
 // Usage:
 //   node scripts/build-phash-db.js
-//   node scripts/build-phash-db.js --dry-run   # first 50 cards only
+//   node scripts/build-phash-db.js --dry-run   # first set only (alphabetical)
 //
 // Resumable: cards already present in card-phashes.json are skipped.
 // Writes incrementally every 500 successful hashes.
 // Errors logged to data/phash-crawler-skipped.log — run continues.
 //
-// Expected runtime: ~40 min for ~20k cards at concurrency 5.
-// Render-shell smoke test: use --dry-run (50 cards, ~30 s).
+// API key (optional): set POKEMONTCG_API_KEY env var for higher rate limits.
+// Expected runtime: ~40 min for ~20k cards at concurrency 5 (unauthenticated).
 
 import fs from 'fs';
 import { fileURLToPath } from 'url';
@@ -29,19 +29,20 @@ const CARD_DB_FILE = join(REPO_ROOT, 'data', 'card-db.json');
 const PHASH_FILE = join(REPO_ROOT, 'data', 'card-phashes.json');
 const SKIP_LOG = join(REPO_ROOT, 'data', 'phash-crawler-skipped.log');
 
-const CONCURRENCY = 5;
+const SET_CONCURRENCY = 4;    // parallel set-fetch requests against pokemontcg.io
+const IMG_CONCURRENCY = 5;    // parallel image downloads
 const SAVE_EVERY = 500;
 const FETCH_TIMEOUT_MS = 10_000;
-const DRY_RUN_LIMIT = 50;
+const POKEMONTCG_BASE = 'https://api.pokemontcg.io/v2';
+const PAGE_SIZE = 250;
 
 const isDryRun = process.argv.includes('--dry-run');
+const API_KEY = process.env.POKEMONTCG_API_KEY || null;
 
 // =============================================================================
 // Minimal async pool — hand-rolled, no p-limit dep
 // =============================================================================
 
-// Runs `taskFn` over each item in `items` with at most `concurrency` tasks
-// in-flight. taskFn must return a Promise.
 async function asyncPool(concurrency, items, taskFn) {
   const inFlight = new Set();
   for (const item of items) {
@@ -64,64 +65,140 @@ function logSkip(key, reason) {
 }
 
 // =============================================================================
+// pokemontcg.io helpers
+// =============================================================================
+
+function apiHeaders() {
+  const h = { 'Accept': 'application/json' };
+  if (API_KEY) h['X-Api-Key'] = API_KEY;
+  return h;
+}
+
+/**
+ * Fetch all cards for a given setId from pokemontcg.io, paginating as needed.
+ * Returns an array of { id, imageUrl } objects (imageUrl may be null).
+ * On non-retryable HTTP error, logs and returns null (caller skips the set).
+ */
+async function fetchSetCards(setId) {
+  const cards = [];
+  let page = 1;
+  let totalCount = null;
+
+  do {
+    const url = `${POKEMONTCG_BASE}/cards?q=set.id:${encodeURIComponent(setId)}&pageSize=${PAGE_SIZE}&page=${page}`;
+    let resp;
+    try {
+      resp = await axios.get(url, {
+        headers: apiHeaders(),
+        timeout: FETCH_TIMEOUT_MS,
+        maxRedirects: 5,
+      });
+    } catch (err) {
+      const status = err.response ? err.response.status : null;
+      const reason = status ? `HTTP ${status}` : err.message;
+      logSkip(`set:${setId}`, `page ${page} fetch failed — ${reason}`);
+      return null;
+    }
+
+    const body = resp.data;
+    if (totalCount === null) totalCount = body.totalCount ?? 0;
+
+    for (const card of body.data ?? []) {
+      const imageUrl = card.images?.large || card.images?.small || null;
+      cards.push({ id: card.id, imageUrl });
+    }
+
+    page++;
+  } while ((page - 1) * PAGE_SIZE < totalCount);
+
+  return cards;
+}
+
+// =============================================================================
 // Main
 // =============================================================================
 
 async function main() {
   const startMs = Date.now();
-  console.log(`[phash-crawler] starting${isDryRun ? ' (DRY RUN — first 50 cards)' : ''}`);
+  console.log(`[phash-crawler] starting${isDryRun ? ' (DRY RUN — first set only)' : ''}${API_KEY ? ' [authenticated]' : ' [unauthenticated]'}`);
 
-  // Load existing card-db
+  // Load card-db for the set-ID list (we no longer read entry.image from it).
   if (!fs.existsSync(CARD_DB_FILE)) {
     console.error(`[phash-crawler] FATAL: ${CARD_DB_FILE} not found`);
     process.exit(1);
   }
-  const cardDbRaw = fs.readFileSync(CARD_DB_FILE, 'utf8');
-  const cardDbObj = JSON.parse(cardDbRaw);
+  const cardDbObj = JSON.parse(fs.readFileSync(CARD_DB_FILE, 'utf8'));
+
+  // Discover unique set IDs from card-db keys.
+  // Key shape is always "<setId>-<number>" with exactly one hyphen group
+  // (verified: no number field contains a hyphen). Split on LAST hyphen.
+  const allSetIds = [...new Set(
+    Object.keys(cardDbObj).map(k => k.slice(0, k.lastIndexOf('-')))
+  )].sort();
+
+  let setIds = allSetIds;
+  if (isDryRun) {
+    setIds = allSetIds.slice(0, 1);
+    console.log(`[phash-crawler] dry-run: processing set "${setIds[0]}" only`);
+  } else {
+    console.log(`[phash-crawler] ${setIds.length} unique sets discovered`);
+  }
 
   // Load existing phash index (for skip/resume logic).
-  // loadIndex() reads PHASH_FILE into the module's internal _index Map.
   await loadIndex();
 
-  // Build the already-done set from the file directly (hex keys).
-  let existingHexKeys = new Set();
+  let existingCardIds = new Set();
   if (fs.existsSync(PHASH_FILE)) {
     const existing = JSON.parse(fs.readFileSync(PHASH_FILE, 'utf8'));
-    // We key the skip-set by card identity (set_id-number) not hash, so
-    // we can skip even when the same card appears under a different framing.
     for (const card of Object.values(existing)) {
-      existingHexKeys.add(`${card.set_id}-${card.number}`);
+      existingCardIds.add(`${card.set_id}-${card.number}`);
     }
-    console.log(`[phash-crawler] loaded ${existingHexKeys.size} already-hashed cards from ${PHASH_FILE}`);
+    console.log(`[phash-crawler] loaded ${existingCardIds.size} already-hashed cards from ${PHASH_FILE}`);
   }
 
-  // Collect work items: entries with an image URL, not yet in the index.
-  let allEntries = Object.entries(cardDbObj)
-    .filter(([, entry]) => !!entry.image)
-    .filter(([key]) => !existingHexKeys.has(key));
+  // Phase 1: fetch card lists from pokemontcg.io (SET_CONCURRENCY in-flight).
+  // Build a combined work list of { id, imageUrl } across all sets.
+  let workItems = [];
+  const setHashCounts = {};   // setId -> count of hashed cards, for final summary
+  const fetchedSets = new Set();
 
-  if (isDryRun) {
-    allEntries = allEntries.slice(0, DRY_RUN_LIMIT);
-    console.log(`[phash-crawler] dry-run: processing ${allEntries.length} cards`);
-  } else {
-    console.log(`[phash-crawler] ${allEntries.length} cards to hash`);
-  }
+  console.log('[phash-crawler] fetching card lists from pokemontcg.io …');
 
+  await asyncPool(SET_CONCURRENCY, setIds, async (setId) => {
+    const cards = await fetchSetCards(setId);
+    if (cards === null) {
+      logSkip(`set:${setId}`, 'skipping entire set due to fetch error');
+      return;
+    }
+    fetchedSets.add(setId);
+    setHashCounts[setId] = 0;
+
+    for (const { id, imageUrl } of cards) {
+      if (!imageUrl) {
+        logSkip(id, 'no image URL in API response');
+        continue;
+      }
+      if (existingCardIds.has(id)) continue;   // already hashed — resume skip
+      workItems.push({ id, imageUrl });
+    }
+  });
+
+  console.log(`[phash-crawler] ${workItems.length} cards to hash across ${fetchedSets.size} sets`);
+
+  // Phase 2: download + hash images (IMG_CONCURRENCY in-flight).
   let hashed = 0;
   let skipped = 0;
   let sinceLastSave = 0;
 
-  // In-memory accumulator for the new hashes (separate from the module's _index
-  // which already contains the pre-existing ones).  We write via flushNow() so
-  // the module's _index state is authoritative on disk.
-  async function processEntry([key, entry]) {
-    const [setId, ...numParts] = key.split('-');
-    const number = numParts.join('-');
-    const url = entry.image;
+  async function processCard({ id, imageUrl }) {
+    // Split on LAST hyphen: "sv1-123" → setId="sv1", number="123"
+    const lastDash = id.lastIndexOf('-');
+    const setId = id.slice(0, lastDash);
+    const number = id.slice(lastDash + 1);
 
     let imgBuffer;
     try {
-      const resp = await axios.get(url, {
+      const resp = await axios.get(imageUrl, {
         responseType: 'arraybuffer',
         timeout: FETCH_TIMEOUT_MS,
         maxRedirects: 5,
@@ -132,7 +209,7 @@ async function main() {
       imgBuffer = Buffer.from(resp.data);
     } catch (err) {
       const reason = err.response ? `HTTP ${err.response.status}` : err.message;
-      logSkip(key, reason);
+      logSkip(id, reason);
       skipped++;
       return;
     }
@@ -141,18 +218,16 @@ async function main() {
     try {
       hash = await computePhash(imgBuffer);
     } catch (err) {
-      logSkip(key, `computePhash failed: ${err.message}`);
+      logSkip(id, `computePhash failed: ${err.message}`);
       skipped++;
       return;
     }
 
-    // addToIndex manages the debounce timer; flushNow() overrides it at
-    // our own cadence (every SAVE_EVERY cards) so the crawler controls
-    // when the 2 MB disk write happens rather than the 5 s idle timer.
     await addToIndex(hash, { set_id: setId, number });
 
     hashed++;
     sinceLastSave++;
+    if (setHashCounts[setId] !== undefined) setHashCounts[setId]++;
 
     if (sinceLastSave >= SAVE_EVERY) {
       await flushNow();
@@ -161,14 +236,25 @@ async function main() {
     }
   }
 
-  await asyncPool(CONCURRENCY, allEntries, processEntry);
+  await asyncPool(IMG_CONCURRENCY, workItems, processCard);
 
   // Final flush
   await flushNow();
 
   const elapsedMin = ((Date.now() - startMs) / 60_000).toFixed(1);
   const total = hashed + skipped;
-  console.log(`[phash-crawler] done — hashed: ${hashed}, skipped: ${skipped}, total: ${total}, elapsed: ${elapsedMin} min`);
+
+  // Per-set summary (only sets that had new hashes)
+  const perSetSummary = Object.entries(setHashCounts)
+    .filter(([, n]) => n > 0)
+    .map(([s, n]) => `${s}:${n}`)
+    .join(', ');
+
+  console.log(
+    `[phash-crawler] done — hashed: ${hashed}, skipped: ${skipped}, total: ${total}, ` +
+    `sets: ${fetchedSets.size}, elapsed: ${elapsedMin} min` +
+    (perSetSummary ? `\n[phash-crawler] per-set hashes: ${perSetSummary}` : '')
+  );
 }
 
 main().catch(err => {
