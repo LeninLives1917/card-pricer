@@ -317,7 +317,9 @@ async function main() {
   // Final flush — pHash index and card-db enrichment.
   await flushNow();
   flushCardDb(cardDbObj);
-  removeMarker();
+  // Marker intentionally NOT removed on success. The marker means "dirty-save
+  // paused, awaiting operator restart." Only a server boot clears it (proving
+  // the restart happened). SIGINT/SIGTERM/error paths still call removeMarker().
 
   const elapsedMin = ((Date.now() - startMs) / 60_000).toFixed(1);
   const total = hashed + skipped;
@@ -336,6 +338,8 @@ async function main() {
     `card-db-enriched: ${totalEnriched}, sets: ${fetchedSets.size}, elapsed: ${elapsedMin} min` +
     (perSetSummary ? `\n[phash-crawler] per-set: ${perSetSummary}` : '')
   );
+  console.log('[phash-crawler] marker data/.crawl-active LEFT IN PLACE — server\'s dirty-save will remain paused until you restart Render.');
+  console.log('[phash-crawler] NEXT: Render dashboard → Manual Deploy → Deploy Latest Commit. The server\'s boot will load the enriched card-db.json and clear the marker.');
 }
 
 main().catch(err => {

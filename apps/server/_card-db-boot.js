@@ -734,6 +734,13 @@ async function loadPriceDbFromPostgres() {
 }
 
 export async function initCardDb() {
+  // Boot signals operator-initiated restart — clear any leftover crawler marker
+  // so dirty-save can resume normally. If the crawler is somehow still running
+  // (mid-write at restart time), the marker absence allows a save race; that
+  // race is acceptable since restarts are operator-initiated and the crawler
+  // would just need to be re-run.
+  try { fs.unlinkSync(CRAWL_MARKER); console.log('[CARD-DB] cleared stale crawl marker'); } catch { /* ENOENT — marker not present, normal */ }
+
   const fromSheet = await loadCardDbFromSheet();
   if (!fromSheet) {
     const fromFile = loadCardDbFromFile();
