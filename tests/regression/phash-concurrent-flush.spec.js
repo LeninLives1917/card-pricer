@@ -108,6 +108,9 @@ describe('phash concurrent flush regression', { concurrency: 1 }, () => {
     assert.doesNotThrow(() => { parsed = JSON.parse(raw); }, 'disk file is not valid JSON');
     assert.strictEqual(typeof parsed, 'object', 'parsed result should be an object');
     assert.notStrictEqual(parsed, null);
+    // v2 format: must have a version field and a phash sub-object.
+    assert.strictEqual(parsed.version, 2, 'expected v2 format on disk');
+    assert.strictEqual(typeof parsed.phash, 'object', 'expected phash sub-object');
 
     cleanFiles();
   });
@@ -137,13 +140,16 @@ describe('phash concurrent flush regression', { concurrency: 1 }, () => {
     const raw    = fs.readFileSync(PHASH_FILE, 'utf8');
     const parsed = JSON.parse(raw);
 
+    // v2 format: entries live under parsed.phash (legacy bigint form → phash only).
+    const phashEntries = parsed.version === 2 ? parsed.phash : parsed;
+
     for (const [hexKey, expectedCard] of expected) {
       assert.ok(
-        Object.prototype.hasOwnProperty.call(parsed, hexKey),
+        Object.prototype.hasOwnProperty.call(phashEntries, hexKey),
         `entry ${hexKey} missing from disk after concurrent flush`,
       );
       assert.deepStrictEqual(
-        parsed[hexKey],
+        phashEntries[hexKey],
         expectedCard,
         `entry ${hexKey} has wrong value on disk`,
       );

@@ -8,16 +8,29 @@
 //   - apps/server/server.js — loadIndex() called once at boot (PR 2)
 //   - pricing/identify-core.js — addToIndex() called post-Sonnet (PR 2)
 //
-// Algorithm: DCT-based pHash
-//   1. Resize to 32×32 greyscale via Sharp.
-//   2. 2D DCT-II over the 32×32 pixel matrix (row-wise then column-wise).
-//   3. Take top-left 8×8 low-frequency block; compute median excluding [0,0]
-//      (DC term dropped to reduce brightness bias — see design §Algorithm).
-//   4. Threshold each of the 64 coefficients against median → 1 bit.
-//   5. Pack into a 64-bit BigInt (bit i = row*8+col, LSB-first).
+// Algorithms:
+//   pHash — DCT-based (original implementation)
+//   dHash — gradient/difference hash (9×8 greyscale → column differences)
+//   wHash — wavelet-based (32×32 → 2D Haar → top-left 8×8 block threshold)
 //
-// Storage: BigInt stored on disk as 16-char zero-padded lowercase hex string.
-// Format: { "<hex16>": { "set_id": "sv1", "number": "23" }, ... }
+// Auto-crop: cropToCard() uses Sharp .trim() + 5% inset to strip uniform
+// borders before hashing. This is the "simpler" approach per the design brief
+// (Sharp.trim heuristic chosen over full edge detection to stay under the
+// 150 LOC complexity ceiling). On detection failure the original buffer is
+// returned unchanged.
+//
+// Storage shape (v2):
+//   {
+//     "version": 2,
+//     "phash": { "<hex16>": { "set_id": "sv1", "number": "1" }, ... },
+//     "dhash": { "<hex16>": { ... }, ... },
+//     "whash": { "<hex16>": { ... }, ... }
+//   }
+//
+// Backward compat: v1 files (flat object, no "version" key) are loaded into
+// _phashIndex only. dhash and whash indexes start empty in that case.
+//
+// BigInt hex strings are always 16-char zero-padded lowercase.
 
 import fs from 'fs';
 import { fileURLToPath } from 'url';
@@ -29,8 +42,10 @@ const __dirname = dirname(__filename);
 const REPO_ROOT = join(__dirname, '..');
 const PHASH_FILE = join(REPO_ROOT, 'data', 'card-phashes.json');
 
-// In-memory index: Map<bigint, { set_id, number }>
-const _index = new Map();
+// In-memory indexes: Map<bigint, { set_id, number }>
+const _phashIndex = new Map();
+const _dhashIndex = new Map();
+const _whashIndex = new Map();
 
 // Debounced-write state
 let _writeTimer = null;
@@ -43,7 +58,7 @@ let _flushPromise = null;   // the single in-flight flush; null when idle
 let _flushQueued  = false;  // a second flush was requested while one is in-flight
 
 // =============================================================================
-// DCT-II helpers
+// DCT-II helpers (pHash)
 // =============================================================================
 
 // 1D DCT-II of length N over array x (in-place on a new Float64Array).
@@ -88,11 +103,103 @@ function dct2d(pixels, N) {
 }
 
 // =============================================================================
+// Haar wavelet helpers (wHash)
+// =============================================================================
+
+// One level of 1D Haar transform in-place over an even-length sub-array.
+// Replaces pairs (a, b) with ((a+b)/2, (a-b)/2).
+function haarLevel1d(arr, len) {
+  const half = len >> 1;
+  const tmp = new Float64Array(len);
+  for (let i = 0; i < half; i++) {
+    tmp[i]        = (arr[2 * i] + arr[2 * i + 1]) / 2;
+    tmp[half + i] = (arr[2 * i] - arr[2 * i + 1]) / 2;
+  }
+  for (let i = 0; i < len; i++) arr[i] = tmp[i];
+}
+
+// 2D Haar wavelet transform (one level row-wise then column-wise) on an N×N
+// flat Float64Array. N must be a power of 2.
+function haar2d(pixels, N) {
+  const data = new Float64Array(pixels);
+
+  // Row-wise
+  const row = new Float64Array(N);
+  for (let r = 0; r < N; r++) {
+    for (let c = 0; c < N; c++) row[c] = data[r * N + c];
+    haarLevel1d(row, N);
+    for (let c = 0; c < N; c++) data[r * N + c] = row[c];
+  }
+
+  // Column-wise
+  const col = new Float64Array(N);
+  for (let c = 0; c < N; c++) {
+    for (let r = 0; r < N; r++) col[r] = data[r * N + c];
+    haarLevel1d(col, N);
+    for (let r = 0; r < N; r++) data[r * N + c] = col[r];
+  }
+
+  return data;
+}
+
+// =============================================================================
+// cropToCard
+// =============================================================================
+
+/**
+ * Crop a phone photo to the card boundaries using Sharp's trim heuristic
+ * (remove uniform-colour borders) followed by a 5% inset crop to eliminate
+ * any remaining near-uniform fringe. Returns a Buffer normalised to the
+ * standard card aspect ratio (600×840).
+ *
+ * Approach chosen: Sharp .trim() + 5% inset (the "simpler" path from the
+ * design brief). Stays well under the 150 LOC edge-detection ceiling.
+ *
+ * On any failure (no trimmable border, Sharp error, etc.) the original buffer
+ * is returned unchanged so the caller can still hash the raw photo.
+ *
+ * @param {Buffer} buffer  Raw image bytes.
+ * @returns {Promise<Buffer>}
+ */
+export async function cropToCard(buffer) {
+  try {
+    // Step 1: trim uniform borders (threshold 30 = allow ≤30/255 luminance
+    // variance at the edge). background defaults to top-left pixel colour.
+    const trimmed = await sharp(buffer)
+      .trim({ threshold: 30 })
+      .toBuffer({ resolveWithObject: true });
+
+    const { data: trimBuf, info } = trimmed;
+    const { width, height } = info;
+
+    if (!width || !height) return buffer; // degenerate — return original
+
+    // Step 2: 5% inset crop to strip any near-uniform fringe the trim missed.
+    const insetX = Math.max(1, Math.round(width  * 0.05));
+    const insetY = Math.max(1, Math.round(height * 0.05));
+    const cropW  = Math.max(1, width  - insetX * 2);
+    const cropH  = Math.max(1, height - insetY * 2);
+
+    // Step 3: resize to standard card dimensions (standard Pokémon card ratio
+    // ≈ 63mm × 88mm → 600×840 px). Using 'fill' matches CDN reference images.
+    const result = await sharp(trimBuf)
+      .extract({ left: insetX, top: insetY, width: cropW, height: cropH })
+      .resize(600, 840, { fit: 'fill' })
+      .toBuffer();
+
+    return result;
+  } catch {
+    // Any Sharp error — return original buffer unchanged.
+    return buffer;
+  }
+}
+
+// =============================================================================
 // computePhash
 // =============================================================================
 
 /**
- * Compute a 64-bit perceptual hash for the given image buffer.
+ * Compute a 64-bit perceptual hash (DCT-based) for the given image buffer.
  *
  * @param {Buffer} buffer  Raw image bytes (any format Sharp can decode).
  * @returns {Promise<bigint>}
@@ -127,7 +234,103 @@ export async function computePhash(buffer) {
     : ac[mid];
 
   // Pack 64 bits: bit i = (block[i] > median) ? 1 : 0, stored LSB-first.
-  // Bit order: i = row*8 + col, where row and col are 0-indexed in the 8×8 block.
+  let hash = 0n;
+  for (let i = 0; i < 64; i++) {
+    if (block[i] > median) hash |= (1n << BigInt(i));
+  }
+
+  return hash;
+}
+
+// =============================================================================
+// computeDhash
+// =============================================================================
+
+/**
+ * Compute a 64-bit difference hash (gradient hash) for the given image buffer.
+ *
+ * Algorithm:
+ *   1. Resize to 9×8 greyscale (9 wide so we have 8 column-differences per row).
+ *   2. For each of the 8 rows, bit i = (pixel[col i] > pixel[col i+1]) ? 1 : 0.
+ *   3. Pack 64 bits (8 rows × 8 bits) into a BigInt, LSB-first.
+ *
+ * dHash is robust to lighting changes (it is differential, so brightness
+ * offset cancels out).
+ *
+ * @param {Buffer} buffer  Raw image bytes.
+ * @returns {Promise<bigint>}
+ */
+export async function computeDhash(buffer) {
+  const raw = await sharp(buffer)
+    .resize(9, 8, { fit: 'fill' })
+    .greyscale()
+    .raw()
+    .toBuffer();
+
+  // raw is 9×8 = 72 bytes, row-major.
+  let hash = 0n;
+  let bit = 0;
+  for (let r = 0; r < 8; r++) {
+    for (let c = 0; c < 8; c++) {
+      if (raw[r * 9 + c] > raw[r * 9 + c + 1]) {
+        hash |= (1n << BigInt(bit));
+      }
+      bit++;
+    }
+  }
+
+  return hash;
+}
+
+// =============================================================================
+// computeWhash
+// =============================================================================
+
+/**
+ * Compute a 64-bit wavelet hash (Haar-based) for the given image buffer.
+ *
+ * Algorithm:
+ *   1. Resize to 32×32 greyscale.
+ *   2. Apply one level of 2D Haar wavelet transform.
+ *   3. Extract top-left 8×8 block (LL sub-band — lowest frequency).
+ *   4. Compute median of the 64 values.
+ *   5. Threshold each coefficient against median → 1 bit.
+ *   6. Pack 64 bits into a BigInt, LSB-first.
+ *
+ * wHash is robust to noise (wavelet smooths high-frequency noise before
+ * thresholding) while retaining spatial-frequency sensitivity similar to pHash.
+ *
+ * @param {Buffer} buffer  Raw image bytes.
+ * @returns {Promise<bigint>}
+ */
+export async function computeWhash(buffer) {
+  const raw = await sharp(buffer)
+    .resize(32, 32, { fit: 'fill' })
+    .greyscale()
+    .raw()
+    .toBuffer();
+
+  const pixels = new Float64Array(raw.length);
+  for (let i = 0; i < raw.length; i++) pixels[i] = raw[i];
+
+  const wavelet = haar2d(pixels, 32);
+
+  // Extract top-left 8×8 LL sub-band.
+  const block = new Float64Array(64);
+  for (let r = 0; r < 8; r++) {
+    for (let c = 0; c < 8; c++) {
+      block[r * 8 + c] = wavelet[r * 32 + c];
+    }
+  }
+
+  // Median of all 64 values (unlike pHash we keep [0,0] — the DC term in the
+  // wavelet domain is the global mean scaled by level, not a dominating outlier).
+  const sorted = block.slice().sort();
+  const mid = Math.floor(sorted.length / 2);
+  const median = sorted.length % 2 === 0
+    ? (sorted[mid - 1] + sorted[mid]) / 2
+    : sorted[mid];
+
   let hash = 0n;
   for (let i = 0; i < 64; i++) {
     if (block[i] > median) hash |= (1n << BigInt(i));
@@ -151,11 +354,12 @@ function hammingDistance(a, b) {
 }
 
 // =============================================================================
-// lookupByPhash
+// lookupByPhash — preserved for backward compat (queries _phashIndex only)
 // =============================================================================
 
 /**
- * Linear scan of _index; returns the closest entry within threshold.
+ * Linear scan of _phashIndex; returns the closest entry within threshold.
+ * Preserved for backward compatibility — prefer lookupByHashes for new callers.
  *
  * @param {bigint} hash
  * @param {number} threshold  Maximum Hamming distance to accept (inclusive).
@@ -165,7 +369,7 @@ export function lookupByPhash(hash, threshold) {
   let best = null;
   let bestDist = threshold + 1;
 
-  for (const [key, card] of _index) {
+  for (const [key, card] of _phashIndex) {
     const dist = hammingDistance(hash, key);
     if (dist <= threshold && dist < bestDist) {
       best = card;
@@ -177,13 +381,94 @@ export function lookupByPhash(hash, threshold) {
 }
 
 // =============================================================================
+// lookupByHashes — queries all three indexes, returns best match across all
+// =============================================================================
+
+/**
+ * Query all three indexes (phash, dhash, whash) and return the best match
+ * across all, or null if none clears the threshold.
+ *
+ * Each hash type is queried independently. The global winner is the entry
+ * with the smallest Hamming distance across all three index results.
+ *
+ * @param {{ phash: bigint, dhash: bigint, whash: bigint }} hashes
+ * @param {number} threshold  Maximum Hamming distance (inclusive) for each type.
+ * @returns {{ card: { set_id: string, number: string }, distance: number, hashType: string } | null}
+ */
+export function lookupByHashes(hashes, threshold) {
+  let best = null;
+  let bestDist = threshold + 1;
+  let bestType = null;
+
+  const checks = [
+    { index: _phashIndex, hash: hashes.phash, type: 'phash' },
+    { index: _dhashIndex, hash: hashes.dhash, type: 'dhash' },
+    { index: _whashIndex, hash: hashes.whash, type: 'whash' },
+  ];
+
+  for (const { index, hash, type } of checks) {
+    if (hash == null) continue;
+    for (const [key, card] of index) {
+      const dist = hammingDistance(hash, key);
+      if (dist <= threshold && dist < bestDist) {
+        best = card;
+        bestDist = dist;
+        bestType = type;
+      }
+    }
+  }
+
+  return best ? { card: best, distance: bestDist, hashType: bestType } : null;
+}
+
+// =============================================================================
+// addToIndex
+// =============================================================================
+
+/**
+ * Add hash → card mapping(s) to the appropriate in-memory indexes and schedule
+ * a debounced disk write.
+ *
+ * Accepts either:
+ *   - A plain bigint (legacy single-hash form; added to _phashIndex only)
+ *   - An object { phash?, dhash?, whash? } (adds each provided hash to its index)
+ *
+ * @param {bigint | { phash?: bigint, dhash?: bigint, whash?: bigint }} hashes
+ * @param {{ set_id: string, number: string }} card
+ * @returns {Promise<void>}
+ */
+export async function addToIndex(hashes, card) {
+  if (typeof hashes === 'bigint') {
+    // Legacy single-hash call — add to phash index only.
+    _phashIndex.set(hashes, card);
+  } else {
+    if (hashes.phash != null) _phashIndex.set(hashes.phash, card);
+    if (hashes.dhash != null) _dhashIndex.set(hashes.dhash, card);
+    if (hashes.whash != null) _whashIndex.set(hashes.whash, card);
+  }
+
+  _dirtyCount++;
+
+  if (_dirtyCount >= FLUSH_COUNT_THRESHOLD) {
+    if (_writeTimer !== null) {
+      clearTimeout(_writeTimer);
+      _writeTimer = null;
+    }
+    await flushToDisk();
+    return;
+  }
+
+  if (_writeTimer !== null) clearTimeout(_writeTimer);
+  _writeTimer = setTimeout(() => { flushToDisk().catch(console.error); }, FLUSH_IDLE_MS);
+}
+
+// =============================================================================
 // Disk persistence helpers
 // =============================================================================
 
-function indexToObject() {
+function indexToObject(index) {
   const obj = {};
-  for (const [hash, card] of _index) {
-    // BigInt as 16-char lowercase hex so JSON.stringify can handle it.
+  for (const [hash, card] of index) {
     obj[hash.toString(16).padStart(16, '0')] = card;
   }
   return obj;
@@ -191,31 +476,28 @@ function indexToObject() {
 
 async function flushToDisk() {
   if (_flushPromise) {
-    // Another flush is already in-flight.  Signal that a trailing flush is
-    // needed (to capture any entries added since that flush started), then
-    // wait for the current one to land.
     _flushQueued = true;
     await _flushPromise;
-    // If _flushQueued was consumed by whoever started the trailing flush,
-    // we're done — don't start a redundant third flush.
     if (!_flushQueued) return;
   }
 
-  // We are now the designated flusher.
   _flushPromise = (async () => {
     do {
       _flushQueued = false;
       _writeTimer  = null;
       _dirtyCount  = 0;
-      const obj  = indexToObject();
-      const json = JSON.stringify(obj);
-      // Write to a temp file then atomically rename so a kill mid-write cannot
-      // truncate card-phashes.json. fs.promises.rename is atomic on POSIX (Render).
+
+      const payload = {
+        version: 2,
+        phash: indexToObject(_phashIndex),
+        dhash: indexToObject(_dhashIndex),
+        whash: indexToObject(_whashIndex),
+      };
+      const json = JSON.stringify(payload);
+
       const tmpPath = PHASH_FILE + '.tmp';
       await fs.promises.writeFile(tmpPath, json, 'utf8');
-      // fs.promises.rename is atomic on POSIX (Render — production target).
-      // On Windows it raises EPERM when the destination already exists;
-      // fall back to a direct overwrite in that case.
+      // Atomic rename (POSIX). On Windows falls back to direct overwrite.
       try {
         await fs.promises.rename(tmpPath, PHASH_FILE);
       } catch (err) {
@@ -223,7 +505,6 @@ async function flushToDisk() {
         await fs.promises.writeFile(PHASH_FILE, json, 'utf8');
         try { await fs.promises.unlink(tmpPath); } catch { /* best-effort */ }
       }
-      // Loop if another caller queued a flush while we were writing.
     } while (_flushQueued);
   })();
 
@@ -239,7 +520,11 @@ async function flushToDisk() {
 // =============================================================================
 
 /**
- * Read card-phashes.json into _index. Tolerates missing file (empty index).
+ * Read card-phashes.json into the in-memory indexes. Tolerates missing file.
+ * Detects format version:
+ *   v1 — flat { "<hex16>": {set_id, number} } — loaded into _phashIndex only.
+ *   v2 — { version: 2, phash: {}, dhash: {}, whash: {} } — loads all three.
+ *
  * Called once at boot from apps/server/server.js.
  *
  * @returns {Promise<void>}
@@ -257,9 +542,7 @@ export async function loadIndex() {
   try {
     obj = JSON.parse(raw);
   } catch {
-    // Corrupt JSON (e.g. truncated write before atomic-rename was in place).
-    // Preserve the file for operator inspection; treat the index as empty so
-    // the server can start and re-populate via addToIndex.
+    // Corrupt JSON — preserve for operator inspection, treat as empty.
     const corruptPath = PHASH_FILE + '.corrupt-' + Date.now();
     try {
       await fs.promises.rename(PHASH_FILE, corruptPath);
@@ -273,40 +556,34 @@ export async function loadIndex() {
     return;
   }
 
-  _index.clear();
-  for (const [hexStr, card] of Object.entries(obj)) {
-    _index.set(BigInt('0x' + hexStr), card);
-  }
-}
+  _phashIndex.clear();
+  _dhashIndex.clear();
+  _whashIndex.clear();
 
-// =============================================================================
-// addToIndex
-// =============================================================================
-
-/**
- * Add a hash → card mapping to the in-memory index and schedule a debounced
- * disk write. Flushes immediately after every FLUSH_COUNT_THRESHOLD additions;
- * otherwise resets a 5 s idle timer.
- *
- * @param {bigint} hash
- * @param {{ set_id: string, number: string }} card
- * @returns {Promise<void>}
- */
-export async function addToIndex(hash, card) {
-  _index.set(hash, card);
-  _dirtyCount++;
-
-  if (_dirtyCount >= FLUSH_COUNT_THRESHOLD) {
-    if (_writeTimer !== null) {
-      clearTimeout(_writeTimer);
-      _writeTimer = null;
+  if (obj.version === 2) {
+    // v2 format — load all three indexes.
+    const loadMap = (src, map) => {
+      if (!src || typeof src !== 'object') return;
+      for (const [hexStr, card] of Object.entries(src)) {
+        map.set(BigInt('0x' + hexStr), card);
+      }
+    };
+    loadMap(obj.phash, _phashIndex);
+    loadMap(obj.dhash, _dhashIndex);
+    loadMap(obj.whash, _whashIndex);
+    console.log(
+      `[phash] v2 index loaded: phash=${_phashIndex.size} dhash=${_dhashIndex.size} whash=${_whashIndex.size}`
+    );
+  } else {
+    // v1 format — flat object, no version key. Load into phash only.
+    for (const [hexStr, card] of Object.entries(obj)) {
+      if (hexStr === 'version') continue; // safety guard
+      _phashIndex.set(BigInt('0x' + hexStr), card);
     }
-    await flushToDisk();
-    return;
+    console.log(
+      `[phash] v1 index loaded (legacy): phash=${_phashIndex.size} — re-crawl recommended to populate dhash/whash`
+    );
   }
-
-  if (_writeTimer !== null) clearTimeout(_writeTimer);
-  _writeTimer = setTimeout(() => { flushToDisk().catch(console.error); }, FLUSH_IDLE_MS);
 }
 
 // =============================================================================
@@ -314,7 +591,7 @@ export async function addToIndex(hash, card) {
 // =============================================================================
 
 /**
- * Immediately write the current in-memory index to disk and cancel any
+ * Immediately write the current in-memory indexes to disk and cancel any
  * pending idle timer.
  *
  * @returns {Promise<void>}
@@ -333,21 +610,37 @@ export async function flushNow() {
 // =============================================================================
 
 /**
- * Seed the in-memory index with test entries without touching disk.
- * Used by phash-lookup.spec.js.
+ * Seed the in-memory phash index with test entries without touching disk.
+ * Kept for backward compat with phash-lookup.spec.js.
  *
  * @param {Array<{ hash: bigint, card: { set_id: string, number: string } }>} entries
  */
 export function __seedIndex(entries) {
   for (const { hash, card } of entries) {
-    _index.set(hash, card);
+    _phashIndex.set(hash, card);
   }
 }
 
 /**
- * Clear the in-memory index without touching disk.
- * Used by phash-lookup.spec.js to isolate tests.
+ * Clear all in-memory indexes without touching disk.
  */
 export function __resetIndex() {
-  _index.clear();
+  _phashIndex.clear();
+  _dhashIndex.clear();
+  _whashIndex.clear();
+}
+
+/**
+ * Seed specific indexes by type. Used by phash-lookup.spec.js and new tests.
+ *
+ * @param {'phash'|'dhash'|'whash'} type
+ * @param {Array<{ hash: bigint, card: { set_id: string, number: string } }>} entries
+ */
+export function __seedIndexByType(type, entries) {
+  const map = type === 'phash' ? _phashIndex
+            : type === 'dhash' ? _dhashIndex
+            : _whashIndex;
+  for (const { hash, card } of entries) {
+    map.set(hash, card);
+  }
 }

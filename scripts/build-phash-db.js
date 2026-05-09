@@ -32,8 +32,9 @@ import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import axios from 'axios';
+import sharp from 'sharp';
 
-import { computePhash, loadIndex, addToIndex, flushNow } from '../pricing/phash.js';
+import { computePhash, computeDhash, computeWhash, cropToCard, loadIndex, addToIndex, flushNow } from '../pricing/phash.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -209,11 +210,18 @@ async function main() {
   // Load existing phash index (for skip/resume logic).
   await loadIndex();
 
+  // Build the skip-set from the existing phash file. Keyed by card identity
+  // (set_id-number) regardless of format version — the crawler skips cards
+  // that already have any hash entry so re-runs are resumable.
   let existingCardIds = new Set();
   if (fs.existsSync(PHASH_FILE)) {
     const existing = JSON.parse(fs.readFileSync(PHASH_FILE, 'utf8'));
-    for (const card of Object.values(existing)) {
-      existingCardIds.add(`${card.set_id}-${card.number}`);
+    // Support v1 (flat object) and v2 ({ version:2, phash:{}, dhash:{}, whash:{} }).
+    const phashEntries = existing.version === 2
+      ? Object.values(existing.phash || {})
+      : Object.values(existing);
+    for (const card of phashEntries) {
+      if (card && card.set_id) existingCardIds.add(`${card.set_id}-${card.number}`);
     }
     console.log(`[phash-crawler] loaded ${existingCardIds.size} already-hashed cards from ${PHASH_FILE}`);
   }
@@ -289,16 +297,93 @@ async function main() {
       return;
     }
 
-    let hash;
+    // Step 1: cropToCard normalises the CDN image (near-noop for tight CDN
+    // crops, but ensures the same pipeline as the phone-photo path).
+    let baseBuffer;
     try {
-      hash = await computePhash(imgBuffer);
-    } catch (err) {
-      logSkip(id, `computePhash failed: ${err.message}`);
+      baseBuffer = await cropToCard(imgBuffer);
+    } catch {
+      baseBuffer = imgBuffer; // cropToCard already guards internally; belt-and-braces
+    }
+
+    // Step 2: Build the 5 visual variants.
+    // Each variant is a Sharp-derived Buffer. Failures produce null (skipped silently).
+    async function makeVariant(fn) {
+      try { return await fn(); } catch { return null; }
+    }
+
+    const variants = await Promise.all([
+      // Original (already cropped/normalised)
+      makeVariant(() => Promise.resolve(baseBuffer)),
+      // 5% inset crop (simulates tighter phone framing)
+      makeVariant(async () => {
+        const meta = await sharp(baseBuffer).metadata();
+        const iw = Math.max(1, Math.round((meta.width  || 600) * 0.05));
+        const ih = Math.max(1, Math.round((meta.height || 840) * 0.05));
+        return sharp(baseBuffer)
+          .extract({
+            left: iw, top: ih,
+            width:  Math.max(1, (meta.width  || 600) - iw * 2),
+            height: Math.max(1, (meta.height || 840) - ih * 2),
+          })
+          .resize(600, 840, { fit: 'fill' })
+          .toBuffer();
+      }),
+      // 10% inset crop (simulates looser phone framing)
+      makeVariant(async () => {
+        const meta = await sharp(baseBuffer).metadata();
+        const iw = Math.max(1, Math.round((meta.width  || 600) * 0.10));
+        const ih = Math.max(1, Math.round((meta.height || 840) * 0.10));
+        return sharp(baseBuffer)
+          .extract({
+            left: iw, top: ih,
+            width:  Math.max(1, (meta.width  || 600) - iw * 2),
+            height: Math.max(1, (meta.height || 840) - ih * 2),
+          })
+          .resize(600, 840, { fit: 'fill' })
+          .toBuffer();
+      }),
+      // +15% brightness (simulates flash / bright room)
+      makeVariant(() =>
+        sharp(baseBuffer)
+          .modulate({ brightness: 1.15 })
+          .toBuffer()
+      ),
+      // -15% brightness (simulates dim room)
+      makeVariant(() =>
+        sharp(baseBuffer)
+          .modulate({ brightness: 0.85 })
+          .toBuffer()
+      ),
+    ]);
+
+    // Step 3: compute pHash + dHash + wHash for each variant that produced a buffer.
+    // All 15 entries map to the same card identity.
+    const cardIdent = { set_id: setId, number };
+    let addedCount = 0;
+
+    for (const variantBuf of variants) {
+      if (!variantBuf) continue;
+      let phash, dhash, whash;
+      try {
+        [phash, dhash, whash] = await Promise.all([
+          computePhash(variantBuf),
+          computeDhash(variantBuf),
+          computeWhash(variantBuf),
+        ]);
+      } catch (err) {
+        logSkip(id, `hash computation failed for variant: ${err.message}`);
+        continue;
+      }
+      await addToIndex({ phash, dhash, whash }, cardIdent);
+      addedCount++;
+    }
+
+    if (addedCount === 0) {
+      logSkip(id, 'all variants failed to hash');
       skipped++;
       return;
     }
-
-    await addToIndex(hash, { set_id: setId, number });
 
     hashed++;
     sinceLastSave++;

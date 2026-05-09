@@ -29,7 +29,7 @@ import {
   PHASH_WRITE_MIN,
 } from './confidence.js';
 import { fixPokemonSuffix, extractPokemonSuffix } from './adapters/pokemontcg.js';
-import { computePhash, lookupByPhash, addToIndex } from './phash.js';
+import { computePhash, computeDhash, computeWhash, cropToCard, lookupByHashes, addToIndex } from './phash.js';
 import { resolveSetCode } from './set-aliases.js';
 // One-time exception: lookupLocalDb lives in apps/server/ but pricing/ already
 // imports from that boundary (adapters/pokemontcg.js:24). Consistent with prior art.
@@ -285,12 +285,17 @@ export async function identifyCore({ buffer, hint }) {
     if (hit) return { cached: true, result: hit, cacheKey };
   }
 
-  // pHash lookup — runs after SHA-1 (cheapest) and before Sonnet (expensive).
+  // pHash/dHash/wHash lookup — runs after SHA-1 (cheapest) and before Sonnet (expensive).
   // Skipped when hint is set (hint bypasses all caches).
-  let phash = null;
+  let hashes = null;
   if (!hint) {
-    phash = await computePhash(optimized);
-    const phashHit = lookupByPhash(phash, PHASH_HAMMING_MAX);
+    const cropped = await cropToCard(optimized);
+    hashes = {
+      phash: await computePhash(cropped),
+      dhash: await computeDhash(cropped),
+      whash: await computeWhash(cropped),
+    };
+    const phashHit = lookupByHashes(hashes, PHASH_HAMMING_MAX);
     if (phashHit) {
       const fullCard = lookupLocalDb(phashHit.card.set_id, phashHit.card.number);
       // Only return enriched on hit IF CARD_DB has image data. On a fresh
@@ -299,7 +304,7 @@ export async function identifyCore({ buffer, hint }) {
       // image breaks client rendering — fall through to Sonnet so the user
       // gets a fully-populated card via the existing identify path.
       if (fullCard && fullCard.reference_image) {
-        console.log(`[PHASH] HIT distance=${phashHit.distance} set_id=${phashHit.card.set_id} number=${phashHit.card.number}`);
+        console.log(`[PHASH] HIT distance=${phashHit.distance} type=${phashHit.hashType} set_id=${phashHit.card.set_id} number=${phashHit.card.number}`);
         return {
           cached: true,
           source: 'phash',
@@ -349,17 +354,17 @@ export async function identifyCore({ buffer, hint }) {
     parsed.cards = parsed.cards.map(card => fixPokemonSuffix(card));
   }
 
-  // pHash write-through: persist hash → identity when Sonnet is confident.
+  // Hash write-through: persist phash/dhash/whash → identity when Sonnet is confident.
   // resolveSetCode converts Sonnet's uppercase set_code to CARD_DB's lowercase
   // set_id. Skips write if set is unknown (setId null) to avoid poisoning the
   // index. Side-effect only; errors must not propagate to the caller.
-  if (phash !== null && parsed.cards?.length === 1) {
+  if (hashes !== null && parsed.cards?.length === 1) {
     const card = parsed.cards[0];
     const conf = typeof card.confidence === 'number' ? card.confidence : 0;
     if (conf >= PHASH_WRITE_MIN && card.set_code && card.card_number) {
       const { setId } = resolveSetCode(card.set_code);
       if (setId) {
-        addToIndex(phash, { set_id: setId, number: card.card_number }).catch(err =>
+        addToIndex(hashes, { set_id: setId, number: card.card_number }).catch(err =>
           console.warn('[PHASH] addToIndex failed (non-fatal):', err.message)
         );
       }
