@@ -219,6 +219,22 @@ export function lookupLocalDb(setId, cardNumber) {
   return null;
 }
 
+// Higher rank = more trustworthy / authoritative. Manual corrections beat
+// crawler-fetched data; crawler beats sheets-baseline. Used by
+// saveCardDbToFile's defensive merge to prevent any writer from
+// downgrading an enriched entry.
+function sourceRank(source) {
+  switch (source) {
+    case 'manual':      return 5;
+    case 'pokellector': return 4;
+    case 'tcggo':       return 3;
+    case 'fallback':    return 3;
+    case 'pokemontcg':  return 2;
+    case 'sheet':       return 1;
+    default:            return 0;
+  }
+}
+
 export function saveCardDbToFile() {
   try {
     if (fs.existsSync(CRAWL_MARKER)) {
@@ -228,13 +244,32 @@ export function saveCardDbToFile() {
     const dataDir = join(REPO_ROOT, 'data');
     if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
 
-    const obj = {};
-    for (const [key, val] of CARD_DB) {
-      obj[key] = val;
+    let diskObj = {};
+    try {
+      if (fs.existsSync(CARD_DB_FILE)) {
+        diskObj = JSON.parse(fs.readFileSync(CARD_DB_FILE, 'utf8')) || {};
+      }
+    } catch (e) {
+      console.warn('[CARD-DB] Could not read disk for merge:', e.message);
+      diskObj = {};
     }
-    fs.writeFileSync(CARD_DB_FILE, JSON.stringify(obj));
+
+    const merged = { ...diskObj };
+    for (const [key, memEntry] of CARD_DB) {
+      const diskEntry = merged[key];
+      if (!diskEntry || sourceRank(memEntry.source) >= sourceRank(diskEntry.source)) {
+        merged[key] = memEntry;
+      }
+    }
+
+    // Atomic write — tmp + rename prevents truncation if the process dies mid-write
+    const tmpPath = CARD_DB_FILE + '.tmp';
+    fs.writeFileSync(tmpPath, JSON.stringify(merged));
+    fs.renameSync(tmpPath, CARD_DB_FILE);
+
     const sizeMB = (fs.statSync(CARD_DB_FILE).size / 1024 / 1024).toFixed(1);
-    console.log(`[CARD-DB] Saved ${CARD_DB.size} cards to ${CARD_DB_FILE} (${sizeMB} MB)`);
+    const enrichedCount = Object.values(merged).filter(v => v?.source === 'pokemontcg').length;
+    console.log(`[CARD-DB] Saved ${Object.keys(merged).length} cards (${enrichedCount} pokemontcg-enriched) to ${CARD_DB_FILE} (${sizeMB} MB)`);
     cardDbDirty = false;
   } catch (e) {
     console.error(`[CARD-DB] Failed to save: ${e.message}`);
