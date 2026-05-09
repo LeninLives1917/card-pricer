@@ -25,13 +25,18 @@ services:
     startCommand: node apps/server/server.js
     healthCheckPath: /api/health
 
-    # Persistent disk (Q2). data/card-db.json + data/card-prices.json + logs/
-    # all survive redeploys. Mount path matches Render's documented default
-    # for the project workspace so existing `data/` writes land here without
-    # path edits in server code.
+    # Persistent disk (Q2). data/card-db.json + data/card-prices.json +
+    # data/card-phashes.json + logs/ all survive redeploys.
+    #
+    # Mount path is the repo's data/ directory. The original V2 config used
+    # /opt/render/project/data which did NOT match where the code writes
+    # (REPO_ROOT in _card-db-boot.js, phash.js, and the crawler all resolve
+    # to /opt/render/project/src/data). The disk was effectively unused —
+    # every redeploy wiped data/ contents and lost crawler progress. Fixed
+    # 2026-05-09 by pointing mountPath at the actual repo data/ path.
     disk:
       name: card-pricer-data
-      mountPath: /opt/render/project/data
+      mountPath: /opt/render/project/src/data
       sizeGB: 1
 
     envVars:
