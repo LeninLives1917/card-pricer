@@ -23,6 +23,7 @@
 // list. No HTTP, no file I/O, no side effects beyond the Anthropic call.
 // Test-friendly via dependency injection of the anthropic client.
 
+import sharp from 'sharp';
 import { anthropic as defaultAnthropic } from '../apps/server/_clients.js';
 import { BINDER_DETECT_MODEL } from './confidence.js';
 
@@ -74,7 +75,29 @@ Other rules:
 export async function detectBinderCards({ buffer, mediaType, deps } = {}) {
   if (!buffer) return { cards: [] };
   const anthropic = deps?.anthropic || defaultAnthropic;
-  const imageBase64 = buffer.toString('base64');
+
+  // Resize large images before sending to Anthropic. Anthropic enforces a 5 MB
+  // limit on base64-encoded image payloads; phone JPEGs can easily be 8–12 MB.
+  // 4.8 MB threshold gives headroom even if resize doesn't shrink as much as
+  // expected (e.g. highly-detailed images at q92).
+  const meta = await sharp(buffer).metadata().catch(() => ({}));
+  const srcMax = Math.max(meta.width || 0, meta.height || 0);
+  const srcSize = buffer.length;
+  const passthroughOk = (meta.format === 'jpeg' || meta.format === 'png')
+    && srcMax > 0 && srcMax <= 1800
+    && srcSize <= 4_800_000;
+  const optimized = passthroughOk
+    ? buffer
+    : await sharp(buffer)
+        .resize(1800, 1800, { fit: 'inside', withoutEnlargement: true })
+        .jpeg({ quality: 92 })
+        .toBuffer();
+  if (!passthroughOk) {
+    console.log(`[BINDER] resized image to ${optimized.length} bytes`);
+  }
+  const optimizedFormat = passthroughOk ? meta.format : 'jpeg';
+  const imageMediaType = optimizedFormat === 'png' ? 'image/png' : 'image/jpeg';
+  const imageData = optimized.toString('base64');
 
   let raw;
   try {
@@ -90,7 +113,7 @@ export async function detectBinderCards({ buffer, mediaType, deps } = {}) {
       messages: [{
         role: 'user',
         content: [
-          { type: 'image', source: { type: 'base64', media_type: mediaType, data: imageBase64 } },
+          { type: 'image', source: { type: 'base64', media_type: imageMediaType, data: imageData } },
           { type: 'text', text: DETECT_PROMPT },
         ],
       }],
