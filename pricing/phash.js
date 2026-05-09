@@ -38,6 +38,10 @@ let _dirtyCount = 0;
 const FLUSH_COUNT_THRESHOLD = 100;
 const FLUSH_IDLE_MS = 5000;
 
+// Flush mutex — prevents concurrent writers from racing on the same tmp path.
+let _flushPromise = null;   // the single in-flight flush; null when idle
+let _flushQueued  = false;  // a second flush was requested while one is in-flight
+
 // =============================================================================
 // DCT-II helpers
 // =============================================================================
@@ -186,15 +190,48 @@ function indexToObject() {
 }
 
 async function flushToDisk() {
-  _writeTimer = null;
-  _dirtyCount = 0;
-  const obj = indexToObject();
-  const json = JSON.stringify(obj);
-  // Write to a temp file then atomically rename so a kill mid-write cannot
-  // truncate card-phashes.json. fs.promises.rename is atomic on POSIX (Render).
-  const tmpPath = PHASH_FILE + '.tmp';
-  await fs.promises.writeFile(tmpPath, json, 'utf8');
-  await fs.promises.rename(tmpPath, PHASH_FILE);
+  if (_flushPromise) {
+    // Another flush is already in-flight.  Signal that a trailing flush is
+    // needed (to capture any entries added since that flush started), then
+    // wait for the current one to land.
+    _flushQueued = true;
+    await _flushPromise;
+    // If _flushQueued was consumed by whoever started the trailing flush,
+    // we're done — don't start a redundant third flush.
+    if (!_flushQueued) return;
+  }
+
+  // We are now the designated flusher.
+  _flushPromise = (async () => {
+    do {
+      _flushQueued = false;
+      _writeTimer  = null;
+      _dirtyCount  = 0;
+      const obj  = indexToObject();
+      const json = JSON.stringify(obj);
+      // Write to a temp file then atomically rename so a kill mid-write cannot
+      // truncate card-phashes.json. fs.promises.rename is atomic on POSIX (Render).
+      const tmpPath = PHASH_FILE + '.tmp';
+      await fs.promises.writeFile(tmpPath, json, 'utf8');
+      // fs.promises.rename is atomic on POSIX (Render — production target).
+      // On Windows it raises EPERM when the destination already exists;
+      // fall back to a direct overwrite in that case.
+      try {
+        await fs.promises.rename(tmpPath, PHASH_FILE);
+      } catch (err) {
+        if (err.code !== 'EPERM') throw err;
+        await fs.promises.writeFile(PHASH_FILE, json, 'utf8');
+        try { await fs.promises.unlink(tmpPath); } catch { /* best-effort */ }
+      }
+      // Loop if another caller queued a flush while we were writing.
+    } while (_flushQueued);
+  })();
+
+  try {
+    await _flushPromise;
+  } finally {
+    _flushPromise = null;
+  }
 }
 
 // =============================================================================
