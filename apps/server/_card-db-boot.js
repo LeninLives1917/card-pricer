@@ -742,11 +742,11 @@ export async function initCardDb() {
   try { fs.unlinkSync(CRAWL_MARKER); console.log('[CARD-DB] cleared stale crawl marker'); } catch { /* ENOENT — marker not present, normal */ }
 
   const fromSheet = await loadCardDbFromSheet();
-  if (!fromSheet) {
-    const fromFile = loadCardDbFromFile();
-    if (!fromFile) {
-      await downloadCardDatabase();
-    }
+  // Always merge file contents — file may contain pokemontcg-enriched entries
+  // from the offline crawler that the sheet doesn't have.
+  const fromFile = loadCardDbFromFile();
+  if (!fromSheet && !fromFile) {
+    await downloadCardDatabase();
   }
 
   applyPokellectorCorrections();
