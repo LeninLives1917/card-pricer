@@ -15,10 +15,14 @@ import app from './index.js';
 // handles that block the test runner.
 import { initCardDb, startCardDbDirtySaveInterval } from './_card-db-boot.js';
 import { startFxRefreshInterval } from '../../pricing/fx.js';
+import { loadIndex as loadPhashIndex } from '../../pricing/phash.js';
 
 initCardDb();
 startCardDbDirtySaveInterval();
 startFxRefreshInterval();
+loadPhashIndex()
+  .then(() => console.log('[phash] Index loaded from card-phashes.json'))
+  .catch(err => console.warn('[phash] loadIndex failed (non-fatal):', err.message));
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {

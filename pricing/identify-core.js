@@ -25,8 +25,15 @@ import {
   IDENT_MODEL,
   DOUBLE_CHECK_MODEL,
   DOUBLE_CHECK_SCORE_GATE,
+  PHASH_HAMMING_MAX,
+  PHASH_WRITE_MIN,
 } from './confidence.js';
 import { fixPokemonSuffix, extractPokemonSuffix } from './adapters/pokemontcg.js';
+import { computePhash, lookupByPhash, addToIndex } from './phash.js';
+import { resolveSetCode } from './set-aliases.js';
+// One-time exception: lookupLocalDb lives in apps/server/ but pricing/ already
+// imports from that boundary (adapters/pokemontcg.js:24). Consistent with prior art.
+import { lookupLocalDb } from '../apps/server/_card-db-boot.js';
 
 // Re-export so route handlers / tests can import suffix helpers from here
 // without reaching into the Pokemon adapter directly.
@@ -278,6 +285,40 @@ export async function identifyCore({ buffer, hint }) {
     if (hit) return { cached: true, result: hit, cacheKey };
   }
 
+  // pHash lookup — runs after SHA-1 (cheapest) and before Sonnet (expensive).
+  // Skipped when hint is set (hint bypasses all caches).
+  let phash = null;
+  if (!hint) {
+    phash = await computePhash(optimized);
+    const phashHit = lookupByPhash(phash, PHASH_HAMMING_MAX);
+    if (phashHit) {
+      const fullCard = lookupLocalDb(phashHit.card.set_id, phashHit.card.number);
+      // Only return enriched on hit IF CARD_DB has image data. On a fresh
+      // Render persistent disk, CARD_DB entries are sheets-baseline (source:
+      // 'sheet') with reference_image=null. Returning a card without an
+      // image breaks client rendering — fall through to Sonnet so the user
+      // gets a fully-populated card via the existing identify path.
+      if (fullCard && fullCard.reference_image) {
+        console.log(`[PHASH] HIT distance=${phashHit.distance} set_id=${phashHit.card.set_id} number=${phashHit.card.number}`);
+        return {
+          cached: true,
+          source: 'phash',
+          result: { cards: [{ ...fullCard, source: 'phash' }] },
+          distance: phashHit.distance,
+          cacheKey,
+        };
+      }
+      // fullCard is null OR fullCard.reference_image is null. Fall through
+      // to Sonnet. The pHash index is correct (the visual fingerprint
+      // matches a known card identity) but we can't enrich without the
+      // CARD_DB image data. The Sonnet path will populate everything,
+      // and the image-cascade write-through (resolveImageFallback in
+      // pricing/price.js) will then fill in CARD_DB.image so future
+      // pHash hits on this card return enriched cleanly.
+      console.warn(`[PHASH] HIT set_id=${phashHit.card.set_id} number=${phashHit.card.number} but lookupLocalDb has no image — falling through to Sonnet`);
+    }
+  }
+
   let userMessage = 'Identify this trading card. FIRST read the card number at the bottom of the card — this is the most critical field. If it has no slash (like SM211, SWSH066) it is a PROMO card. Be extremely precise with the set code and card number.';
   if (hint) userMessage += `\n\nUser hint: ${hint}`;
 
@@ -307,6 +348,24 @@ export async function identifyCore({ buffer, hint }) {
   if (parsed.cards?.length > 0) {
     parsed.cards = parsed.cards.map(card => fixPokemonSuffix(card));
   }
+
+  // pHash write-through: persist hash → identity when Sonnet is confident.
+  // resolveSetCode converts Sonnet's uppercase set_code to CARD_DB's lowercase
+  // set_id. Skips write if set is unknown (setId null) to avoid poisoning the
+  // index. Side-effect only; errors must not propagate to the caller.
+  if (phash !== null && parsed.cards?.length === 1) {
+    const card = parsed.cards[0];
+    const conf = typeof card.confidence === 'number' ? card.confidence : 0;
+    if (conf >= PHASH_WRITE_MIN && card.set_code && card.card_number) {
+      const { setId } = resolveSetCode(card.set_code);
+      if (setId) {
+        addToIndex(phash, { set_id: setId, number: card.card_number }).catch(err =>
+          console.warn('[PHASH] addToIndex failed (non-fatal):', err.message)
+        );
+      }
+    }
+  }
+
   return { cached: false, parsed, cacheKey, imageBase64: imageData, imageMediaType: optimizedFormat === 'png' ? 'image/png' : 'image/jpeg' };
 }
 
