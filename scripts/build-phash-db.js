@@ -15,7 +15,7 @@
 // Errors logged to data/phash-crawler-skipped.log — run continues.
 //
 // API key (optional): set POKEMONTCG_API_KEY env var for higher rate limits.
-// Expected runtime: ~40 min for ~20k cards at concurrency 5 (unauthenticated).
+// Expected runtime: ~60-75 min for ~20k cards at concurrency 2 (unauthenticated).
 //
 // Source-priority for card-db enrichment:
 //   Overwritten : source === 'sheet' || source === 'pokemontcg' || no entry yet
@@ -45,7 +45,11 @@ const SKIP_LOG = join(REPO_ROOT, 'data', 'phash-crawler-skipped.log');
 const MARKER_PATH = join(REPO_ROOT, 'data', '.crawl-active');
 
 const SET_CONCURRENCY = 4;    // parallel set-fetch requests against pokemontcg.io
-const IMG_CONCURRENCY = 5;    // parallel image downloads
+// Reduced from 5 → 2: concurrency 5 held 25 Sharp variant buffers (~25 MB)
+// in-flight simultaneously and pushed Render's 512 MB container past its limit.
+// Network throughput is rate-limited by pokemontcg.io anyway, so the wall-clock
+// penalty is small (~10-15 min on a 20k card crawl).
+const IMG_CONCURRENCY = 2;    // parallel image downloads
 const SAVE_EVERY = 500;
 const FETCH_TIMEOUT_MS = 10_000;
 const POKEMONTCG_BASE = 'https://api.pokemontcg.io/v2';
@@ -318,17 +322,20 @@ async function main() {
       baseBuffer = imgBuffer; // cropToCard already guards internally; belt-and-braces
     }
 
-    // Step 2: Build the 5 visual variants.
-    // Each variant is a Sharp-derived Buffer. Failures produce null (skipped silently).
+    // Step 2 + 3: Build each of the 5 visual variants ONE AT A TIME (sequential,
+    // not parallel) so at most one Sharp buffer (~1 MB) is live at a time.
+    // Previously Promise.all held all 5 simultaneously (~5 MB per card × concurrency).
+    // Each variant is fully hashed and added to the index before the next is built;
+    // the buffer reference is dropped so it can be GC'd immediately.
     async function makeVariant(fn) {
       try { return await fn(); } catch { return null; }
     }
 
-    const variants = await Promise.all([
+    const variantFns = [
       // Original (already cropped/normalised)
-      makeVariant(() => Promise.resolve(baseBuffer)),
+      () => Promise.resolve(baseBuffer),
       // 5% inset crop (simulates tighter phone framing)
-      makeVariant(async () => {
+      async () => {
         const meta = await sharp(baseBuffer).metadata();
         const iw = Math.max(1, Math.round((meta.width  || 600) * 0.05));
         const ih = Math.max(1, Math.round((meta.height || 840) * 0.05));
@@ -340,9 +347,9 @@ async function main() {
           })
           .resize(600, 840, { fit: 'fill' })
           .toBuffer();
-      }),
+      },
       // 10% inset crop (simulates looser phone framing)
-      makeVariant(async () => {
+      async () => {
         const meta = await sharp(baseBuffer).metadata();
         const iw = Math.max(1, Math.round((meta.width  || 600) * 0.10));
         const ih = Math.max(1, Math.round((meta.height || 840) * 0.10));
@@ -354,27 +361,20 @@ async function main() {
           })
           .resize(600, 840, { fit: 'fill' })
           .toBuffer();
-      }),
+      },
       // +15% brightness (simulates flash / bright room)
-      makeVariant(() =>
-        sharp(baseBuffer)
-          .modulate({ brightness: 1.15 })
-          .toBuffer()
-      ),
+      () => sharp(baseBuffer).modulate({ brightness: 1.15 }).toBuffer(),
       // -15% brightness (simulates dim room)
-      makeVariant(() =>
-        sharp(baseBuffer)
-          .modulate({ brightness: 0.85 })
-          .toBuffer()
-      ),
-    ]);
+      () => sharp(baseBuffer).modulate({ brightness: 0.85 }).toBuffer(),
+    ];
 
-    // Step 3: compute pHash + dHash + wHash for each variant that produced a buffer.
-    // All 15 entries map to the same card identity.
+    // Process variants sequentially: build → hash → index → drop buffer → next.
+    // Peak Sharp memory per card is ~1 MB instead of ~5 MB (one buffer at a time).
     const cardIdent = { set_id: setId, number };
     let addedCount = 0;
 
-    for (const variantBuf of variants) {
+    for (const variantFn of variantFns) {
+      const variantBuf = await makeVariant(variantFn);
       if (!variantBuf) continue;
       let phash, dhash, whash;
       try {
