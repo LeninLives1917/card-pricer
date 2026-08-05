@@ -36,6 +36,7 @@ import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import sharp from 'sharp';
+import { rectifyCard, isEnabled as rectifyEnabled } from './card-rectify.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -162,6 +163,18 @@ function haar2d(pixels, N) {
  * @returns {Promise<Buffer>}
  */
 export async function cropToCard(buffer) {
+  // Preferred path: true card-quad detection + perspective rectification.
+  // The .trim() heuristic below is a randomiser on real photographs — measured
+  // 1.0% vs 40.5% top-1 on realistic scenes (docs/V3_BENCHMARK.md §5.1). Gated
+  // behind CARD_RECTIFY=1 and degrading to the original behaviour on any
+  // failure, so enabling it cannot break a working deployment and disabling it
+  // restores the previous behaviour exactly.
+  if (rectifyEnabled()) {
+    const rectified = await rectifyCard(buffer);
+    if (rectified) return rectified;
+    // else: no card found, or OpenCV unavailable — fall through to trim.
+  }
+
   try {
     // Step 1: trim uniform borders (threshold 30 = allow ≤30/255 luminance
     // variance at the edge). background defaults to top-left pixel colour.

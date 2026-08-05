@@ -1,7 +1,7 @@
 {
   "name": "card-pricer",
   "version": "1.0.0",
-  "description": "Real-time trading card pricing app for shows — AI-powered card identification with Cardmarket & eBay pricing",
+  "description": "Real-time trading card pricing app for shows \u2014 AI-powered card identification with Cardmarket & eBay pricing",
   "type": "module",
   "main": "apps/server/server.js",
   "scripts": {
@@ -15,6 +15,7 @@
     "@anthropic-ai/sdk": "^0.39.0",
     "@sentry/node": "^10.0.0",
     "@supabase/supabase-js": "^2.104.0",
+    "@techstark/opencv-js": "^5.0.0-release.1",
     "axios": "^1.7.0",
     "cors": "^2.8.5",
     "dotenv": "^16.4.0",
