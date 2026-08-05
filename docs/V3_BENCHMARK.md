@@ -1,14 +1,14 @@
 # V3 Phase 0 — Retrieval Benchmark
 
-**Status: INTERIM. The evidence gate is NOT cleared.**
-**Date: 4 August 2026 · Branch: `v3` · Catalogue: 19,890 Pokémon cards**
+**Status: GATE RUN ON REAL PHOTOGRAPHS. NOT CLEARED — 45.3% top-1 against a ~90% bar.**
+**Date: 5 August 2026 · Branch: `v3` · Catalogue: 19,890 Pokémon cards**
 
 Every number below comes from a measurement run on this machine against the full
 catalogue. Nothing is estimated or carried over from V2 documentation.
 
-The headline accuracy figures are from **synthetic** queries, not photographs.
-They are an **upper bound** and cannot clear the gate — see §7. The operator's
-photo set is still outstanding.
+§12 is the gate result, measured on 64 real photographs of the operator's own
+stock. Everything before it is synthetic and was, as predicted, optimistic:
+57.3% synthetic against 45.3% real.
 
 ---
 
@@ -526,6 +526,100 @@ node scripts/v3-bench/evaluate.js --synthetic 150 --rectify --embeddings cls
                                   [--embeddings mean|--variants]
 EMB_NORMALISE=1 ...   # uses embeddings-norm.json; measured WORSE, see §6.6
 ```
+
+---
+
+## 12. GATE RESULT — real photographs
+
+64 photographs of the operator's stock, shot hand-held on a Galaxy S26 Ultra:
+cards on a dark table, sleeved, arbitrary rotation, venue-ish lighting. Ground
+truth by human verification in `review.js` — the operator confirmed or rejected
+the proposed candidates, so a rank-3 pick counts as a top-1 miss and "not here"
+counts as a miss at every k.
+
+```
+stage 1 top-1  : 45.3%
+stage 1 top-5  : 45.3%
+stage 1 top-10 : 45.3%
+quad detected  : 54/64 (84.4%)
+latency p50    : 256 ms
+```
+
+**Synthetic was optimistic by 12 points** (57.3% -> 45.3%), which is the expected
+direction and the reason §7 refused to treat it as a gate.
+
+### 12.1 There is no near-miss middle ground
+
+top-1 == top-5 == top-10. Every card the operator recognised was already at
+rank 1; nothing was ever "close". The system either identifies the card outright
+or it is nowhere in the top ten. That is unusual and useful: it means widening
+the candidate list buys nothing, and a re-ranking stage has nothing to work with.
+Stage 2 accordingly changed no outcome at all (+0 queries).
+
+### 12.2 Where the 35 misses come from
+
+| | count |
+|---|---:|
+| quad detection failed — automatic miss | 10 |
+| detection fine, retrieval failed | 25 |
+
+All 29 correct matches had successful detection. Accuracy **among the 54 photos
+where detection worked is 53.7%**, so detection is worth up to ~16 points and
+retrieval is the larger gap.
+
+Note an unquantified confound: at least one photographed card (`Antique Armor
+Fossil`, 072/084) is **absent from the catalogue** — the index holds its siblings
+`Antique Jaw Fossil` and `Antique Dome Fossil` but not it. Some share of the 25
+retrieval failures may be catalogue holes rather than matcher failures, which
+would mean 45.3% understates retrieval quality. Distinguishing the two needs the
+true identity of each miss, which the review flow does not capture by design.
+
+### 12.3 The system knows when it is right
+
+Cosine of the best match, split by outcome:
+
+| outcome | n | detection | min | median | max |
+|---|---:|---|---:|---:|---:|
+| correct | 29 | 29/29 | 0.698 | **0.850** | 0.909 |
+| miss | 35 | 25/35 | 0.229 | **0.660** | 0.768 |
+
+The distributions barely overlap. Auto-accepting above a cosine threshold and
+falling back to Sonnet below it:
+
+| threshold | accepted | correct | precision | wrong auto-accepts |
+|---:|---:|---:|---:|---:|
+| 0.70 | 36/64 | 28 | 77.8% | 8 |
+| 0.72 | 31/64 | 26 | 83.9% | 5 |
+| 0.74 | 27/64 | 25 | 92.6% | 2 |
+| **0.78** | **20/64** | **20** | **100.0%** | **0** |
+| 0.85 | 15/64 | 15 | 100.0% | 0 |
+
+**At cosine >= 0.78: 31% of cards identified locally with zero errors.**
+
+This is the most important result in the document. The brief's target is >=95% of
+cards never touching the API; 31% is a long way short. But it is not a dead end,
+because the failure mode is *abstention*, not *wrong answers* — and a wrong
+answer is the only kind that costs money on a buy-list. The two-lane
+architecture works today at 31% coverage; the open question is how far coverage
+can be pushed, not whether the shape is right.
+
+### 12.4 Verdict
+
+**Gate not cleared.** Do not start Phase 1 as specified.
+
+Ranked by measured value:
+
+1. **Catalogue coverage audit.** Cheapest and currently unquantified. If a
+   material share of the 25 retrieval failures are missing cards, no descriptor
+   work fixes them and the true retrieval rate is higher than reported.
+2. **Detection: 84.4% -> as close to 100% as possible.** 10 automatic misses,
+   worth up to ~16 points, and independent of the descriptor.
+3. **Retrieval on detected cards: 53.7%.** The largest gap. Index-side
+   augmentation is the standard remedy and can now be fitted against real
+   photographs rather than invented distortions.
+4. **Ship the confidence threshold regardless.** 0.78 gives free, error-free
+   identification on a third of cards with the existing Sonnet path untouched
+   beneath it.
 
 ---
 
