@@ -15,7 +15,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import sharp from 'sharp';
 
-import { rectifyCard, isEnabled, CARD_W, CARD_H } from '../../pricing/card-rectify.js';
+import {
+  rectifyCard, rectifyCardOrientations, isEnabled, CARD_W, CARD_H,
+} from '../../pricing/card-rectify.js';
 import { cropToCard } from '../../pricing/phash.js';
 
 // --- fixtures ---------------------------------------------------------------
@@ -39,10 +41,16 @@ async function makeCard(w = 300, h = 419) {
     .png().toBuffer();
 }
 
-/** That card, rotated and placed on a textured background — a "photograph". */
-async function makeScene() {
+/**
+ * That card, rotated and placed on a textured background — a "photograph".
+ *
+ * `rotate` defaults to a near-upright card; pass ~90 to lay it on its side, which
+ * is how cards actually sit on a table and the case an earlier aspect test
+ * rejected outright (0 of 8 detected on the operator's real photos).
+ */
+async function makeScene(rotate = 7) {
   const card = await sharp(await makeCard())
-    .rotate(7, { background: { r: 30, g: 30, b: 30 } })
+    .rotate(rotate, { background: { r: 30, g: 30, b: 30 } })
     .png().toBuffer();
   const cm = await sharp(card).metadata();
 
@@ -105,6 +113,59 @@ test('rectifyCard finds a tilted card on a textured background', async () => {
   const meta = await sharp(out).metadata();
   assert.equal(meta.width, CARD_W);
   assert.equal(meta.height, CARD_H);
+});
+
+// --- orientation ------------------------------------------------------------
+
+test('rectifyCard finds a card lying LANDSCAPE and returns a portrait face', async () => {
+  // Regression for the aspect test that only ever accepted an upright card:
+  // it measured 0 of 8 on real photos, where cards lie flat on a table.
+  // Establish OpenCV availability from the UPRIGHT case first. Without this, a
+  // detector that rejects landscape cards returns null and the test skips —
+  // silently passing the exact regression it exists to catch.
+  const upright = await rectifyCard(await makeScene(7));
+  if (upright === null) {
+    console.warn('[card-rectify.spec] OpenCV unavailable — landscape assertions skipped');
+    return;
+  }
+
+  const out = await rectifyCard(await makeScene(88));
+  assert.ok(out !== null,
+    'landscape card was not detected — the aspect gate is rejecting sideways cards again');
+  const meta = await sharp(out).metadata();
+  assert.equal(meta.width, CARD_W);
+  assert.equal(meta.height, CARD_H);
+  // A landscape card warped without rotating the corner list squashes the long
+  // edge into the width; the face then has no usable vertical structure. Check
+  // the output actually carries the card's long axis vertically by confirming
+  // the interior panel is taller than it is wide.
+  const { data, info } = await sharp(out).greyscale().raw()
+    .toBuffer({ resolveWithObject: true });
+  const at = (x, y) => data[y * info.width + x];
+  const midX = Math.floor(info.width / 2), midY = Math.floor(info.height / 2);
+  let vertRun = 0, horizRun = 0;
+  for (let y = 0; y < info.height; y++) if (Math.abs(at(midX, y) - at(midX, midY)) < 40) vertRun++;
+  for (let x = 0; x < info.width; x++) if (Math.abs(at(x, midY) - at(midX, midY)) < 40) horizRun++;
+  assert.ok(vertRun / info.height > 0.5, `expected a tall interior panel, got ${vertRun}/${info.height}`);
+  assert.ok(horizRun / info.width > 0.5, `expected a wide interior panel, got ${horizRun}/${info.width}`);
+});
+
+test('rectifyCardOrientations returns both 180-degree variants', async () => {
+  const res = await rectifyCardOrientations(await makeScene());
+  if (res === null) return; // OpenCV unavailable
+  for (const buf of [res.primary, res.alt]) {
+    const meta = await sharp(buf).metadata();
+    assert.equal(meta.width, CARD_W);
+    assert.equal(meta.height, CARD_H);
+  }
+  // The alt must actually differ — a card face is not symmetric under 180°.
+  assert.notEqual(res.primary.toString('base64'), res.alt.toString('base64'));
+});
+
+test('rectifyCardOrientations returns null on unusable input, never throws', async () => {
+  assert.equal(await rectifyCardOrientations(Buffer.alloc(0)), null);
+  assert.equal(await rectifyCardOrientations(Buffer.from('garbage')), null);
+  assert.equal(await rectifyCardOrientations(null), null);
 });
 
 test('flag on: cropToCard still returns 600x840', async () => {

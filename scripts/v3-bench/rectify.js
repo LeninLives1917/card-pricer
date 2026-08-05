@@ -101,6 +101,7 @@ async function detectQuad(cv, buf) {
     cv.findContours(edges, contours, hierarchy, cv.RETR_LIST, cv.CHAIN_APPROX_SIMPLE);
 
     const frameArea = dw * dh;
+    let fallbackQuad = null, fallbackArea = 0;
     for (let i = 0; i < contours.size(); i++) {
       const c = contours.get(i);
       const peri = cv.arcLength(c, true);
@@ -134,9 +135,35 @@ async function detectQuad(cv, buf) {
           }
         }
       }
+      // Fallback: a rotated bounding box round the raw contour. approxPolyDP
+      // only yields a 4-gon when all four corners are clean and in frame; a card
+      // clipped by the frame edge, or one whose border blends into the surface,
+      // never produces one. minAreaRect still recovers a plausible card
+      // rectangle from a partial outline. Gated on the same short/long ratio, so
+      // a badly clipped card — which genuinely cannot be rectified — still fails.
+      if (!bestQuad) {
+        const area = Math.abs(cv.contourArea(c));
+        const frac = area / frameArea;
+        if (frac >= MIN_AREA_FRAC && frac <= MAX_AREA_FRAC && area > fallbackArea) {
+          const rot = cv.minAreaRect(c);
+          const { width: rw, height: rh } = rot.size;
+          const ratio = Math.min(rw, rh) / Math.max(rw, rh);
+          // The box must actually be filled by the contour, otherwise a sprawling
+          // edge-noise contour can pass on ratio alone.
+          const fill = area / Math.max(1, rw * rh);
+          if (ratio >= RATIO_MIN && ratio <= RATIO_MAX && fill >= 0.70) {
+            const vtx = cv.RotatedRect.points(rot);
+            const o = orderCorners(vtx.map(v => ({ x: v.x, y: v.y })));
+            fallbackArea = area;
+            fallbackQuad = { corners: o, areaFrac: frac, landscape: rw > rh };
+          }
+        }
+      }
+
       approx.delete();
       c.delete();
     }
+    if (!bestQuad && fallbackQuad) bestQuad = fallbackQuad;
   } finally {
     src.delete(); grey.delete(); blur.delete(); edges.delete();
     contours.delete(); hierarchy.delete();

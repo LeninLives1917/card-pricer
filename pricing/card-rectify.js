@@ -38,10 +38,17 @@ export const CARD_H = 840;
 // detection space and scaled back up, so output quality is unaffected.
 const DETECT_MAX = 600;
 
-// A trading card is 63x88mm -> 0.716. The band is generous because a tilted
-// card foreshortens, but tight enough to reject long thin artefacts.
-const ASPECT_MIN = 0.45;
-const ASPECT_MAX = 1.05;
+// A trading card is 63x88mm -> short/long = 0.716. Test the SHORT-OVER-LONG
+// ratio, which is orientation-independent.
+//
+// An earlier version tested w/h against 0.45..1.05, which only ever accepted a
+// card standing upright in the frame. Cards lying on a table do not: measured
+// against the operator's first real photo set, the detector was finding the card
+// perfectly (area 0.33 of frame, short/long 0.71 — exactly the card ratio) and
+// then discarding it for being sideways. 0 of 8 detected.
+// The band allows for foreshortening when the card is tilted.
+const RATIO_MIN = 0.55;
+const RATIO_MAX = 0.92;
 
 const MIN_AREA_FRAC = 0.10;
 const MAX_AREA_FRAC = 0.98;
@@ -145,6 +152,7 @@ async function detectQuad(cv, buffer) {
     cv.findContours(edges, contours, hierarchy, cv.RETR_LIST, cv.CHAIN_APPROX_SIMPLE);
 
     const frameArea = dw * dh;
+    let fallbackQuad = null, fallbackArea = 0;
     for (let i = 0; i < contours.size(); i++) {
       const c = contours.get(i);
       const approx = new cv.Mat();
@@ -168,17 +176,44 @@ async function detectQuad(cv, buffer) {
           if (!hugsFrame) {
             const w = (dist(o[0], o[1]) + dist(o[3], o[2])) / 2;
             const h = (dist(o[0], o[3]) + dist(o[1], o[2])) / 2;
-            const aspect = h > 0 ? w / h : 0;
-            if (aspect >= ASPECT_MIN && aspect <= ASPECT_MAX) {
+            const ratio = Math.min(w, h) / Math.max(w, h);
+            if (ratio >= RATIO_MIN && ratio <= RATIO_MAX) {
               bestArea = area;
-              bestQuad = { corners: o, scale };
+              bestQuad = { corners: o, scale, landscape: w > h };
             }
           }
         }
       }
+
+      // Fallback: a rotated bounding box round the raw contour. approxPolyDP
+      // only yields a 4-gon when all four corners are clean and in frame; a card
+      // clipped by the frame edge, or one whose border blends into the surface,
+      // never produces one. minAreaRect still recovers a plausible card
+      // rectangle from a partial outline, gated on the same short/long ratio so
+      // a badly clipped card — which genuinely cannot be rectified — still fails.
+      if (!bestQuad) {
+        const area = Math.abs(cv.contourArea(c));
+        const frac = area / frameArea;
+        if (frac >= MIN_AREA_FRAC && frac <= MAX_AREA_FRAC && area > fallbackArea) {
+          const rot = cv.minAreaRect(c);
+          const { width: rw, height: rh } = rot.size;
+          const ratio = Math.min(rw, rh) / Math.max(rw, rh);
+          // The box must actually be filled by the contour, else a sprawling
+          // edge-noise contour can pass on ratio alone.
+          const fill = area / Math.max(1, rw * rh);
+          if (ratio >= RATIO_MIN && ratio <= RATIO_MAX && fill >= 0.70) {
+            const vtx = cv.RotatedRect.points(rot);
+            const o = orderCorners(vtx.map(v => ({ x: v.x, y: v.y })));
+            fallbackArea = area;
+            fallbackQuad = { corners: o, scale, landscape: rw > rh };
+          }
+        }
+      }
+
       approx.delete();
       c.delete();
     }
+    if (!bestQuad && fallbackQuad) bestQuad = fallbackQuad;
   } finally {
     src.delete(); grey.delete(); blur.delete(); edges.delete();
     contours.delete(); hierarchy.delete();
@@ -212,7 +247,15 @@ export async function rectifyCard(buffer) {
   try {
     const meta = await sharp(buffer).metadata();
     const inv = 1 / quad.scale;
-    const src = quad.corners.flatMap(p => [p.x * inv, p.y * inv]);
+
+    // Map the card's LONG edge to the output's long side. For a card lying
+    // landscape the geometric top edge is the long one, so rotating the corner
+    // list by one puts it on the destination's vertical edge; without this the
+    // warp squashes an 88mm edge into a 600px width and the face is unusable.
+    const corners = quad.landscape
+      ? [quad.corners[1], quad.corners[2], quad.corners[3], quad.corners[0]]
+      : quad.corners;
+    const src = corners.flatMap(p => [p.x * inv, p.y * inv]);
 
     const raw = await sharp(buffer).ensureAlpha().raw().toBuffer();
     srcMat = new cv.Mat(meta.height, meta.width, cv.CV_8UC4);
@@ -235,5 +278,31 @@ export async function rectifyCard(buffer) {
     for (const m of [srcMat, dstMat, srcTri, dstTri, M]) {
       try { m?.delete(); } catch { /* already freed */ }
     }
+  }
+}
+
+/**
+ * Both plausible orientations of the rectified face.
+ *
+ * Quad detection recovers the card's AXIS but not which end is up — four corners
+ * look the same either way. On real table photos the result came out upside down
+ * as often as not, so a matcher should score both and keep whichever wins.
+ *
+ * This is additive: `rectifyCard` keeps its single-Buffer contract, because
+ * cropToCard and its regression suite depend on it. Callers that do their own
+ * matching (the V3 scanner) use this instead.
+ *
+ * @param {Buffer} buffer  Raw image bytes.
+ * @returns {Promise<{ primary: Buffer, alt: Buffer } | null>}  null when OpenCV
+ *   is unavailable or no card quad was found. Never throws.
+ */
+export async function rectifyCardOrientations(buffer) {
+  const primary = await rectifyCard(buffer);
+  if (!primary) return null;
+  try {
+    const alt = await sharp(primary).rotate(180).png().toBuffer();
+    return { primary, alt };
+  } catch {
+    return { primary, alt: primary };
   }
 }
