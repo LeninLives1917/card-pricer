@@ -35,7 +35,7 @@
 import fs from 'fs';
 import { homedir } from 'os';
 import { fileURLToPath } from 'url';
-import { dirname, join, basename, extname } from 'path';
+import { dirname, join, basename, extname, relative, sep } from 'path';
 import sharp from 'sharp';
 
 import { computePhash, computeDhash, computeWhash, cropToCard } from '../../pricing/phash.js';
@@ -51,7 +51,7 @@ const VAR_FILE  = join(CACHE_DIR, 'variants.json');
 // reference.
 const EMB_NORMALISE = process.env.EMB_NORMALISE === '1';
 const EMB_FILE  = join(CACHE_DIR, EMB_NORMALISE ? 'embeddings-norm.json' : 'embeddings.json');
-const PHOTO_DIR = join(CACHE_DIR, 'photos');
+const PHOTO_DIR = process.env.V3_PHOTO_DIR || join(CACHE_DIR, 'photos');
 const OUT_FILE = join(CACHE_DIR, 'evaluation.json');
 
 const ART_BOX = { left: 0.085, top: 0.115, width: 0.830, height: 0.420 };
@@ -389,14 +389,47 @@ async function main() {
         : ['.jpg', '.jpeg', '.png', '.webp'].includes(extname(e.name).toLowerCase()) ? [join(dir, e.name)] : []);
     const files = walk(PHOTO_DIR);
     const byLower = new Map(ids.map(id => [id.toLowerCase(), id]));
+
+    // Ground truth comes from labels.json when present (produced by review.js,
+    // where the operator confirms a candidate). Otherwise fall back to the
+    // filename convention. Renaming a few hundred files by hand was always the
+    // worst part of the plan, so the review tool is the expected path.
+    const labelsFile = join(PHOTO_DIR, 'labels.json');
+    let labels = null;
+    if (fs.existsSync(labelsFile)) {
+      try { labels = JSON.parse(fs.readFileSync(labelsFile, 'utf8')); } catch {
+        console.error('[evaluate] labels.json is not valid JSON'); process.exit(1);
+      }
+    }
+
+    let notHere = 0;
     for (const f of files) {
+      if (labels) {
+        const key = relative(PHOTO_DIR, f).split(sep).join('/');
+        const v = labels[key];
+        if (!v) continue;                       // unreviewed
+        // "not here" is a confirmed miss, not a missing label: the operator
+        // looked and the true card was not among the candidates. Counting these
+        // is the difference between an honest number and a flattering one.
+        if (v === '__none__') { notHere++; queries.push({ file: f, truth: null, variant: 'none' }); continue; }
+        const truth = byLower.get(String(v).toLowerCase());
+        if (truth) queries.push({ file: f, truth, variant: 'reviewed' });
+        continue;
+      }
       const stem = basename(f, extname(f));
       const us = stem.indexOf('_');
       const label = byLower.get((us === -1 ? stem : stem.slice(0, us)).toLowerCase());
       if (label) queries.push({ file: f, truth: label, variant: us === -1 ? null : stem.slice(us + 1) });
     }
-    console.log(`[evaluate] ${queries.length} labelled photographs`);
-    if (!queries.length) { console.error('[evaluate] no resolvable labels — run validate-photos.js'); process.exit(1); }
+
+    console.log(`[evaluate] ${queries.length} labelled photographs` +
+                (labels ? ` (from labels.json; ${notHere} marked "not here")` : ' (from filenames)'));
+    if (!queries.length) {
+      console.error(labels
+        ? '[evaluate] labels.json matched no photos — was it saved into the photo dir?'
+        : '[evaluate] no resolvable labels — run review.js, or see validate-photos.js');
+      process.exit(1);
+    }
   } else {
     const stride = Math.max(1, Math.floor(N / N_SYNTH));
     for (let i = 0; i < N && queries.length < N_SYNTH; i += stride) {
@@ -520,7 +553,10 @@ async function main() {
     const elapsed = Number(process.hrtime.bigint() - t0) / 1e6;
     stats.latency.push(elapsed);
 
-    const truthIdx = idxOf.get(q.truth);
+    // truth === null means the operator confirmed the right card was not among
+    // the candidates. truthIdx stays undefined, so every rank lookup yields -1
+    // and the query scores as a miss at every k. That is correct.
+    const truthIdx = q.truth === null ? undefined : idxOf.get(q.truth);
     const s1rank = best.findIndex(b => b.i === truthIdx);
     const s2rank = reranked.findIndex(b => b.i === truthIdx);
 
