@@ -28,6 +28,7 @@
     "stripe": "^22.0.2"
   },
   "devDependencies": {
+    "@huggingface/transformers": "^4.2.0",
     "jsdom": "^25.0.1",
     "pino-pretty": "^13.0.0"
   }

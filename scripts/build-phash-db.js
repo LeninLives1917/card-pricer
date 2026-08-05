@@ -44,12 +44,24 @@ const PHASH_FILE = join(REPO_ROOT, 'data', 'card-phashes.json');
 const SKIP_LOG = join(REPO_ROOT, 'data', 'phash-crawler-skipped.log');
 const MARKER_PATH = join(REPO_ROOT, 'data', '.crawl-active');
 
-const SET_CONCURRENCY = 4;    // parallel set-fetch requests against pokemontcg.io
-// Reduced from 5 → 2: concurrency 5 held 25 Sharp variant buffers (~25 MB)
-// in-flight simultaneously and pushed Render's 512 MB container past its limit.
-// Network throughput is rate-limited by pokemontcg.io anyway, so the wall-clock
-// penalty is small (~10-15 min on a 20k card crawl).
-const IMG_CONCURRENCY = 2;    // parallel image downloads
+// Concurrency is env-configurable so the same script can run in two very
+// different places:
+//   Render (512 MB container, also serving traffic) — IMG_CONCURRENCY=2.
+//     Concurrency 5 held 25 Sharp variant buffers (~25 MB) in flight and pushed
+//     the container past its memory limit; 2 was the safe ceiling there.
+//   Operator laptop (V3 default) — IMG_CONCURRENCY=16. No traffic to protect,
+//     no 512 MB cap, and the small-image switch below cuts per-card bytes ~20×,
+//     so the memory argument for throttling no longer applies.
+const SET_CONCURRENCY = Number(process.env.SET_CONCURRENCY) || 4;
+const IMG_CONCURRENCY = Number(process.env.IMG_CONCURRENCY) || 16;
+
+// Reference-image size. pokemontcg.io serves two renditions per card:
+//   large ("<id>_hires.png") — ~700 KB, 745×1040
+//   small ("<id>.png")       — ~35 KB,  245×342
+// Everything downstream downscales to 32×32 (pHash/wHash) or 9×8 (dHash), so
+// the hi-res pixels are discarded immediately. small is ~20× less bandwidth for
+// no measurable descriptor change. Set PHASH_IMAGE_SIZE=large to A/B this.
+const IMAGE_SIZE = process.env.PHASH_IMAGE_SIZE === 'large' ? 'large' : 'small';
 const SAVE_EVERY = 500;
 const FETCH_TIMEOUT_MS = 10_000;
 const POKEMONTCG_BASE = 'https://api.pokemontcg.io/v2';
@@ -124,7 +136,11 @@ async function fetchSetCards(setId) {
     if (totalCount === null) totalCount = body.totalCount ?? 0;
 
     for (const card of body.data ?? []) {
-      const imageUrl = card.images?.large || card.images?.small || null;
+      // Hashing source only — deliberately NOT card-db's `image` field, which
+      // stays hi-res because it is what the operator sees on screen.
+      const imageUrl = IMAGE_SIZE === 'large'
+        ? (card.images?.large || card.images?.small || null)
+        : (card.images?.small || card.images?.large || null);
       const enriched = buildEnrichedEntry(card);
       cards.push({ id: card.id, imageUrl, enriched });
     }
@@ -188,6 +204,7 @@ async function main() {
   fs.writeFileSync(MARKER_PATH, new Date().toISOString(), 'utf8');
   const startMs = Date.now();
   console.log(`[phash-crawler] starting${isDryRun ? ' (DRY RUN — first set only)' : ''}${API_KEY ? ' [authenticated]' : ' [unauthenticated]'}`);
+  console.log(`[phash-crawler] image=${IMAGE_SIZE} setConcurrency=${SET_CONCURRENCY} imgConcurrency=${IMG_CONCURRENCY}`);
 
   // Load card-db: used for set-ID discovery AND as the enrichment target.
   if (!fs.existsSync(CARD_DB_FILE)) {
