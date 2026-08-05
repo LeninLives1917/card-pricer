@@ -389,11 +389,21 @@ export async function priceCard(verifiedCard, opts = {}) {
     const src = pricing.tcgplayer.source === 'justtcg' ? 'JustTCG' : 'TCGPlayer';
     priceSource = `${src} $${pricing.tcgplayer.price.toFixed(2)} → €${bestPrice.toFixed(2)}`;
   }
-  if (!bestPrice && pricing.ebay?.median_price) {
-    bestPrice = pricing.ebay.median_price;
-    priceCurrency = pricing.ebay.currency || 'EUR';
-    priceSource = `eBay sold median`;
-  }
+  // eBay is deliberately NOT a price source.
+  //
+  // pricing/adapters/ebay-sold.js queries the Browse API, which has no sold
+  // filter. It requests ACTIVE listings sorted by price ASCENDING with limit 15,
+  // then reports the median of those — i.e. roughly the 7th-cheapest asking
+  // price on the marketplace — and labels it "sold median". It is structurally
+  // guaranteed to lowball. Measured: it returned €2.28 for a card with a true
+  // market of €168–210, because the bare-name query in its cascade matched
+  // Pokémon TCG Online code cards and digital listings.
+  //
+  // A wrong price on a buy-list costs real money; an absent one costs nothing,
+  // since Cardmarket, JustTCG and TCGPlayer are real market data and are tried
+  // above. `pricing.ebay` is still populated for display/links, but it must not
+  // reach bestPrice. Restore only via eBay's Marketplace Insights API, which is
+  // the actual sold-comps endpoint and requires an application.
 
   if (bestPrice) {
     const effectiveMult = isGraded ? 1.0 : conditionMult;
@@ -448,12 +458,18 @@ export function scoreHotness(pricing, card, bestPrice) {
     else                { hotness.score -= 10; hotness.reasons.push(`Price down ${hotness.trend}% (30d)`); }
   }
 
-  const ebayCount = pricing.ebay?.sample_size || 0;
-  hotness.volume = ebayCount;
-  if (ebayCount >= 12)      { hotness.score += 20; hotness.reasons.push(`${ebayCount} recent eBay sales`); }
-  else if (ebayCount >= 6)  { hotness.score += 10; hotness.reasons.push(`${ebayCount} eBay sales`); }
-  else if (ebayCount >= 3)  { hotness.score += 5; }
-  else if (ebayCount === 0) { hotness.score -= 10; hotness.reasons.push('No recent eBay sales'); }
+  // eBay sample_size is NOT a sales-volume signal and no longer scores.
+  //
+  // It counts active listings returned by a Browse query that is hard-capped at
+  // limit 15, so the 12/6/3 thresholds were really asking "did the query return
+  // a full page?" — a card with 200 listings and one with 15 scored identically,
+  // and a card with genuinely zero listings was indistinguishable from one whose
+  // name simply didn't match the query. It was also worth ±30 points, the
+  // largest single term in the score, on that basis.
+  //
+  // Volume is still reported for display, relabelled to say what it actually is.
+  hotness.volume = pricing.ebay?.sample_size || 0;
+  hotness.volume_basis = 'ebay_active_listings_capped';
 
   if (bestPrice && bestPrice >= 10 && hotness.trend && hotness.trend > 0) {
     hotness.score += 10;

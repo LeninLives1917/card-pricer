@@ -243,11 +243,10 @@ async function handlePrice(req, res) {
       const src = pricing.tcgplayer.source === 'justtcg' ? 'JustTCG' : 'TCGPlayer';
       priceSource = `${src} $${pricing.tcgplayer.price.toFixed(2)} → €${bestPrice.toFixed(2)}`;
     }
-    if (!bestPrice && pricing.ebay?.median_price) {
-      bestPrice = pricing.ebay.median_price;
-      priceCurrency = pricing.ebay.currency || 'EUR';
-      priceSource = `eBay sold median`;
-    }
+    // eBay is deliberately NOT a price source — see the note in
+    // pricing/price.js. Its adapter reports the median of the 15 CHEAPEST
+    // ACTIVE listings as a "sold median"; measured at €2.28 for a card worth
+    // €168–210. It stays in `pricing.ebay` for display only.
 
     if (bestPrice) {
       const effectiveMult = isGraded ? 1.0 : conditionMult;

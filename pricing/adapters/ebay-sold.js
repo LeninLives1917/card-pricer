@@ -12,16 +12,25 @@ import { axios } from '../../apps/server/_clients.js';
 
 const NAME = 'ebay-sold';
 
+// eBay client-credentials tokens are valid for ~2 hours. V1 fetched a fresh one
+// on every card, which on a bulk-scanning session is one extra round trip per
+// card plus needless rate-limit exposure. Cached module-level with a safety
+// margin; a failed fetch is not cached, so the next call retries.
+let _tokenCache = { token: null, expiresAt: 0 };
+const TOKEN_TTL_MS = 105 * 60 * 1000;   // 1h45m — under the ~2h eBay lifetime
+
 /**
- * Fetch a client-credentials OAuth token for eBay Browse API. Token is NOT
- * cached here — V1 fetched a fresh one per request and that's preserved.
- * (eBay tokens last 2h; the next slice that wires the engine cache layer
- * may add it.)
+ * Fetch (or reuse) a client-credentials OAuth token for the eBay Browse API.
+ * Returns null when credentials are absent or the exchange fails.
  */
 async function getEbayToken() {
   const appId = process.env.EBAY_APP_ID;
   const certId = process.env.EBAY_CERT_ID;
   if (!appId || !certId) return null;
+
+  if (_tokenCache.token && Date.now() < _tokenCache.expiresAt) {
+    return _tokenCache.token;
+  }
 
   try {
     const credentials = Buffer.from(`${appId}:${certId}`).toString('base64');
@@ -35,11 +44,25 @@ async function getEbayToken() {
       },
       timeout: 10000,
     });
-    return resp.data.access_token;
+    const token = resp.data.access_token;
+    if (token) {
+      // Respect the server's own expiry when it gives one, minus a margin.
+      const serverTtl = Number(resp.data.expires_in) * 1000;
+      const ttl = Number.isFinite(serverTtl) && serverTtl > 0
+        ? Math.max(0, serverTtl - 5 * 60 * 1000)
+        : TOKEN_TTL_MS;
+      _tokenCache = { token, expiresAt: Date.now() + ttl };
+    }
+    return token;
   } catch (err) {
     console.error('eBay token error:', err.message);
-    return null;
+    return null;   // deliberately not cached — retry on the next call
   }
+}
+
+/** Test hook: drop the cached token so a spec can exercise the fetch path. */
+export function __resetTokenCache() {
+  _tokenCache = { token: null, expiresAt: 0 };
 }
 
 /**
