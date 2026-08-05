@@ -32,7 +32,7 @@
 import fs from 'fs';
 import { homedir } from 'os';
 import { fileURLToPath } from 'url';
-import { dirname, join, basename, extname, relative } from 'path';
+import { dirname, join, basename, extname, relative, sep } from 'path';
 import sharp from 'sharp';
 
 import { computePhash, computeDhash } from '../../pricing/phash.js';
@@ -56,6 +56,12 @@ function argVal(flag) {
   return i === -1 ? null : Number(process.argv[i + 1]);
 }
 const LIMIT = argVal('--limit');
+// --misses re-reviews only the photos previously marked "not here". Needed
+// after the index gains cards: a "__none__" label means "not among the
+// candidates I was shown", which is a statement about the OLD index, not about
+// the card. Confirmed matches don't need re-checking — a card that matched
+// correctly still matches correctly when the index only grows.
+const MISSES_ONLY = process.argv.includes('--misses');
 
 const IMAGE_EXT = new Set(['.jpg', '.jpeg', '.png', '.webp', '.heic', '.heif']);
 
@@ -73,6 +79,7 @@ function walk(dir) {
 // loading (observed: every candidate rendered as a grey box). Small embedded
 // JPEGs make the page self-contained, fast, and usable with no internet — which
 // also means it can be opened on the shop floor.
+let PRESEED = {};
 const _thumbCache = new Map();
 async function candThumb(id, meta) {
   if (_thumbCache.has(id)) return _thumbCache.get(id);
@@ -113,6 +120,22 @@ async function main() {
   console.log(`[review] index: ${N} cards, d=${D} (${emb.model})`);
 
   let files = walk(PHOTO_DIR).sort();
+
+  if (MISSES_ONLY) {
+    const labelsFile = join(PHOTO_DIR, 'labels.json');
+    if (!fs.existsSync(labelsFile)) {
+      console.error(`[review] --misses needs ${labelsFile}`); process.exit(1);
+    }
+    const prev = JSON.parse(fs.readFileSync(labelsFile, 'utf8'));
+    const before = files.length;
+    files = files.filter(f => prev[relative(PHOTO_DIR, f).split(sep).join('/')] === '__none__');
+    console.log(`[review] --misses: ${files.length} of ${before} photos previously marked "not here"`);
+    // Carry the confirmed labels into the page's saved state so a re-review
+    // downloads a COMPLETE labels.json, not just the re-checked subset.
+    PRESEED = Object.fromEntries(
+      Object.entries(prev).filter(([, v]) => v !== '__none__'));
+  }
+
   if (LIMIT) files = files.slice(0, LIMIT);
   if (!files.length) {
     console.error(`[review] no images found under ${PHOTO_DIR}`);
@@ -218,7 +241,8 @@ async function main() {
   const cards = rows.map((r, i) => `
 <div class="row" data-i="${i}" data-file="${esc(r.file)}">
   <div class="q">
-    <img src="data:image/jpeg;base64,${r.thumb}" alt="">
+    <img class="qimg" src="data:image/jpeg;base64,${r.thumb}" alt="">
+    <button class="flip" type="button" title="Rotate 180°">⟳ flip</button>
     <div class="fn">${esc(r.file)}</div>
   </div>
   <div class="cands">
@@ -249,7 +273,11 @@ async function main() {
  .row{display:flex;gap:14px;padding:14px 0;border-bottom:1px solid #292929;align-items:flex-start}
  .row.done{opacity:.45}
  .q{flex:0 0 ${THUMB_W}px}
- .q img{width:100%;border-radius:6px;display:block}
+ .q img{width:100%;border-radius:6px;display:block;transition:transform .12s}
+ .q img.flipped{transform:rotate(180deg)}
+ .flip{margin-top:4px;width:100%;font:inherit;font-size:12px;padding:3px 0;border:1px solid #555;
+       border-radius:5px;background:#222;color:#bbb;cursor:pointer}
+ .flip:hover{background:#2c2c2c;color:#eee}
  .fn{font-size:11px;color:#888;word-break:break-all;margin-top:4px}
  .cands{display:flex;gap:8px;flex-wrap:wrap;flex:1}
  .c{position:relative;width:118px;cursor:pointer;border:2px solid transparent;border-radius:8px;padding:4px;background:#1a1a1a}
@@ -268,7 +296,7 @@ async function main() {
   <div style="font-size:13px;color:#aaa;margin-bottom:8px">
     Click the card that matches the photo on the left. If none of them is right, click <b>Not here</b>.
     A rank-2 pick still counts as a top-1 miss — pick the truth, not the first option.
-    Progress saves automatically.
+    Progress saves automatically. If a photo looks upside down, hit <b>flip</b> — it only changes the view, not the answer.
   </div>
   <button id="dl">Download labels</button>
   <button id="clr">Clear all</button>
@@ -277,7 +305,9 @@ async function main() {
 ${cards}
 <script>
 const KEY='cp-v3-review';
-const state=JSON.parse(localStorage.getItem(KEY)||'{}');
+const PRESEED=__PRESEED__;
+const state=Object.assign({}, PRESEED, JSON.parse(localStorage.getItem(KEY)||'{}'));
+localStorage.setItem(KEY,JSON.stringify(state));
 const rows=[...document.querySelectorAll('.row')];
 function paint(){
   let n=0;
@@ -290,6 +320,15 @@ function paint(){
   }
   document.getElementById('prog').textContent=n+' / '+rows.length+' labelled';
 }
+// Orientation is chosen by match score, so when the match is wrong it is a coin
+// flip. Three automatic signals were measured against the 29 correctly-matched
+// photos — bottom-vs-top detail energy (34.5%), mean-of-top-50 similarity
+// (72.4%), global mean similarity (62.1%) — and none was reliable enough to
+// trust. A flip button always works, so the operator gets that instead.
+document.addEventListener('click',e=>{
+  const b=e.target.closest('.flip'); if(!b)return;
+  b.parentElement.querySelector('.qimg').classList.toggle('flipped');
+});
 document.addEventListener('change',e=>{
   if(e.target.type!=='radio')return;
   const row=e.target.closest('.row');
@@ -312,7 +351,7 @@ document.getElementById('clr').onclick=()=>{
 paint();
 </script>`;
 
-  fs.writeFileSync(OUT_HTML, html, 'utf8');
+  fs.writeFileSync(OUT_HTML, html.replace('__PRESEED__', JSON.stringify(PRESEED)), 'utf8');
   console.log(`[review] wrote ${OUT_HTML} (${(fs.statSync(OUT_HTML).size / 1024 / 1024).toFixed(1)} MB)`);
   console.log('[review] open it, click through, then "Download labels" and save');
   console.log(`[review] labels.json into ${PHOTO_DIR}`);

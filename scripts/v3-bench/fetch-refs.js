@@ -160,6 +160,34 @@ async function fetchSetCards(setId) {
   return out;
 }
 
+/** Every set ID pokemontcg.io knows about, paginated. Empty set on failure. */
+async function fetchAllSetIds() {
+  const ids = new Set();
+  let page = 1, total = null;
+  do {
+    let resp;
+    try {
+      resp = await getWithRetry(`${POKEMONTCG_BASE}/sets?pageSize=${PAGE_SIZE}&page=${page}`, {
+        headers: API_KEY ? { Accept: 'application/json', 'X-Api-Key': API_KEY }
+                         : { Accept: 'application/json' },
+        timeout: FETCH_TIMEOUT_MS, maxRedirects: 5,
+      });
+    } catch (err) {
+      // Non-fatal: fall back to whatever card-db already knows. Better a partial
+      // crawl than none — but say so loudly, because a silent fallback here is
+      // exactly the failure this function exists to prevent.
+      console.warn(`[fetch-refs] WARNING: could not list upstream sets (${err.message}); ` +
+                   `falling back to card-db set IDs only — NEW SETS WILL BE MISSED`);
+      return ids;
+    }
+    if (total === null) total = resp.data.totalCount ?? 0;
+    for (const s of resp.data.data ?? []) if (s.id) ids.add(s.id);
+    page++;
+  } while ((page - 1) * PAGE_SIZE < total);
+  console.log(`[fetch-refs] ${ids.size} sets known upstream`);
+  return ids;
+}
+
 // -----------------------------------------------------------------------------
 // main
 // -----------------------------------------------------------------------------
@@ -173,7 +201,23 @@ async function main() {
     process.exit(1);
   }
   const cardDb = JSON.parse(fs.readFileSync(CARD_DB_FILE, 'utf8'));
-  let setIds = [...new Set(Object.keys(cardDb).map(k => k.slice(0, k.lastIndexOf('-'))))].sort();
+  const localSetIds = new Set(Object.keys(cardDb).map(k => k.slice(0, k.lastIndexOf('-'))));
+
+  // Set discovery MUST come from upstream, not from the local card-db.
+  // Deriving set IDs from card-db keys alone means a set that is not already in
+  // card-db can never be crawled — newly released sets are structurally
+  // invisible, forever. Measured cost of that bug: the operator's first real
+  // photo set was dominated by `me5` (Pitch Black, released 3 weeks earlier),
+  // and every card in it was an automatic miss with no way to tell that apart
+  // from a matcher failure. scripts/build-phash-db.js has the same defect.
+  const upstream = await fetchAllSetIds();
+  for (const id of upstream) localSetIds.add(id);
+  const newlyFound = [...upstream].filter(id => !Object.keys(cardDb).some(k => k.startsWith(id + '-')));
+  if (newlyFound.length) {
+    console.log(`[fetch-refs] ${newlyFound.length} set(s) upstream but absent from card-db: ${newlyFound.join(', ')}`);
+  }
+
+  let setIds = [...localSetIds].sort();
   if (SET_LIMIT) setIds = setIds.slice(0, SET_LIMIT);
 
   console.log(`[fetch-refs] cache=${CACHE_DIR}`);
