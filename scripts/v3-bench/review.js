@@ -135,25 +135,36 @@ async function main() {
 
       // Same pipeline the benchmark uses, so what the operator confirms is what
       // the system would actually have produced.
-      const { buffer: face, detected: det } = await rectify(raw);
+      const { buffer: face, alt, detected: det } = await rectify(raw);
       if (det) detected++;
-      const faceBuf = await sharp(face).resize(245, 342, { fit: 'fill' }).toBuffer();
 
-      const { data, info } = await sharp(faceBuf).removeAlpha().raw()
-        .toBuffer({ resolveWithObject: true });
-      const out = await fe(new RawImage(new Uint8ClampedArray(data), info.width, info.height, 3));
-      const q = quantise(poolTokens(out.data, out.dims).cls);
-      const qv = new Int8Array(D);
-      for (let i = 0; i < D; i++) qv[i] = q[i] - 128;
+      // Quad detection recovers the card's axis but not which end is up, and on
+      // real table photos the result is upside down as often as not. Score both
+      // orientations and keep the better — otherwise every flipped card lands in
+      // the review page with six irrelevant candidates.
+      const faces = [face];
+      if (alt) faces.push(alt);
 
-      const scored = new Array(N);
-      for (let ci = 0; ci < N; ci++) {
-        let dot = 0;
-        const off = ci * D;
-        for (let k = 0; k < D; k++) dot += embAll[off + k] * qv[k];
-        scored[ci] = { ci, dot };
+      let scored = null, winner = faces[0];
+      for (const f of faces) {
+        const faceBuf = await sharp(f).resize(245, 342, { fit: 'fill' }).toBuffer();
+        const { data, info } = await sharp(faceBuf).removeAlpha().raw()
+          .toBuffer({ resolveWithObject: true });
+        const out = await fe(new RawImage(new Uint8ClampedArray(data), info.width, info.height, 3));
+        const q = quantise(poolTokens(out.data, out.dims).cls);
+        const qv = new Int8Array(D);
+        for (let i = 0; i < D; i++) qv[i] = q[i] - 128;
+
+        const sc = new Array(N);
+        for (let ci = 0; ci < N; ci++) {
+          let dot = 0;
+          const off = ci * D;
+          for (let k = 0; k < D; k++) dot += embAll[off + k] * qv[k];
+          sc[ci] = { ci, dot };
+        }
+        sc.sort((a, b) => b.dot - a.dot);
+        if (!scored || sc[0].dot > scored[0].dot) { scored = sc; winner = f; }
       }
-      scored.sort((a, b) => b.dot - a.dot);
 
       cands = [];
       for (const s of scored.slice(0, TOP_K)) {
@@ -172,7 +183,13 @@ async function main() {
       // The photo itself is embedded so the page works with no local server and
       // can be moved around freely. Rotation is baked in from EXIF, or phone
       // photos display sideways.
-      thumb = (await sharp(raw).rotate().resize(THUMB_W).jpeg({ quality: 72 }).toBuffer())
+      // Show the RECTIFIED face, not the raw photo: the operator should be
+      // comparing what the matcher actually saw. When detection fails this is
+      // just the resized frame, which is itself the useful signal.
+      // Show the orientation that WON, not the arbitrary primary — otherwise the
+      // operator is asked to compare an upside-down card against right-way-up
+      // candidates, which is needless work and invites mistakes.
+      thumb = (await sharp(winner).resize(THUMB_W).jpeg({ quality: 72 }).toBuffer())
         .toString('base64');
     } catch (err) {
       failed++;
@@ -190,6 +207,12 @@ async function main() {
 
   console.log(`[review] processed ${done}, failed ${failed}, quad detected ${detected}/${done}` +
               ` (${(detected / Math.max(1, done) * 100).toFixed(1)}%)`);
+
+  const tops = rows.map(r => Number(r.cands[0].cos)).sort((a, b) => a - b);
+  const pc = q => tops[Math.min(tops.length - 1, Math.floor(tops.length * q))];
+  console.log(`[review] top-1 cosine: min ${pc(0).toFixed(3)} | p25 ${pc(0.25).toFixed(3)} | ` +
+              `median ${pc(0.5).toFixed(3)} | p75 ${pc(0.75).toFixed(3)} | max ${pc(0.999).toFixed(3)}`);
+  console.log('[review] for reference, a correct match on clean renders scores ~0.85-1.00');
 
   // ---- page ---------------------------------------------------------------
   const cards = rows.map((r, i) => `

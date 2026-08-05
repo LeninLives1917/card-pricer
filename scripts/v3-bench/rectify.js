@@ -25,11 +25,15 @@ export const CARD_H = 342;
 // detection space then scaled back up, so output quality is unaffected.
 const DETECT_MAX = 600;
 
-// A trading card is 63x88mm -> 0.716. Accept a generous band around it so a
-// tilted card (which foreshortens) still qualifies, while rejecting the frame
-// border and long thin artefacts.
-const ASPECT_MIN = 0.45;
-const ASPECT_MAX = 1.05;
+// A trading card is 63x88mm -> short/long = 0.716. Test the SHORT-OVER-LONG
+// ratio, which is orientation-independent: an earlier version tested w/h against
+// 0.45..1.05 and so rejected every card lying landscape in the frame. Measured
+// against the operator's first real photo set, the detector was finding the card
+// perfectly (area 0.33 of frame, short/long 0.71 — exactly the card ratio) and
+// then throwing it away for being sideways: 0 of 8 detected.
+// Band allows for foreshortening when the card is tilted.
+const RATIO_MIN = 0.55;
+const RATIO_MAX = 0.92;
 
 // The quad must occupy a real share of the frame. Below this it is probably a
 // sticker, a logo inside the art, or noise.
@@ -123,10 +127,10 @@ async function detectQuad(cv, buf) {
           const wTop = dist(o[0], o[1]), wBot = dist(o[3], o[2]);
           const hLeft = dist(o[0], o[3]), hRight = dist(o[1], o[2]);
           const w = (wTop + wBot) / 2, h = (hLeft + hRight) / 2;
-          const aspect = h > 0 ? w / h : 0;
-          if (aspect >= ASPECT_MIN && aspect <= ASPECT_MAX) {
+          const ratio = Math.min(w, h) / Math.max(w, h);
+          if (ratio >= RATIO_MIN && ratio <= RATIO_MAX) {
             bestArea = area;
-            bestQuad = { corners: o, areaFrac: frac };
+            bestQuad = { corners: o, areaFrac: frac, landscape: w > h };
           }
         }
       }
@@ -156,7 +160,7 @@ export async function rectify(buf) {
 
   if (!quad) {
     const fallback = await sharp(buf).resize(CARD_W, CARD_H, { fit: 'fill' }).toBuffer();
-    return { buffer: fallback, detected: false };
+    return { buffer: fallback, alt: null, detected: false };
   }
 
   // Work at full resolution: undo the detection downscale.
@@ -169,10 +173,19 @@ export async function rectify(buf) {
   // EXPAND pushes the quad outward from its centroid to compensate.
   const cx = quad.corners.reduce((s, p) => s + p.x, 0) / 4;
   const cy = quad.corners.reduce((s, p) => s + p.y, 0) / 4;
-  const src = quad.corners.flatMap(p => [
+
+  // Map the card's LONG edge to the output's long side. For a card lying
+  // landscape the geometric top edge is the long one, so rotating the corner
+  // list by one puts it on the destination's vertical edge; without this the
+  // warp squashes an 88mm edge into a 245px width.
+  let corners = quad.corners;
+  if (quad.landscape) corners = [corners[1], corners[2], corners[3], corners[0]];
+
+  const pt = p => [
     (cx + (p.x - cx) * (1 + EXPAND)) * inv,
     (cy + (p.y - cy) * (1 + EXPAND)) * inv,
-  ]);
+  ];
+  const src = corners.flatMap(pt);
 
   const raw = await sharp(buf).ensureAlpha().raw().toBuffer();
   const srcMat = new cv.Mat(meta.height, meta.width, cv.CV_8UC4);
@@ -184,16 +197,19 @@ export async function rectify(buf) {
     [0, 0, CARD_W, 0, CARD_W, CARD_H, 0, CARD_H]);
   const M = cv.getPerspectiveTransform(srcTri, dstTri);
 
-  let out;
+  let out, alt = null;
   try {
     cv.warpPerspective(srcMat, dstMat, M, new cv.Size(CARD_W, CARD_H),
       cv.INTER_LINEAR, cv.BORDER_CONSTANT, new cv.Scalar(0, 0, 0, 255));
     out = await sharp(Buffer.from(dstMat.data), {
       raw: { width: CARD_W, height: CARD_H, channels: 4 },
     }).png().toBuffer();
+    // Rectification fixes the card's axis but not which end is up: a quad alone
+    // cannot say. Callers get both and keep whichever matches better.
+    alt = await sharp(out).rotate(180).png().toBuffer();
   } finally {
     srcMat.delete(); dstMat.delete(); srcTri.delete(); dstTri.delete(); M.delete();
   }
 
-  return { buffer: out, detected: true };
+  return { buffer: out, alt, detected: true };
 }

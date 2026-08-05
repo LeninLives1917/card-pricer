@@ -145,27 +145,43 @@ async function brSignature(buf, meta) {
  * phone photo does. Skipping it hashes the padding along with the card and
  * depresses the result for reasons that have nothing to do with the descriptor.
  */
+/**
+ * Returns every plausible orientation of the card face.
+ *
+ * Quad detection recovers the card's AXIS but not which end is up — the four
+ * corners look the same either way. Against the operator's real photos, where
+ * cards lie on a table at arbitrary rotation, rectification produced correct but
+ * upside-down faces every time. So both are returned and the caller keeps
+ * whichever matches better. One extra descriptor pass is far cheaper than
+ * throwing away every 180-degree case.
+ */
 async function normaliseCard(buf, needsCrop) {
   if (!needsCrop || NORM === 'none') {
-    return sharp(buf).resize(245, 342, { fit: 'fill' }).toBuffer();
+    return [await sharp(buf).resize(245, 342, { fit: 'fill' }).toBuffer()];
   }
   if (NORM === 'rectify') {
-    const { buffer, detected } = await rectify(buf);
+    const { buffer, alt, detected } = await rectify(buf);
     if (detected) detectHits++; else detectMiss++;
-    return sharp(buffer).resize(245, 342, { fit: 'fill' }).toBuffer();
+    const faces = [await sharp(buffer).resize(245, 342, { fit: 'fill' }).toBuffer()];
+    if (alt) faces.push(await sharp(alt).resize(245, 342, { fit: 'fill' }).toBuffer());
+    return faces;
   }
   const cropped = await cropToCard(buf);
-  return sharp(cropped).resize(245, 342, { fit: 'fill' }).toBuffer();
+  return [await sharp(cropped).resize(245, 342, { fit: 'fill' }).toBuffer()];
 }
 
 async function queryDescriptors(buf, needsCrop) {
-  const face = await normaliseCard(buf, needsCrop);
-  const meta = await sharp(face).metadata();
-  const art = await cropBox(face, meta, ART_BOX, 245, 342);
-  const [p, d, w] = await Promise.all([computePhash(art), computeDhash(art), computeWhash(art)]);
-  const br = await brSignature(face, meta);
-  const emb = EMB_MODE ? await embedFace(face) : null;
-  return { p, d, w, br, emb };
+  const faces = await normaliseCard(buf, needsCrop);
+  const out = [];
+  for (const face of faces) {
+    const meta = await sharp(face).metadata();
+    const art = await cropBox(face, meta, ART_BOX, 245, 342);
+    const [p, d, w] = await Promise.all([computePhash(art), computeDhash(art), computeWhash(art)]);
+    const br = await brSignature(face, meta);
+    const emb = EMB_MODE ? await embedFace(face) : null;
+    out.push({ p, d, w, br, emb });
+  }
+  return out;
 }
 
 // -----------------------------------------------------------------------------
@@ -459,7 +475,7 @@ async function main() {
       if (!USE_PHOTOS && !NO_AUG) buf = await augment(buf, rnd, AUG_MODE);
     } catch { continue; }
 
-    let qd;
+    let qds;
     const t0 = process.hrtime.bigint();
     // Photos have background; augmented renders have rotation fill. Both need
     // boundary detection. A clean unaugmented reference does not.
@@ -467,11 +483,17 @@ async function main() {
     // normalisation for unaugmented input, which silently made
     // "--no-aug --rectify" a no-op and reported 0/0 detections.
     const needsCrop = NORM !== 'none';
-    try { qd = await queryDescriptors(buf, needsCrop); } catch { continue; }
+    try { qds = await queryDescriptors(buf, needsCrop); } catch { continue; }
+    if (!qds.length) continue;
 
-    const [qpLo, qpHi] = hexToPair(qd.p.toString(16).padStart(16, '0'));
-    const [qdLo, qdHi] = hexToPair(qd.d.toString(16).padStart(16, '0'));
-    const [qwLo, qwHi] = hexToPair(qd.w.toString(16).padStart(16, '0'));
+    // Best score across orientations: max cosine for embeddings, min Hamming
+    // for hashes. A card is one card whichever way up it was photographed.
+    const packed = qds.map(q => ({
+      p: hexToPair(q.p.toString(16).padStart(16, '0')),
+      d: hexToPair(q.d.toString(16).padStart(16, '0')),
+      w: hexToPair(q.w.toString(16).padStart(16, '0')),
+      emb: q.emb,
+    }));
 
     // Stage 1 — summed Hamming across the art-box hashes.
     //
@@ -480,15 +502,34 @@ async function main() {
     // artwork, so the question is "does any framing match?", not "do all". Best
     // distance per card is tracked in a scratch array to avoid a second pass.
     let best;
+    let chosen = 0;
     if (EMB_MODE) {
       // Cosine similarity over L2-normalised int8 vectors: the dot product
       // preserves the float ranking, so no dequantisation is needed. Converted
       // to a pseudo-distance so the rest of the pipeline is unchanged.
+      // Choose the orientation ONCE, on its best match across the catalogue,
+      // then score everything with it. Taking a per-card best across
+      // orientations silently lets stage 2 read the bottom-right box of an
+      // upside-down face — which is the top-left of the card, pure noise — and
+      // measured 9 points WORSE than a single consistent orientation.
+      let bestOrient = 0, bestOverall = -Infinity;
+      for (let o = 0; o < packed.length; o++) {
+        let mx = -Infinity;
+        for (let ci = 0; ci < N; ci++) {
+          const off = ci * EMB_D;
+          let dot = 0;
+          for (let k = 0; k < EMB_D; k++) dot += embAll[off + k] * packed[o].emb[k];
+          if (dot > mx) mx = dot;
+        }
+        if (mx > bestOverall) { bestOverall = mx; bestOrient = o; }
+      }
+      chosen = bestOrient;
+      const qe = packed[bestOrient].emb;
       const scored = new Array(N);
       for (let ci = 0; ci < N; ci++) {
         let dot = 0;
         const off = ci * EMB_D;
-        for (let k = 0; k < EMB_D; k++) dot += embAll[off + k] * qd.emb[k];
+        for (let k = 0; k < EMB_D; k++) dot += embAll[off + k] * qe[k];
         scored[ci] = { i: ci, d: -dot };
       }
       scored.sort((a, b) => a.d - b.d);
@@ -496,13 +537,26 @@ async function main() {
     } else {
     const bestPerCard = perCardScratch;
     bestPerCard.fill(255);
+    // Same reasoning as the embedding branch: pick one orientation, then commit.
+    let bo = 0, boDist = 999;
+    for (let o = 0; o < packed.length; o++) {
+      let mn = 999;
+      for (let i = 0; i < E; i++) {
+        let dd =
+          popcount32(pLo[i] ^ packed[o].p[0]) + popcount32(pHi[i] ^ packed[o].p[1]) +
+          popcount32(dLo[i] ^ packed[o].d[0]) + popcount32(dHi[i] ^ packed[o].d[1]);
+        if (useW) dd += popcount32(wLo[i] ^ packed[o].w[0]) + popcount32(wHi[i] ^ packed[o].w[1]);
+        if (dd < mn) mn = dd;
+      }
+      if (mn < boDist) { boDist = mn; bo = o; }
+    }
+    chosen = bo;
+    const pk = packed[bo];
     for (let i = 0; i < E; i++) {
       let dist =
-        popcount32(pLo[i] ^ qpLo) + popcount32(pHi[i] ^ qpHi) +
-        popcount32(dLo[i] ^ qdLo) + popcount32(dHi[i] ^ qdHi);
-      if (useW) {
-        dist += popcount32(wLo[i] ^ qwLo) + popcount32(wHi[i] ^ qwHi);
-      }
+        popcount32(pLo[i] ^ pk.p[0]) + popcount32(pHi[i] ^ pk.p[1]) +
+        popcount32(dLo[i] ^ pk.d[0]) + popcount32(dHi[i] ^ pk.d[1]);
+      if (useW) dist += popcount32(wLo[i] ^ pk.w[0]) + popcount32(wHi[i] ^ pk.w[1]);
       const ci = cardOf[i];
       if (dist < bestPerCard[ci]) bestPerCard[ci] = dist;
     }
@@ -530,10 +584,12 @@ async function main() {
     //
     // So: re-rank only the candidates within AMBIG_MARGIN of the best stage-1
     // distance, and leave everything else in stage-1 order.
+    // Stage 2 reads the orientation stage 1 committed to.
+    const qbr = qds[chosen].br;
     const withBr = best.map(b => {
-      let s = 0;
       const off = b.i * SIG;
-      for (let k = 0; k < SIG; k++) s += Math.abs(brAll[off + k] - qd.br[k]);
+      let s = 0;
+      for (let k = 0; k < SIG; k++) s += Math.abs(brAll[off + k] - qbr[k]);
       return { ...b, br: s / SIG };
     });
     const d0 = withBr.length ? withBr[0].d : 0;
