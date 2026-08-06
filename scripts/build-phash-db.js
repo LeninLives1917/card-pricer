@@ -440,9 +440,15 @@ async function main() {
     if (setHashCounts[setId] !== undefined) setHashCounts[setId]++;
 
     if (sinceLastSave >= SAVE_EVERY) {
+      // Claim the checkpoint BEFORE awaiting. The reset used to happen after
+      // the flush, so while one task awaited it every other in-flight task
+      // (IMG_CONCURRENCY of them) still saw the threshold crossed and started
+      // its own flush — up to 16 concurrent writes of a 20 MB card-db, all
+      // logging the same counters. That is why the log showed the same
+      // "checkpoint: 2053 hashed" line repeated dozens of times.
+      sinceLastSave = 0;
       await flushNow();
       flushCardDb(cardDbObj);
-      sinceLastSave = 0;
       console.log(`[phash-crawler] checkpoint: ${hashed} hashed, ${skipped} skipped, ${totalEnriched} card-db enriched`);
     }
   }
