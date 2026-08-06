@@ -721,6 +721,98 @@ for trusting any threshold in production.
 
 ---
 
+## 14. CENTROID AUGMENTATION — supersedes §13
+
+§13's index held one embedding per card, taken from a clean render. The query is
+a photograph. Every gap between those two — brightness, contrast, focus, framing
+— shows up as lost cosine.
+
+Augmentation closes that gap by indexing each card as the L2-normalised mean of
+its clean render plus three distorted ones. **Index size and query latency are
+unchanged** (one vector per card either way); only the build cost rises, to
+roughly four forward passes per card.
+
+The distortion parameters were fitted to *measured* residuals rather than
+intuition — rectified real photographs diffed against their references — and
+that measurement changed the design twice:
+
+- **Framing jitter was dropped.** Planned at ±2.5%; the measured median offset
+  after rectification is 0.000 and the p90 is 0.012. Rectification had already
+  solved it, and the planned figure was double the p90.
+- **Contrast collapse was added.** Photographs land at ~0.76x reference
+  contrast. It is the dominant residual and nobody had it on the list.
+- Brightness is skewed *bright* (0.97–1.42x), not symmetric around 1.0.
+
+### 14.1 Result
+
+Same 64 photographs, same 20,427-card catalogue, same labels:
+
+```
+                       plain (§13)   augmented    delta
+stage 1 top-1             75.0%        76.6%      +1.6
+stage 1 top-5             79.7%        79.7%       0.0
+stage 2 top-1             76.6%        79.7%      +3.1
+quad detected            56/64        56/64         —
+```
+
+Top-1 barely moves, and that is the point: **augmentation is not a ranking
+improvement, it is a calibration improvement.** The ordering was already mostly
+right. What changed is that correct matches now score high enough to be trusted,
+because the centroid they are compared against already contains photograph-like
+distortion.
+
+The precision/coverage curve is where it shows:
+
+```
+                                         plain (§13)        augmented
+zero-error point, threshold refit     T>=0.876  11/64     T>=0.747  51/64
+zero-error at the SHIPPED gate        T>=0.850  25/64     T>=0.850  35/64
+  (score >= 0.850 AND margin >= 0.05)          (39.1%)             (54.7%)
+```
+
+**Read the second row, not the first.** T>=0.747 is fitted to this sample and
+sits about 0.007 above the highest-scoring wrong answer — a razor-thin boundary
+that will not survive a larger set. The honest, non-refitted claim is the second
+row: at thresholds unchanged from what already ships, zero-error coverage went
+from 25/64 to 35/64.
+
+### 14.2 The reprint pair is fixed
+
+The Ethan's Slugma confusion that was §13's only error on confirmed cards
+(`sv10-35` vs `me2pt5-23`, two prints sharing artwork) now resolves correctly.
+Its runner-up margin was 0.026 where correct matches carried a median of 0.129;
+augmentation separated them. Every remaining failure is a photograph the
+operator labelled "not here".
+
+### 14.3 Two things this does not establish
+
+**The 13 "not here" labels are stale.** A `__none__` label means "not in the
+candidate list I was shown", so it does not survive an index change — only
+confirmed matches do. Those labels were made against the plain index.
+
+This does not threaten the zero-error claim: re-reviewed against the augmented
+index, all 13 top out at cosine **0.741**, below every accept threshold
+discussed here, and only 5 of 13 even produce a quad (38.5%, against 87.5%
+overall) — they are the badly-framed and illegible ones. However they resolve,
+none would be auto-accepted. It does mean the *coverage* figure could move, and
+"51/51 on catalogue-present cards" should not be quoted until they are
+re-reviewed. `EMB_AUGMENT=1 node scripts/v3-bench/review.js --misses`
+regenerates that review; `review.js` previously hardcoded the plain index and
+was fixed to honour `EMB_AUGMENT` for exactly this reason.
+
+**Latency is not comparable across these runs.** §13 records p50 273 ms; the
+plain re-run for this comparison measured 674 ms and the augmented run 258 ms.
+The plain re-run was competing with the embedding build for CPU. Same index
+size, same linear scan, no algorithmic change — the spread is measurement noise
+from a loaded machine, not a result. Do not cite it.
+
+And the standing caveat from §13.5 is unchanged and is now the binding
+constraint: every number here rests on one 115-second photo session of roughly
+40 distinct cards. "Zero errors" is 35/35 observed, not a bounded error rate.
+The stratified session (300–500 photos, mixed eras, sleeved and unsleeved, two
+lighting setups, deliberate blur and clipping buckets) is what would turn these
+into thresholds worth shipping.
+
 ## 11. Production port — `CARD_RECTIFY`
 
 The rectifier is ported into production as `pricing/card-rectify.js`, and

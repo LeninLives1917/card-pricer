@@ -42,7 +42,15 @@ import { poolTokens, quantise } from './build-embeddings.js';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const CACHE_DIR = process.env.V3_CACHE_DIR || join(homedir(), '.card-pricer-v3');
 const PHOTO_DIR = process.env.V3_PHOTO_DIR || join(CACHE_DIR, 'photos');
-const EMB_FILE = join(CACHE_DIR, 'embeddings.json');
+// EMB_AUGMENT=1 selects the centroid-augmented index, matching evaluate.js.
+// This MUST agree with whatever index the labels are being judged against: a
+// "__none__" label means "not in the candidate list I was shown", so reviewing
+// against a different index than the one under evaluation re-seeds stale
+// labels as if they were current. evaluate.js already had this exact bug — it
+// drew its candidate universe from descriptors.json while searching
+// embeddings.json, silently excluding 537 cards.
+const EMB_FILE = join(CACHE_DIR,
+  process.env.EMB_AUGMENT === '1' ? 'embeddings-aug.json' : 'embeddings.json');
 const MANIFEST_FILE = join(CACHE_DIR, 'manifest.json');
 const OUT_HTML = join(CACHE_DIR, 'review.html');
 
