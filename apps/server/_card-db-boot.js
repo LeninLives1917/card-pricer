@@ -45,6 +45,9 @@ const CRAWL_MARKER = join(REPO_ROOT, 'data', '.crawl-active');
 // Shipping that mistake made maybeRefreshStaleCatalogue() permanently inert
 // while /api/health cheerfully reported the catalogue as "fresh".
 const CRAWL_STAMP = join(REPO_ROOT, 'data', '.card-db-crawled');
+// Gap between recovery requests. The failures being recovered were caused by
+// concurrent load, so recovery must not recreate it.
+const RECOVERY_PACE_MS = 120;
 
 export const CARD_DB = new Map();
 export const CARD_PRICES = new Map();
@@ -410,6 +413,85 @@ function loadPriceDbFromFile() {
   }
 }
 
+/**
+ * Recover the cards inside pages that failed during the main crawl.
+ *
+ * WHAT A FAILED PAGE ACTUALLY IS — measured, and not what it first looked like
+ *
+ * Production reported "1 page(s) failed" of 82. Probing page 12 by hand gave
+ * repeated instant 500s, and bisecting it appeared to isolate three individual
+ * card positions that always failed — a tidy story about broken upstream
+ * records. That story was wrong.
+ *
+ * Re-running the same bisection two ways settled it (2026-08-06):
+ *
+ *   back-to-back, no retry   212/250 recovered, 38 positions "unfetchable"
+ *   120ms apart, with retry  250/250 recovered in ONE request, 1.2s
+ *
+ * The set of "broken" cards changed with request pacing, which means nothing
+ * was broken. pokemontcg.io 500s under concurrent load, and the main crawl
+ * issues BATCH pages at once, so a page fails for load reasons and its retries
+ * are spent while the load is still there.
+ *
+ * So recovery is: ask again, gently, once the burst is over. Subdivision
+ * survives only as a fallback for a page that still fails when paced — it costs
+ * ~35 small requests to unpick 250 cards, and it isolates any position that
+ * genuinely cannot be fetched rather than writing the whole page off.
+ *
+ * @returns {Promise<number[]>} positions that failed even when requested singly.
+ */
+export async function recoverFailedPages(failedPages, pageSize, reqOpts, pageParams, deps = {}) {
+  // Injected so the subdivision arithmetic is testable without the network.
+  // Paced deliberately. The crawl that produced these failures was running
+  // BATCH pages concurrently; hammering the same endpoint again reproduces the
+  // load that caused them. 120ms between requests recovered a page that
+  // back-to-back requests declared 38-cards-broken.
+  const fetchPage = deps.fetchPage ?? (async (page, size) => {
+    await new Promise(r => setTimeout(r, RECOVERY_PACE_MS));
+    return getWithRetry('https://api.pokemontcg.io/v2/cards', reqOpts(pageParams(page, size)));
+  });
+  const onCards = deps.onCards ?? processPageData;
+  const unrecoverable = [];
+  let recovered = 0;
+
+  console.log(`[CARD-DB] recovering ${failedPages.length} failed page(s) by subdivision …`);
+
+  // Each step re-requests the same span of cards in smaller slices. Positions
+  // are 1-based over the API's global ordering, which is what `page` indexes.
+  async function fetchSpan(firstCard, count) {
+    if (count <= 0) return;
+    // A span is addressable as a whole page only when it aligns to a page
+    // boundary, so recurse on sizes that divide evenly: 250 → 50 → 10 → 1.
+    const size = count;
+    const page = Math.floor(firstCard / size) + 1;
+    try {
+      const r = await fetchPage(page, size);
+      const cards = r?.data?.data || [];
+      onCards(cards);
+      recovered += cards.length;
+      return;
+    } catch {
+      if (size === 1) { unrecoverable.push(firstCard + 1); return; }
+    }
+    const next = size >= 250 ? 50 : size >= 50 ? 10 : 1;
+    for (let off = 0; off < count; off += next) {
+      await fetchSpan(firstCard + off, next);
+    }
+  }
+
+  for (const p of failedPages) {
+    await fetchSpan((p - 1) * pageSize, pageSize);
+  }
+
+  if (unrecoverable.length) {
+    console.warn(`[CARD-DB] recovery: +${recovered} cards; ${unrecoverable.length} ` +
+      `position(s) return 500 individually (upstream fault): ${unrecoverable.slice(0, 10).join(',')}`);
+  } else {
+    console.log(`[CARD-DB] recovery: +${recovered} cards, nothing left unfetchable`);
+  }
+  return unrecoverable;
+}
+
 export async function downloadCardDatabase({ force = false } = {}) {
   if (cardDbLoading) return;
   cardDbLoading = true;
@@ -423,8 +505,10 @@ export async function downloadCardDatabase({ force = false } = {}) {
     timeout: 30000,
     headers: apiKey ? { 'X-Api-Key': apiKey } : {}
   });
-  const pageParams = (page) => ({
-    pageSize: PAGE_SIZE,
+  // size is overridable so recoverFailedPages() can re-request the same span in
+  // smaller slices; the default keeps every existing call site unchanged.
+  const pageParams = (page, size = PAGE_SIZE) => ({
+    pageSize: size,
     page,
     select: 'id,name,number,rarity,set,hp,supertype,subtypes,cardmarket,tcgplayer,images'
   });
@@ -485,6 +569,13 @@ export async function downloadCardDatabase({ force = false } = {}) {
       }
     }
 
+    // A failed page is usually just a page that was asked for at a bad moment.
+    // Measured: a page the crawl gave up on returned all 250 cards from a
+    // single paced retry. Recovery re-asks gently before subdividing.
+    const unrecoverable = failedPages.length
+      ? await recoverFailedPages(failedPages, PAGE_SIZE, reqOpts, pageParams)
+      : [];
+
     cardDbCount = CARD_DB.size;
     cardDbReady = true;
     _lastPriceRefreshAt = Date.now();
@@ -500,15 +591,25 @@ export async function downloadCardDatabase({ force = false } = {}) {
       pagesTotal: totalPages,
       pagesFailed,
       failedPages: failedPages.slice(0, 50),
-      complete: pagesFailed === 0 && cardDbCount >= totalCount * 0.995,
+      // Positions that failed even when requested singly, paced and retried.
+      // Nothing has yet been observed to land here against the live API.
+      unrecoverable: unrecoverable.slice(0, 50),
+      unrecoverableCount: unrecoverable.length,
+      // Completeness is judged on what we could not recover, not on how many
+      // pages happened to fail. Before recovery existed, three bad upstream
+      // cards marked the whole catalogue incomplete and pinned /api/health to
+      // "degraded" for 24 hours — an alarm that can't be cleared gets ignored.
+      complete: unrecoverable.length === 0 && cardDbCount >= totalCount * 0.995,
     };
 
-    if (pagesFailed > 0) {
-      const shortBy = Math.max(0, totalCount - cardDbCount);
-      console.warn(`[CARD-DB] INCOMPLETE: ${cardDbCount}/${totalCount} cards ` +
-        `(short ~${shortBy}), ${pagesFailed} failed page(s): ` +
-        `${failedPages.slice(0, 30).join(',')}${failedPages.length > 30 ? '…' : ''} — ` +
-        're-run a refresh to fill the gaps');
+    if (unrecoverable.length > 0) {
+      console.warn(`[CARD-DB] INCOMPLETE: ${cardDbCount}/${totalCount} cards; ` +
+        `${unrecoverable.length} position(s) still failed when requested singly ` +
+        'with pacing and retry — investigate before assuming an upstream fault');
+    } else if (pagesFailed > 0) {
+      console.log(`[CARD-DB] Download complete! ${cardDbCount}/${totalCount} cards ` +
+        `(${CARD_PRICES.size} priced) — ${pagesFailed} page(s) failed but were fully ` +
+        'recovered by subdivision.');
     } else {
       console.log(`[CARD-DB] Download complete! ${cardDbCount}/${totalCount} cards (${CARD_PRICES.size} priced).`);
     }
