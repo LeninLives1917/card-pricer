@@ -405,6 +405,44 @@ export async function priceCard(verifiedCard, opts = {}) {
   // reach bestPrice. Restore only via eBay's Marketplace Insights API, which is
   // the actual sold-comps endpoint and requires an application.
 
+  // --- cross-source divergence guard ---------------------------------------
+  // The cascade above is first-match-wins, so one bad adapter sets the price
+  // unopposed. Compare the sources against each other before quoting.
+  const divergence = detectPriceDivergence(pricing);
+  if (divergence.diverged) {
+    pricing.price_warning = {
+      type: 'source_divergence',
+      ratio: Math.round(divergence.ratio * 10) / 10,
+      median_eur: divergence.median,
+      outliers: divergence.outliers,
+      prices: divergence.prices.map(p => ({
+        source: p.source, eur: Math.round(p.eur * 100) / 100,
+      })),
+    };
+
+    // Only re-select when a majority identifies the outlier. With two sources
+    // the quote is flagged and left alone — picking one would be a coin flip.
+    if (divergence.adjudicable && !isGraded) {
+      const chosen = divergence.prices.find(p => Math.abs(p.eur - bestPrice) < 0.01);
+      if (chosen && divergence.outliers.includes(chosen.source)) {
+        const replacement = divergence.prices
+          .filter(p => !divergence.outliers.includes(p.source))
+          .sort((a, b) => Math.abs(a.eur - divergence.median) - Math.abs(b.eur - divergence.median))[0];
+        if (replacement) {
+          console.warn(
+            `[PRICE] ${chosen.source} (€${chosen.eur.toFixed(2)}) is ${divergence.ratio.toFixed(1)}x ` +
+            `from the median of ${divergence.prices.length} sources — repricing from ${replacement.source}`,
+          );
+          bestPrice = Math.round(replacement.eur * 100) / 100;
+          priceCurrency = 'EUR';
+          priceSource = `${replacement.source} (${chosen.source} rejected as outlier)`;
+          pricing.price_warning.repriced_from = chosen.source;
+          pricing.price_warning.repriced_to = replacement.source;
+        }
+      }
+    }
+  }
+
   if (bestPrice) {
     const effectiveMult = isGraded ? 1.0 : conditionMult;
     const adjustedPrice = bestPrice * effectiveMult;
@@ -437,6 +475,86 @@ export async function priceCard(verifiedCard, opts = {}) {
  * hotness score from price-trend + eBay volume + bestPrice. Pure function so
  * tests can pin score ranges without faking a full price fan-out.
  */
+/**
+ * Every independently-sourced price in `pricing`, normalised to EUR.
+ *
+ * Used by detectPriceDivergence. eBay is included here ON PURPOSE even though
+ * it is excluded from price selection — it is precisely the kind of source
+ * whose disagreement is worth surfacing, and the €2.28-vs-€180 incident is what
+ * motivated this check.
+ *
+ * @returns {Array<{ source: string, eur: number }>}
+ */
+export function comparableEurPrices(pricing = {}) {
+  const out = [];
+  const push = (source, eur) => {
+    if (Number.isFinite(eur) && eur > 0) out.push({ source, eur });
+  };
+
+  push('cardmarket', pricing.cardmarket?.price);
+  push('justtcg', pricing.justtcg?.price_eur);
+  if (Number.isFinite(pricing.tcgplayer?.price)) {
+    push('tcgplayer', pricing.tcgplayer.price * getUsdToEur());
+  }
+  if (pricing.ebay?.median_price != null) {
+    const cur = pricing.ebay.currency || 'EUR';
+    const raw = Number(pricing.ebay.median_price);
+    push('ebay', cur === 'EUR' ? raw : raw * getUsdToEur());
+  }
+  return out;
+}
+
+/**
+ * Flag quotes where independent sources disagree wildly.
+ *
+ * The cascade above is first-match-wins, so a single bad adapter can set the
+ * price with nothing to contradict it. That is how eBay quoted €2.28 against a
+ * €168–210 market for months: every number needed to notice was already in
+ * `pricing`, and nothing compared them.
+ *
+ * Adjudication depends on how many sources exist, and the distinction matters:
+ *
+ *   >= 3 sources — take the median and mark anything a factor away from it as
+ *                  an outlier. With a majority present, the outlier is
+ *                  identifiable and the caller can safely refuse to price from
+ *                  it.
+ *   == 2 sources — flag the disagreement but name NO outlier. With two numbers
+ *                  and no tie-breaker there is no way to tell which is wrong,
+ *                  and guessing would just be the original bug with extra
+ *                  steps. Surface it and let a human decide.
+ *
+ * @param {object} pricing
+ * @param {{ factor?: number }} [opts] factor — ratio treated as divergence.
+ * @returns {{ diverged: boolean, ratio: number|null, median: number|null,
+ *             prices: Array<{source:string,eur:number}>, outliers: string[],
+ *             adjudicable: boolean }}
+ */
+export function detectPriceDivergence(pricing = {}, { factor = 5 } = {}) {
+  const prices = comparableEurPrices(pricing);
+  const base = {
+    diverged: false, ratio: null, median: null, prices, outliers: [], adjudicable: false,
+  };
+  if (prices.length < 2) return base;
+
+  const vals = prices.map(p => p.eur).sort((a, b) => a - b);
+  const ratio = vals[vals.length - 1] / vals[0];
+  if (ratio < factor) return { ...base, ratio };
+
+  const mid = Math.floor(vals.length / 2);
+  const median = vals.length % 2 ? vals[mid] : (vals[mid - 1] + vals[mid]) / 2;
+
+  // Two sources cannot adjudicate — see the note above.
+  if (prices.length < 3) {
+    return { ...base, diverged: true, ratio, median, adjudicable: false };
+  }
+
+  const outliers = prices
+    .filter(p => p.eur / median >= factor || median / p.eur >= factor)
+    .map(p => p.source);
+
+  return { ...base, diverged: true, ratio, median, outliers, adjudicable: outliers.length > 0 };
+}
+
 export function scoreHotness(pricing, card, bestPrice) {
   const hotness = { score: 50, label: 'steady', trend: null, volume: null, reasons: [] };
 
