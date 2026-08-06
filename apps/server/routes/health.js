@@ -242,7 +242,13 @@ function safeCardDbState() {
 // ----- /api/version -----
 router.get('/api/version', (req, res) => {
   res.json({
-    git_sha: process.env.GIT_SHA || 'unknown',
+    // RENDER_GIT_COMMIT is injected by Render automatically and needs no
+    // configuration, so this reports the real deployed commit instead of
+    // 'unknown'. Without it there is no way to tell which build is serving:
+    // an afternoon of "is the fix live yet?" was answered by watching uptime
+    // reset and guessing, which is not an answer.
+    git_sha: process.env.GIT_SHA || process.env.RENDER_GIT_COMMIT || 'unknown',
+    git_branch: process.env.RENDER_GIT_BRANCH || null,
     built_at: process.env.BUILT_AT || null,
     node_version: process.version,
     uptime_s: Math.round(process.uptime()),
