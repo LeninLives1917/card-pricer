@@ -72,7 +72,7 @@ export function getCardDbState() {
     // `ready` only means "something loaded". `download` says whether that
     // something is actually complete — the distinction a silently-truncated
     // catalogue hides.
-    download: _lastDownloadStats,
+    download: getLastDownloadStats(),
   };
 }
 export function getCardDbFile() { return CARD_DB_FILE; }
@@ -85,19 +85,56 @@ export function getCardDbFile() { return CARD_DB_FILE; }
  * refresh and /api/health, so the two can never disagree.
  */
 export function getCatalogueBuiltAt() {
+  return readCrawlStamp().at;
+}
+
+/**
+ * Stats from the last crawl, surviving restarts.
+ *
+ * In-memory only was not enough: `complete: false` from a partial crawl was
+ * wiped by the next redeploy, so /api/health returned to "ok" without anything
+ * being fixed. A degraded state that a restart clears is not a degraded state.
+ */
+export function getLastDownloadStats() {
+  return _lastDownloadStats ?? readCrawlStamp().download;
+}
+
+/**
+ * Parse a crawl stamp. Exported for tests: v2 is JSON, v1 was a bare ISO
+ * timestamp, and an already-deployed instance has a v1 stamp on its disk that
+ * must not be silently discarded on upgrade — doing so would report the
+ * catalogue as never-crawled and trigger a needless full re-crawl.
+ */
+export function parseCrawlStamp(raw) {
   try {
-    const raw = fs.readFileSync(CRAWL_STAMP, 'utf8');
-    const t = Date.parse(raw.trim());
-    return Number.isFinite(t) ? t : null;
+    const text = String(raw).trim();
+    if (text.startsWith('{')) {
+      const o = JSON.parse(text);
+      const t = Date.parse(o.at);
+      return { at: Number.isFinite(t) ? t : null, download: o.download ?? null };
+    }
+    const t = Date.parse(text);
+    return { at: Number.isFinite(t) ? t : null, download: null };
   } catch {
-    return null;   // never crawled by this instance
+    return { at: null, download: null };
+  }
+}
+
+function readCrawlStamp() {
+  try {
+    return parseCrawlStamp(fs.readFileSync(CRAWL_STAMP, 'utf8'));
+  } catch {
+    return { at: null, download: null };   // never crawled by this instance
   }
 }
 
 /** Record a completed crawl. Called only from downloadCardDatabase(). */
-function stampCatalogueBuilt() {
+function stampCatalogueBuilt(stats = null) {
   try {
-    fs.writeFileSync(CRAWL_STAMP, new Date().toISOString());
+    fs.writeFileSync(CRAWL_STAMP, JSON.stringify({
+      at: new Date().toISOString(),
+      download: stats,
+    }));
   } catch (err) {
     console.warn('[CARD-DB] could not write crawl stamp:', err.message);
   }
@@ -616,7 +653,7 @@ export async function downloadCardDatabase({ force = false } = {}) {
 
     saveCardDbToFile();
     savePriceDbToFile();
-    stampCatalogueBuilt();
+    stampCatalogueBuilt(_lastDownloadStats);
   } catch (e) {
     console.error(`[CARD-DB] Download failed: ${e.message}`);
     console.error(e.stack);
@@ -629,9 +666,25 @@ export async function downloadCardDatabase({ force = false } = {}) {
         _lastPriceRefreshAt = Date.now();
         savePriceDbToFile();
       }
-      // Recency, not quality — _lastDownloadStats.complete carries whether the
-      // crawl was whole, and /api/health degrades on that separately.
-      stampCatalogueBuilt();
+      // Record the abort EXPLICITLY. _lastDownloadStats still holds whatever
+      // the previous run left behind — after an earlier success that is
+      // `complete: true`, so stamping it here would let a crawl that threw
+      // claim the completeness of the one before it.
+      _lastDownloadStats = {
+        at: Date.now(),
+        cards: cardDbCount,
+        expected: null,
+        pagesTotal: null,
+        pagesFailed: null,
+        failedPages: [],
+        unrecoverable: [],
+        unrecoverableCount: 0,
+        complete: false,
+        aborted: e.message,
+      };
+      // Recency, not quality — `complete: false` carries whether the crawl was
+      // whole, and /api/health degrades on that separately.
+      stampCatalogueBuilt(_lastDownloadStats);
     }
   }
   cardDbLoading = false;

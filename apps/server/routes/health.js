@@ -122,6 +122,19 @@ export async function buildHealthPayload(deps = {}) {
           : 'fresh',
     },
     fast_path: fastPathCheck(readFastPath()),
+    // Reported because it was previously unverifiable from outside the box:
+    // the only way to know whether rectification was on in production was to
+    // trust that someone had set it. Informational, not a failure — health
+    // "degraded" should mean something is broken, not that a tuning flag sits
+    // at its default. scripts/preflight.js still WARNs when it is off.
+    rectify: {
+      ok: true,
+      enabled: env.CARD_RECTIFY === '1',
+      detail: env.CARD_RECTIFY === '1'
+        ? 'CARD_RECTIFY=1 — perspective rectification active'
+        : 'OFF — cropToCard falls back to the .trim() heuristic, which measured ' +
+          '1.0% top-1 on realistic scenes against 40.5% rectified',
+    },
   };
 
   // Degraded, not down: the scanner still answers via the vision fallback, so

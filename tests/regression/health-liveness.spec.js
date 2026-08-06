@@ -186,3 +186,28 @@ test('a working fast path reports its rate and stays ok', async () => {
   assert.match(body.checks.fast_path.detail, /95\.0% hit rate/);
   assert.equal(body.status, 'ok');
 });
+
+// ---------------------------------------------------------------------------
+// CARD_RECTIFY visibility. Whether rectification is on was previously
+// unverifiable from outside the process — the only way to know was to trust
+// that someone had set the variable in a dashboard.
+
+test('rectification state is reported', async () => {
+  const on = await health({ env: { ...HEALTHY_ENV, CARD_RECTIFY: '1' } });
+  assert.equal(on.checks.rectify.enabled, true);
+  assert.match(on.checks.rectify.detail, /active/);
+
+  const off = await health({ env: HEALTHY_ENV });
+  assert.equal(off.checks.rectify.enabled, false);
+  assert.match(off.checks.rectify.detail, /1\.0% top-1/,
+    'say what being off actually costs, not just that it is off');
+});
+
+test('rectification being off does not mark the service degraded', async () => {
+  // It is a tuning flag at its default, not a fault. A health check that goes
+  // red for configuration choices trains the operator to ignore it — the same
+  // reason a transient failed page no longer flips the catalogue check.
+  const body = await health({ env: HEALTHY_ENV });
+  assert.equal(body.checks.rectify.ok, true);
+  assert.equal(body.status, 'ok');
+});

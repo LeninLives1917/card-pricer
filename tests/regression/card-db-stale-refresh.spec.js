@@ -167,3 +167,39 @@ test('CARD_DB_AUTO_REFRESH=0 disables it', async () => {
 });
 
 test.after(() => { try { fs.rmSync(TMP, { recursive: true, force: true }); } catch { /* fine */ } });
+
+// ---------------------------------------------------------------------------
+// Crawl stats must survive a restart.
+//
+// They were in-memory only, so `complete: false` from a partial crawl was wiped
+// by the next redeploy and /api/health returned to "ok" without anything being
+// fixed. A degraded state that a restart clears is not a degraded state.
+
+import { parseCrawlStamp } from '../../apps/server/_card-db-boot.js';
+
+test('THE FORGOTTEN-FAILURE CASE: an incomplete crawl survives a restart', () => {
+  const stamp = JSON.stringify({
+    at: '2026-08-06T15:30:00.000Z',
+    download: { cards: 20898, expected: 20479, pagesFailed: 1, complete: false },
+  });
+  const { at, download } = parseCrawlStamp(stamp);
+  assert.equal(at, Date.parse('2026-08-06T15:30:00.000Z'));
+  assert.equal(download.complete, false,
+    'a redeploy must not be able to clear a degraded state that was never fixed');
+});
+
+test('a v1 bare-timestamp stamp still reads as a valid crawl time', () => {
+  // Already-deployed instances have one of these on disk. Discarding it would
+  // report the catalogue as never-crawled and kick a needless full re-crawl.
+  const { at, download } = parseCrawlStamp('2026-08-06T15:30:00.000Z');
+  assert.equal(at, Date.parse('2026-08-06T15:30:00.000Z'));
+  assert.equal(download, null, 'v1 carried no stats — say so, do not invent any');
+});
+
+test('a corrupt or empty stamp reads as unknown, not as fresh', () => {
+  for (const bad of ['', 'not-a-date', '{oops', '{}', null, undefined]) {
+    const { at, download } = parseCrawlStamp(bad);
+    assert.equal(at, null, `"${bad}" must not parse to a time`);
+    assert.equal(download, null);
+  }
+});
