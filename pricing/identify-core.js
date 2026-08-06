@@ -26,11 +26,9 @@ import {
   DOUBLE_CHECK_MODEL,
   DOUBLE_CHECK_SCORE_GATE,
   PHASH_HAMMING_MAX,
-  PHASH_WRITE_MIN,
 } from './confidence.js';
 import { fixPokemonSuffix, extractPokemonSuffix } from './adapters/pokemontcg.js';
-import { computePhash, computeDhash, computeWhash, cropToCard, lookupByHashes, addToIndex } from './phash.js';
-import { resolveSetCode } from './set-aliases.js';
+import { computePhash, computeDhash, computeWhash, cropToCard, lookupByHashes } from './phash.js';
 // One-time exception: lookupLocalDb lives in apps/server/ but pricing/ already
 // imports from that boundary (adapters/pokemontcg.js:24). Consistent with prior art.
 import { lookupLocalDb } from '../apps/server/_card-db-boot.js';
@@ -354,22 +352,28 @@ export async function identifyCore({ buffer, hint }) {
     parsed.cards = parsed.cards.map(card => fixPokemonSuffix(card));
   }
 
-  // Hash write-through: persist phash/dhash/whash → identity when Sonnet is confident.
-  // resolveSetCode converts Sonnet's uppercase set_code to CARD_DB's lowercase
-  // set_id. Skips write if set is unknown (setId null) to avoid poisoning the
-  // index. Side-effect only; errors must not propagate to the caller.
-  if (hashes !== null && parsed.cards?.length === 1) {
-    const card = parsed.cards[0];
-    const conf = typeof card.confidence === 'number' ? card.confidence : 0;
-    if (conf >= PHASH_WRITE_MIN && card.set_code && card.card_number) {
-      const { setId } = resolveSetCode(card.set_code);
-      if (setId) {
-        addToIndex(hashes, { set_id: setId, number: card.card_number }).catch(err =>
-          console.warn('[PHASH] addToIndex failed (non-fatal):', err.message)
-        );
-      }
-    }
-  }
+  // Hash write-through REMOVED — it could permanently poison the index.
+  //
+  // This used to persist phash/dhash/whash -> identity whenever Sonnet's
+  // SELF-REPORTED confidence cleared PHASH_WRITE_MIN. Three properties made
+  // that unsafe once the index actually holds data:
+  //
+  //   - the gate is the model's own confidence, which is not calibrated against
+  //     whether it was right;
+  //   - entries carried no provenance, so a model-written hash was
+  //     indistinguishable from one the crawler derived from a reference image;
+  //   - there was no purge path, so a single confident misidentification became
+  //     a permanent wrong answer, returned as `cached: true` to every later
+  //     photo of that card — silently, and faster than the correct answer.
+  //
+  // It was harmless only because the index was empty (see docs/V3_BENCHMARK.md
+  // §5.1 for the three independent reasons the fast path never fired). The
+  // crawler now populates it — 76,893 hashes — so the hazard is live.
+  //
+  // Deleted rather than hardened: the descriptor it feeds is being replaced by
+  // the V3 embedding index, and on a buy-list a silent wrong answer costs real
+  // money while an abstention costs a second. Index entries should come from
+  // reference images via scripts/build-phash-db.js, never from inference.
 
   return { cached: false, parsed, cacheKey, imageBase64: imageData, imageMediaType: optimizedFormat === 'png' ? 'image/png' : 'image/jpeg' };
 }
