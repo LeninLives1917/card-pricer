@@ -14,3 +14,4 @@ test-tcggo.js
 /tmp/
 .vscode/
 .idea/
+data/.card-db-crawled

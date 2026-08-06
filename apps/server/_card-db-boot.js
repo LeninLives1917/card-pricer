@@ -38,6 +38,13 @@ const REPO_ROOT = join(__dirname, '..', '..');
 const CARD_DB_FILE = join(REPO_ROOT, 'data', 'card-db.json');
 const CARD_PRICES_FILE = join(REPO_ROOT, 'data', 'card-prices.json');
 const CRAWL_MARKER = join(REPO_ROOT, 'data', '.crawl-active');
+// Written ONLY by a completed downloadCardDatabase(). Do not infer catalogue
+// age from card-db.json's mtime: initCardDb() re-saves it on every boot and
+// startCardDbDirtySaveInterval() rewrites it every 5 minutes, so its mtime
+// tracks "when did the process last write" and never "how old is this data".
+// Shipping that mistake made maybeRefreshStaleCatalogue() permanently inert
+// while /api/health cheerfully reported the catalogue as "fresh".
+const CRAWL_STAMP = join(REPO_ROOT, 'data', '.card-db-crawled');
 
 export const CARD_DB = new Map();
 export const CARD_PRICES = new Map();
@@ -66,6 +73,32 @@ export function getCardDbState() {
   };
 }
 export function getCardDbFile() { return CARD_DB_FILE; }
+
+/**
+ * When did a crawl last actually COMPLETE? Milliseconds, or null if this
+ * instance has never recorded one.
+ *
+ * The single source of truth for catalogue age — used by both the staleness
+ * refresh and /api/health, so the two can never disagree.
+ */
+export function getCatalogueBuiltAt() {
+  try {
+    const raw = fs.readFileSync(CRAWL_STAMP, 'utf8');
+    const t = Date.parse(raw.trim());
+    return Number.isFinite(t) ? t : null;
+  } catch {
+    return null;   // never crawled by this instance
+  }
+}
+
+/** Record a completed crawl. Called only from downloadCardDatabase(). */
+function stampCatalogueBuilt() {
+  try {
+    fs.writeFileSync(CRAWL_STAMP, new Date().toISOString());
+  } catch (err) {
+    console.warn('[CARD-DB] could not write crawl stamp:', err.message);
+  }
+}
 export function isCardDbLoading() { return cardDbLoading; }
 export function getLastPriceRefreshAt() { return _lastPriceRefreshAt; }
 export function clearCardDbForRebuild() {
@@ -482,6 +515,7 @@ export async function downloadCardDatabase({ force = false } = {}) {
 
     saveCardDbToFile();
     savePriceDbToFile();
+    stampCatalogueBuilt();
   } catch (e) {
     console.error(`[CARD-DB] Download failed: ${e.message}`);
     console.error(e.stack);
@@ -494,6 +528,9 @@ export async function downloadCardDatabase({ force = false } = {}) {
         _lastPriceRefreshAt = Date.now();
         savePriceDbToFile();
       }
+      // Recency, not quality — _lastDownloadStats.complete carries whether the
+      // crawl was whole, and /api/health degrades on that separately.
+      stampCatalogueBuilt();
     }
   }
   cardDbLoading = false;
@@ -824,7 +861,7 @@ export function maybeRefreshStaleCatalogue({
   // Paths are injectable so tests never read or write the real artifacts. The
   // suite already destroyed data/card-phashes.json once by pointing a spec at a
   // production path; see tests/_setup.mjs.
-  catalogueFile = CARD_DB_FILE,
+  builtAt = getCatalogueBuiltAt,
   stampFile = REFRESH_STAMP,
 } = {}) {
   if (process.env.CARD_DB_AUTO_REFRESH === '0') {
@@ -834,22 +871,30 @@ export function maybeRefreshStaleCatalogue({
     return { refreshing: false, reason: 'a download is already running' };
   }
 
-  const builtAt = readStamp(catalogueFile);
-  if (builtAt === null) {
-    return { refreshing: false, reason: 'no catalogue file to age' };
-  }
+  const built = builtAt();
 
-  const ageDays = (now - builtAt) / 86_400_000;
-  if (ageDays <= CATALOGUE_MAX_AGE_DAYS) {
+  // null = no completed crawl on record. Treat that as stale rather than as
+  // "unknown, therefore fine" — the previous version inferred age from
+  // card-db.json's mtime, which initCardDb() and the 5-minute dirty-save both
+  // rewrite, so it read as 0 days old forever and this function never once
+  // fired. Unknown age must not be indistinguishable from fresh.
+  const ageDays = built === null ? null : (now - built) / 86_400_000;
+
+  if (ageDays !== null && ageDays <= CATALOGUE_MAX_AGE_DAYS) {
     return { refreshing: false, reason: `fresh (${ageDays.toFixed(1)}d)`, age_days: ageDays };
   }
+  const why = ageDays === null
+    ? 'has no completed crawl on record'
+    : `is stale (${ageDays.toFixed(1)}d, limit ${CATALOGUE_MAX_AGE_DAYS}d)`;
 
+  // The retry floor applies to the unknown-age case too, so a persistently
+  // failing crawl cannot re-trigger on every cold start.
   const lastAttempt = readStamp(stampFile);
   if (lastAttempt !== null && now - lastAttempt < REFRESH_RETRY_HOURS * 3_600_000) {
     const hours = ((now - lastAttempt) / 3_600_000).toFixed(1);
-    console.warn(`[CARD-DB] catalogue is ${ageDays.toFixed(0)}d old but a refresh was ` +
-      `attempted ${hours}h ago — not retrying for another ` +
-      `${REFRESH_RETRY_HOURS}h. If that attempt failed, check the logs.`);
+    console.warn(`[CARD-DB] catalogue ${why} but a refresh was attempted ${hours}h ` +
+      `ago — not retrying for another ${REFRESH_RETRY_HOURS}h. ` +
+      'If that attempt failed, check the logs.');
     return { refreshing: false, reason: 'retry floor', age_days: ageDays };
   }
 
@@ -861,9 +906,8 @@ export function maybeRefreshStaleCatalogue({
     console.warn('[CARD-DB] could not write refresh stamp:', err.message);
   }
 
-  console.warn(`[CARD-DB] catalogue is ${ageDays.toFixed(0)}d old (limit ` +
-    `${CATALOGUE_MAX_AGE_DAYS}d) — refreshing in the background. New sets are ` +
-    'invisible until this completes.');
+  console.warn(`[CARD-DB] catalogue ${why} — refreshing in the background. ` +
+    'New sets are invisible until this completes.');
 
   Promise.resolve()
     .then(() => start())
@@ -872,7 +916,7 @@ export function maybeRefreshStaleCatalogue({
     // catalogue, not a dead process. /api/health reports the age either way.
     .catch(err => console.error('[CARD-DB] background refresh FAILED:', err.message));
 
-  return { refreshing: true, reason: `stale (${ageDays.toFixed(1)}d)`, age_days: ageDays };
+  return { refreshing: true, reason: why, age_days: ageDays };
 }
 
 export async function initCardDb() {

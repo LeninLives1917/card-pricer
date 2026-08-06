@@ -75,12 +75,19 @@ test('a fresh catalogue just inside the window is still ok', async () => {
   assert.equal(body.checks.catalogue.age_days, 20);
 });
 
-test('an unknown catalogue age does not read as infinitely stale', async () => {
-  // No file on disk → age null. Treating null as huge would degrade every
-  // instance that keeps its catalogue in memory.
+test('THE INERT-REFRESH CASE: an unknown age must not report as fresh', async () => {
+  // Age used to come from card-db.json's mtime — but initCardDb() re-saves
+  // that file every boot and the dirty-save interval rewrites it every five
+  // minutes, so an 87-day-old production catalogue reported age_days: 0 and
+  // "fresh", and maybeRefreshStaleCatalogue() never once fired. Age now comes
+  // from a stamp written only by a COMPLETED crawl, and when that stamp is
+  // absent the honest answer is "I cannot tell", not "fine".
   const body = await health({ cardDb: catalogue({ built_at: null }) });
   assert.equal(body.checks.catalogue.age_days, null);
-  assert.equal(body.checks.catalogue.ok, true);
+  assert.equal(body.checks.catalogue.ok, false,
+    'unknown age must not pass — reporting "cannot tell" as healthy is the bug');
+  assert.match(body.checks.catalogue.detail, /UNKNOWN/);
+  assert.ok(body.degraded.includes('catalogue'));
 });
 
 test('THE PARTIAL-CRAWL CASE: a fresh mtime does not mean a whole catalogue', async () => {

@@ -51,9 +51,13 @@ const spy = () => {
 
 /** The crawl is kicked off on a microtask so boot is never blocked by it. */
 const settle = () => new Promise(res => setImmediate(res));
+const withSettle = async fn => { const r = fn(); await settle(); return r; };
 
-const refresh = (now, start) => maybeRefreshStaleCatalogue({
-  now, start, catalogueFile: CATALOGUE, stampFile: STAMP,
+// builtAt is injected: the catalogue's age comes from a stamp written only by a
+// COMPLETED crawl, never from card-db.json's mtime (which initCardDb re-saves
+// every boot and the dirty-save rewrites every 5 minutes).
+const refresh = (now, start, built = BUILT_AT) => maybeRefreshStaleCatalogue({
+  now, start, builtAt: () => built, stampFile: STAMP,
 });
 
 test('a fresh catalogue is left alone', async () => {
@@ -119,15 +123,29 @@ test('a failing crawl does not reject unhandled', async () => {
   assert.equal(r.refreshing, true);
 });
 
-test('a missing catalogue file is not treated as infinitely stale', async () => {
+test('THE INERT-REFRESH CASE: no crawl on record triggers a refresh', async () => {
+  // This is the bug that shipped. Age was read from card-db.json's mtime, which
+  // is rewritten on every boot and every 5-minute dirty-save, so an 87-day-old
+  // production catalogue measured 0 days old and this function never fired
+  // while /api/health reported "fresh". Unknown age must mean "refresh", not
+  // "fine" — the retry floor keeps it to at most one crawl a day.
   stampAt(null);
   const [start, calls] = spy();
-  const r = maybeRefreshStaleCatalogue({
-    now: nowAtAge(40), start,
-    catalogueFile: join(TMP, 'does-not-exist.json'), stampFile: STAMP,
-  });
-  await settle();
-  assert.equal(r.refreshing, false, 'nothing to age — initCardDb handles this case');
+  const r = await withSettle(() => refresh(nowAtAge(40), start, null));
+  assert.equal(r.refreshing, true, 'unknown age must not read as fresh');
+  assert.match(r.reason, /no completed crawl/);
+  assert.equal(calls.length, 1);
+});
+
+test('the retry floor also covers the unknown-age case', async () => {
+  // Otherwise a persistently failing crawl re-triggers on every cold start,
+  // and Render cold-starts constantly.
+  const now = nowAtAge(40);
+  stampAt(now - 2 * HOUR);
+  const [start, calls] = spy();
+  const r = await withSettle(() => refresh(now, start, null));
+  assert.equal(r.refreshing, false);
+  assert.equal(r.reason, 'retry floor');
   assert.equal(calls.length, 0);
 });
 

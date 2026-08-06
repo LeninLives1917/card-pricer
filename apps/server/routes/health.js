@@ -8,11 +8,10 @@
 //   shop is validated as a slug ([a-z0-9-]{3,40}). Other fields are coerced
 //   to short strings to bound metric label cardinality.
 
-import fs from 'fs';
 import express from 'express';
 import { widget_loaded_total } from '../../../infra/observability/metrics.js';
 import { supabase } from '../_clients.js';
-import { getCardDbState, getCardDbFile } from '../_card-db-boot.js';
+import { getCardDbState, getCatalogueBuiltAt } from '../_card-db-boot.js';
 import { getFastPathCounts } from '../../../infra/observability/fast-path-counters.js';
 
 const router = express.Router();
@@ -98,8 +97,11 @@ export async function buildHealthPayload(deps = {}) {
       configured: !!(env.SUPABASE_URL && env.SUPABASE_SERVICE_ROLE_KEY),
     },
     catalogue: {
+      // An UNKNOWN age is not a passing age. Reporting "can't tell" as healthy
+      // is the exact shape that hid an 87-day-old catalogue behind the word
+      // "fresh". This self-clears as soon as a crawl completes and stamps.
       ok: cardDb.ready && cardDb.count > 0 && !incomplete &&
-          !(catalogueAge > CATALOGUE_STALE_DAYS),
+          catalogueAge !== null && catalogueAge <= CATALOGUE_STALE_DAYS,
       ready: cardDb.ready,
       cards: cardDb.count,
       age_days: catalogueAge === null ? null : Number(catalogueAge.toFixed(1)),
@@ -113,6 +115,8 @@ export async function buildHealthPayload(deps = {}) {
         : incomplete
         ? `last crawl INCOMPLETE — ${cardDb.download.cards}/${cardDb.download.expected} ` +
           `cards, ${cardDb.download.pagesFailed} page(s) failed`
+        : catalogueAge === null
+        ? 'age UNKNOWN — no completed crawl on record; a refresh should be running'
         : catalogueAge > CATALOGUE_STALE_DAYS
           ? `stale — ${catalogueAge.toFixed(0)}d old, a set has likely released since`
           : 'fresh',
@@ -198,14 +202,14 @@ function fastPathCheck(c) {
 function safeCardDbState() {
   try {
     const s = getCardDbState() || {};
-    // Age comes from the artifact's mtime rather than anything self-reported:
-    // the catalogue is a file on the Render persistent disk, and the whole
-    // failure mode is that it stops being rewritten without anyone noticing.
+    // Age comes from the stamp written by a COMPLETED crawl, never from
+    // card-db.json's mtime. initCardDb() re-saves that file on every boot and
+    // the dirty-save interval rewrites it every 5 minutes, so its mtime said
+    // "0 days old" on an 87-day-old catalogue and this check reported "fresh"
+    // for a catalogue that could not refresh. Same source of truth as
+    // maybeRefreshStaleCatalogue(), so the two can never disagree.
     let built_at = null;
-    try {
-      const file = getCardDbFile();
-      if (file && fs.existsSync(file)) built_at = fs.statSync(file).mtimeMs;
-    } catch { /* age stays unknown */ }
+    try { built_at = getCatalogueBuiltAt(); } catch { /* age stays unknown */ }
 
     return {
       count: Number(s.count) || 0,
