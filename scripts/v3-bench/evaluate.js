@@ -50,7 +50,15 @@ const VAR_FILE  = join(CACHE_DIR, 'variants.json');
 // photometric treatment or every comparison is against a differently-processed
 // reference.
 const EMB_NORMALISE = process.env.EMB_NORMALISE === '1';
-const EMB_FILE  = join(CACHE_DIR, EMB_NORMALISE ? 'embeddings-norm.json' : 'embeddings.json');
+// EMB_AUGMENT=1 selects the centroid-augmented index (embeddings-aug.json) so
+// the two can be compared on identical photos and labels. Augmentation moves
+// the impostor distribution as well as the true-match distribution, so the
+// comparison that matters is the precision/coverage curve, not top-1.
+const EMB_AUGMENT = process.env.EMB_AUGMENT === '1';
+const EMB_FILE  = join(CACHE_DIR,
+  EMB_NORMALISE ? 'embeddings-norm.json'
+  : EMB_AUGMENT ? 'embeddings-aug.json'
+  : 'embeddings.json');
 const PHOTO_DIR = process.env.V3_PHOTO_DIR || join(CACHE_DIR, 'photos');
 const OUT_FILE = join(CACHE_DIR, 'evaluation.json');
 
@@ -684,6 +692,7 @@ async function main() {
   console.log(`[evaluate] mode          : ${USE_PHOTOS ? 'REAL PHOTOGRAPHS (gate result)' : 'SYNTHETIC (provisional upper bound)'}`);
   console.log(`[evaluate] queries       : ${stats.n}`);
   console.log(`[evaluate] normalisation : ${NORM}`);
+  console.log(`[evaluate] index          : ${EMB_MODE ? basename(EMB_FILE) : 'descriptors.json'}`);
   console.log(`[evaluate] stage 1        : ${EMB_MODE ? 'DINOv2 ' + EMB_MODE : (USE_VARIANTS ? 'hash ensemble + framing variants' : 'hash ensemble')}`);
   if (NORM === 'rectify') {
     const tot = detectHits + detectMiss;
