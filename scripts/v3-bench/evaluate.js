@@ -316,17 +316,40 @@ async function main() {
   }
   console.log('[evaluate] loading index …');
   const desc = JSON.parse(fs.readFileSync(DESC_FILE, 'utf8'));
-  const ids = Object.keys(desc.cards);
+
+  // The candidate universe must come from whichever index stage 1 actually
+  // searches. Deriving it from descriptors.json in embedding mode silently
+  // excluded every card present in embeddings.json but not in the older
+  // descriptor build — 537 newly-crawled cards, including the whole `me5` set
+  // the benchmark photos were dominated by. The run then reported an unchanged
+  // score and looked like the catalogue fix had achieved nothing.
+  let ids;
+  if (EMB_MODE) {
+    if (!fs.existsSync(EMB_FILE)) {
+      console.error('[evaluate] embeddings.json not found — run build-embeddings.js');
+      process.exit(1);
+    }
+    ids = Object.keys(JSON.parse(fs.readFileSync(EMB_FILE, 'utf8')).cards);
+    const onlyInDesc = Object.keys(desc.cards).filter(id => !ids.includes(id)).length;
+    if (onlyInDesc) {
+      console.warn(`[evaluate] note: ${onlyInDesc} card(s) in descriptors.json are absent ` +
+        'from the embedding index and cannot be matched');
+    }
+  } else {
+    ids = Object.keys(desc.cards);
+  }
   const N = ids.length;
   const SIG = BR_W * BR_H;
 
-  // Stage-2 signatures and display names are always keyed per CARD.
+  // Stage-2 signatures and display names are keyed per CARD. Cards that exist
+  // only in the embedding index have no bottom-right signature yet; they simply
+  // score 0 there, and stage 2 is gated on ambiguity so it will not fire.
   const brAll = new Uint8Array(N * SIG);
   const nameOf = new Array(N);
   ids.forEach((id, i) => {
     const c = desc.cards[id];
-    if (c.br) brAll.set(Buffer.from(c.br, 'base64'), i * SIG);
-    nameOf[i] = c.name;
+    if (c?.br) brAll.set(Buffer.from(c.br, 'base64'), i * SIG);
+    nameOf[i] = c?.name ?? null;
   });
 
   // Stage-1 entries may be per-card or per-(card, framing variant). cardOf maps
@@ -341,6 +364,8 @@ async function main() {
     }
     const emb = JSON.parse(fs.readFileSync(EMB_FILE, 'utf8'));
     EMB_D = emb.dims;
+    // Fill display names for cards the descriptor build never saw.
+    ids.forEach((id, i) => { if (!nameOf[i]) nameOf[i] = emb.cards[id]?.name ?? id; });
     embAll = new Int8Array(N * EMB_D);
     let miss = 0;
     ids.forEach((id, i) => {
@@ -385,6 +410,8 @@ async function main() {
     cardOf = new Int32Array(E);
     ids.forEach((id, i) => {
       const c = desc.cards[id];
+      // Hash mode always runs off descriptors.json, so every id has an entry.
+      if (!c?.art) { cardOf[i] = i; return; }
       [pLo[i], pHi[i]] = hexToPair(c.art.p);
       [dLo[i], dHi[i]] = hexToPair(c.art.d);
       [wLo[i], wHi[i]] = hexToPair(c.art.w);
@@ -464,7 +491,7 @@ async function main() {
   const idxOf = new Map(ids.map((id, i) => [id, i]));
   const stats = {
     n: 0, s1top1: 0, s1top5: 0, s1topK: 0, s2top1: 0,
-    s2fixed: 0, s2broke: 0, latency: [],
+    s2fixed: 0, s2broke: 0, latency: [], curve: [],
   };
   const failures = [];
 
@@ -616,6 +643,19 @@ async function main() {
     const s1rank = best.findIndex(b => b.i === truthIdx);
     const s2rank = reranked.findIndex(b => b.i === truthIdx);
 
+    // Per-query record for the precision/coverage curve. `score` is the
+    // acceptance signal in its own units (cosine for embeddings, negated
+    // Hamming for hashes, so higher is always better) and `margin` is the gap
+    // to the runner-up. A single top-1 number cannot answer the question that
+    // actually matters — "how many cards can be auto-accepted with no wrong
+    // answers?" — so record enough to sweep thresholds afterwards.
+    const top1 = reranked[0] ?? best[0] ?? null;
+    const top2 = reranked[1] ?? best[1] ?? null;
+    const toScore = d => (EMB_MODE ? -d / (127 * 127) : -d);
+    const score = top1 ? toScore(top1.d) : -Infinity;
+    const topGap = (top1 && top2) ? Math.abs(toScore(top1.d) - toScore(top2.d)) : Infinity;
+    stats.curve.push({ score, margin: topGap, correct: s2rank === 0, truthKnown: q.truth !== null });
+
     stats.n++;
     if (s1rank === 0) stats.s1top1++;
     if (s1rank >= 0 && s1rank < 5) stats.s1top5++;
@@ -664,6 +704,84 @@ async function main() {
   console.log(`[evaluate] latency p95   : ${lat(0.95).toFixed(1)} ms`);
   console.log(`[evaluate] (single-threaded Node, full linear scan, no ANN index)`);
 
+  // ---- precision / coverage curve -----------------------------------------
+  // The operating question is not "what is top-1?" but "how many cards can be
+  // auto-accepted with no wrong answers, and what happens to the rest?"
+  // Failures here are abstentions, and on a buy-list an abstention costs a
+  // second while a wrong answer costs money — so precision is the axis to hold
+  // fixed and coverage is the thing to maximise under it.
+  const curve = stats.curve.filter(c => Number.isFinite(c.score));
+  if (curve.length) {
+    console.log('');
+    console.log('[evaluate] ====== precision / coverage ======');
+    console.log('[evaluate] accept when score >= T (and margin >= M where shown)');
+    console.log('');
+    console.log('    T      accepted    correct   precision   WRONG auto-accepts');
+    console.log('  -----   ---------   --------   ---------   ------------------');
+
+    const scores = curve.map(c => c.score).sort((a, b) => a - b);
+    const lo = scores[0], hi = scores[scores.length - 1];
+    const steps = 12;
+    const seen = new Set();
+    for (let i = 0; i <= steps; i++) {
+      const T = lo + (hi - lo) * (i / steps);
+      const key = T.toFixed(3);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      const acc = curve.filter(c => c.score >= T);
+      if (!acc.length) continue;
+      const good = acc.filter(c => c.correct).length;
+      const wrong = acc.length - good;
+      const prec = good / acc.length * 100;
+      const flag = wrong === 0 ? '  <- zero errors' : '';
+      console.log(`  ${key.padStart(5)}   ${String(acc.length).padStart(3)}/${curve.length}` +
+        `      ${String(good).padStart(3)}       ${prec.toFixed(1).padStart(5)}%` +
+        `        ${String(wrong).padStart(2)}${flag}`);
+    }
+
+    // The highest-coverage threshold that still admits no wrong answer. This is
+    // the number to quote — with the caveat that "no observed errors" on a
+    // sample this size is not the same as a guaranteed error rate.
+    const sortedDesc = [...new Set(curve.map(c => c.score))].sort((a, b) => a - b);
+    let bestT = null, bestCov = 0;
+    for (const T of sortedDesc) {
+      const acc = curve.filter(c => c.score >= T);
+      if (acc.length && acc.every(c => c.correct) && acc.length > bestCov) {
+        bestCov = acc.length; bestT = T;
+      }
+    }
+    console.log('');
+    if (bestT !== null) {
+      console.log(`[evaluate] zero-error operating point: T >= ${bestT.toFixed(3)} ` +
+        `-> ${bestCov}/${curve.length} (${(bestCov / curve.length * 100).toFixed(1)}%) auto-accepted, 0 wrong`);
+      const rest = curve.length - bestCov;
+      console.log(`[evaluate] remaining ${rest} abstain to the fallback path (a second each, no API cost if confirmed by eye)`);
+    } else {
+      console.log('[evaluate] no threshold admits zero errors on this sample');
+    }
+
+    // Margin as a second gate: does requiring a gap to the runner-up buy
+    // coverage at equal precision?
+    const withGap = curve.filter(c => Number.isFinite(c.margin));
+    if (withGap.length && bestT !== null) {
+      const gaps = [0.01, 0.02, 0.05, 0.10];
+      const rows = gaps.map(M => {
+        const acc = curve.filter(c => c.score >= bestT * 0.97 && c.margin >= M);
+        const good = acc.filter(c => c.correct).length;
+        return { M, n: acc.length, good, wrong: acc.length - good };
+      }).filter(r => r.n > 0);
+      if (rows.length) {
+        console.log('');
+        console.log('[evaluate] margin gate at a slightly relaxed T (score >= ' +
+          (bestT * 0.97).toFixed(3) + '):');
+        for (const r of rows) {
+          console.log(`  margin >= ${r.M.toFixed(2)}   ${String(r.n).padStart(3)} accepted, ` +
+            `${r.good} correct, ${r.wrong} wrong`);
+        }
+      }
+    }
+  }
+
   if (failures.length) {
     console.log('');
     console.log('[evaluate] sample failures:');
@@ -678,6 +796,7 @@ async function main() {
     stage1: { top1: +pct(stats.s1top1), top5: +pct(stats.s1top5), topK: +pct(stats.s1topK) },
     stage2: { top1: +pct(stats.s2top1), fixed: stats.s2fixed, broke: stats.s2broke },
     latencyMs: { p50: +lat(0.50).toFixed(1), p95: +lat(0.95).toFixed(1) },
+    curve: stats.curve,
     failures,
   }, null, 2), 'utf8');
   console.log('');
