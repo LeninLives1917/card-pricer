@@ -35,6 +35,9 @@ import axios from 'axios';
 import sharp from 'sharp';
 
 import { computePhash, computeDhash, computeWhash, cropToCard, loadIndex, addToIndex, flushNow } from '../pricing/phash.js';
+import {
+  getWithRetry, fetchAllSets, reconcile, formatReconciliation,
+} from '../pricing/pokemontcg-client.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -43,6 +46,10 @@ const CARD_DB_FILE = join(REPO_ROOT, 'data', 'card-db.json');
 const PHASH_FILE = join(REPO_ROOT, 'data', 'card-phashes.json');
 const SKIP_LOG = join(REPO_ROOT, 'data', 'phash-crawler-skipped.log');
 const MARKER_PATH = join(REPO_ROOT, 'data', '.crawl-active');
+// Sidecar manifest: what this build actually produced, versus what upstream
+// said existed. Read by the pre-show preflight check and /api/health, so
+// "is the index complete and fresh?" is answerable without re-crawling.
+const MANIFEST_FILE = join(REPO_ROOT, 'data', 'card-index-manifest.json');
 
 // Concurrency is env-configurable so the same script can run in two very
 // different places:
@@ -99,12 +106,6 @@ function logSkip(key, reason) {
 // pokemontcg.io helpers
 // =============================================================================
 
-function apiHeaders() {
-  const h = { 'Accept': 'application/json' };
-  if (API_KEY) h['X-Api-Key'] = API_KEY;
-  return h;
-}
-
 /**
  * Fetch all cards for a given setId from pokemontcg.io, paginating as needed.
  * Returns an array of { id, imageUrl, enriched } objects (imageUrl may be null).
@@ -120,15 +121,13 @@ async function fetchSetCards(setId) {
     const url = `${POKEMONTCG_BASE}/cards?q=set.id:${encodeURIComponent(setId)}&pageSize=${PAGE_SIZE}&page=${page}`;
     let resp;
     try {
-      resp = await axios.get(url, {
-        headers: apiHeaders(),
-        timeout: FETCH_TIMEOUT_MS,
-        maxRedirects: 5,
-      });
+      // Retrying fetch: pokemontcg.io returns intermittent 500/502 on valid
+      // requests (~40% measured). Without this, one 500 dropped the whole set.
+      resp = await getWithRetry(url, { timeout: FETCH_TIMEOUT_MS });
     } catch (err) {
       const status = err.response ? err.response.status : null;
       const reason = status ? `HTTP ${status}` : err.message;
-      logSkip(`set:${setId}`, `page ${page} fetch failed — ${reason}`);
+      logSkip(`set:${setId}`, `page ${page} failed after ${err._attempts} attempts — ${reason}`);
       return null;
     }
 
@@ -213,12 +212,33 @@ async function main() {
   }
   const cardDbObj = JSON.parse(fs.readFileSync(CARD_DB_FILE, 'utf8'));
 
-  // Discover unique set IDs from card-db keys.
-  // Key shape is always "<setId>-<number>" with exactly one hyphen group
-  // (verified: no number field contains a hyphen). Split on LAST hyphen.
-  const allSetIds = [...new Set(
+  // Set discovery MUST come from upstream, not from card-db's own keys.
+  //
+  // Deriving set IDs from the artifact being built means a set absent from
+  // card-db can never be crawled — new releases are invisible permanently, not
+  // just until the next run. Measured cost: 23 of 35 failures in the V3
+  // benchmark were cards from `me5` (Pitch Black), released three weeks before
+  // the photos were taken. A card shop's stock skews hard toward the newest set,
+  // so this bug lands precisely where it hurts most.
+  const localSetIds = new Set(
     Object.keys(cardDbObj).map(k => k.slice(0, k.lastIndexOf('-')))
-  )].sort();
+  );
+
+  let upstreamSets = [];
+  try {
+    upstreamSets = await fetchAllSets();
+    const fresh = upstreamSets.map(s => s.id).filter(id => !localSetIds.has(id));
+    console.log(`[phash-crawler] ${upstreamSets.length} sets known upstream` +
+      (fresh.length ? `; ${fresh.length} not in card-db: ${fresh.join(', ')}` : ''));
+    for (const s of upstreamSets) localSetIds.add(s.id);
+  } catch (err) {
+    // Degrade to the old behaviour, but never silently — a quiet fallback here
+    // is exactly the bug this block exists to prevent.
+    console.warn(`[phash-crawler] WARNING: could not list upstream sets (${err.message}) — ` +
+      'falling back to card-db set IDs only. NEW SETS WILL BE MISSED.');
+  }
+
+  const allSetIds = [...localSetIds].sort();
 
   let setIds = allSetIds;
   if (isDryRun) {
@@ -314,10 +334,11 @@ async function main() {
 
     let imgBuffer;
     try {
-      const resp = await axios.get(imageUrl, {
+      // Image downloads retry too — the CDN drops requests under sustained
+      // load, and a dropped image is a card silently absent from the index.
+      const resp = await getWithRetry(imageUrl, {
         responseType: 'arraybuffer',
         timeout: FETCH_TIMEOUT_MS,
-        maxRedirects: 5,
       });
       if (resp.status < 200 || resp.status >= 300) {
         throw new Error(`HTTP ${resp.status}`);
@@ -452,8 +473,50 @@ async function main() {
     `card-db-enriched: ${totalEnriched}, sets: ${fetchedSets.size}, elapsed: ${elapsedMin} min` +
     (perSetSummary ? `\n[phash-crawler] per-set: ${perSetSummary}` : '')
   );
+  // ---- reconciliation ------------------------------------------------------
+  // A build that reports success while holding less data than upstream has is
+  // the signature behind three separate incidents: the index that was never
+  // populated, the silently dropped set, and new releases going missing. All
+  // three were invisible because nothing compared local against upstream.
+  let reconciliationOk = true;
+  if (upstreamSets.length) {
+    const r = reconcile(cardDbObj, upstreamSets);
+    console.log(`[phash-crawler] reconciliation: ${formatReconciliation(r)}`);
+    reconciliationOk = r.ok;
+
+    const manifest = {
+      built_at: new Date().toISOString(),
+      tool: 'build-phash-db',
+      card_count: r.localTotal,
+      set_count: new Set(Object.keys(cardDbObj).map(k => k.slice(0, k.lastIndexOf('-')))).size,
+      upstream_total: r.upstreamTotal,
+      upstream_set_count: upstreamSets.length,
+      coverage: Number(r.coverage.toFixed(4)),
+      missing_sets: r.missingSets.map(s => s.id),
+      short_sets: r.shortSets.map(s => `${s.id}:${s.have}/${s.expected}`),
+      hashed_this_run: hashed,
+      skipped_this_run: skipped,
+      ok: r.ok,
+    };
+    const tmp = MANIFEST_FILE + '.tmp';
+    fs.writeFileSync(tmp, JSON.stringify(manifest, null, 2), 'utf8');
+    fs.renameSync(tmp, MANIFEST_FILE);
+    console.log(`[phash-crawler] wrote ${MANIFEST_FILE}`);
+  } else {
+    console.warn('[phash-crawler] no upstream set list — reconciliation SKIPPED, coverage unknown');
+    reconciliationOk = false;
+  }
+
   console.log('[phash-crawler] marker data/.crawl-active LEFT IN PLACE — server\'s dirty-save will remain paused until you restart Render.');
   console.log('[phash-crawler] NEXT: Render dashboard → Manual Deploy → Deploy Latest Commit. The server\'s boot will load the enriched card-db.json and clear the marker.');
+
+  // Exit non-zero on incomplete coverage so a scheduled run fails loudly rather
+  // than leaving a half-built index that looks finished.
+  if (!reconciliationOk) {
+    console.error('[phash-crawler] FAILING: coverage below threshold or unverifiable. ' +
+      'Re-run to pick up the missing sets.');
+    process.exitCode = 1;
+  }
 }
 
 main().catch(err => {

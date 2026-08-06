@@ -23,6 +23,7 @@ import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import { axios, supabase } from './_clients.js';
+import { getWithRetry } from '../../pricing/pokemontcg-client.js';
 import {
   bulkSaveCardPrices,
   loadAllCardPrices,
@@ -46,6 +47,9 @@ let cardDbCount = 0;
 let cardDbLoading = false;
 let cardDbDirty = false;
 let _lastPriceRefreshAt = 0;
+// Completeness of the most recent download, so "is the catalogue whole?" is
+// answerable at runtime instead of only in a boot log nobody reads.
+let _lastDownloadStats = null;
 let unreliableImportDone = false;
 
 export function getCardDbState() {
@@ -55,6 +59,10 @@ export function getCardDbState() {
     count: CARD_DB.size,
     fileExists: fs.existsSync(CARD_DB_FILE),
     lastRefreshAt: _lastPriceRefreshAt,
+    // `ready` only means "something loaded". `download` says whether that
+    // something is actually complete — the distinction a silently-truncated
+    // catalogue hides.
+    download: _lastDownloadStats,
   };
 }
 export function getCardDbFile() { return CARD_DB_FILE; }
@@ -392,7 +400,7 @@ export async function downloadCardDatabase({ force = false } = {}) {
     console.log(force ? '[CARD-DB] Force refresh — pulling all pages from pokemontcg.io...' : '[CARD-DB] No local file — downloading from pokemontcg.io...');
     console.log(`[CARD-DB] API key: ${apiKey ? 'present (high rate limit)' : 'NOT SET — throttling to 25 req/min'}; BATCH=${BATCH}, WAVE_DELAY=${WAVE_DELAY_MS}ms`);
 
-    const firstResp = await axios.get('https://api.pokemontcg.io/v2/cards', reqOpts(pageParams(1)));
+    const firstResp = await getWithRetry('https://api.pokemontcg.io/v2/cards', reqOpts(pageParams(1)));
     const totalCount = firstResp.data?.totalCount || 0;
     const totalPages = Math.ceil(totalCount / PAGE_SIZE);
     console.log(`[CARD-DB] Total: ${totalCount} cards across ${totalPages} pages`);
@@ -408,12 +416,15 @@ export async function downloadCardDatabase({ force = false } = {}) {
       const pages = [];
       for (let p = start; p < start + BATCH && p <= totalPages; p++) {
         pages.push(
-          axios.get('https://api.pokemontcg.io/v2/cards', reqOpts(pageParams(p)))
+          // Retrying fetch: pokemontcg.io returns intermittent 500/502 on
+          // valid requests (~40% measured on pageSize=250). A single-attempt
+          // GET drops ~250 cards per unlucky page, silently.
+          getWithRetry('https://api.pokemontcg.io/v2/cards', reqOpts(pageParams(p)))
             .then(r => { processPageData(r.data?.data || []); return p; })
             .catch(e => {
               const status = e?.response?.status;
               const msg = status ? `HTTP ${status}` : e.message;
-              console.log(`[CARD-DB] Page ${p} failed: ${msg}`);
+              console.log(`[CARD-DB] Page ${p} failed after ${e?._attempts ?? '?'} attempts: ${msg}`);
               pagesFailed++;
               failedPages.push(p);
               return null;
@@ -444,10 +455,29 @@ export async function downloadCardDatabase({ force = false } = {}) {
     cardDbCount = CARD_DB.size;
     cardDbReady = true;
     _lastPriceRefreshAt = Date.now();
+
+    // Record completeness rather than just logging it. The old code said
+    // "Download complete with N failed page(s)" and then set cardDbReady = true
+    // identically either way, so a catalogue missing thousands of cards was
+    // indistinguishable from a whole one at every later read.
+    _lastDownloadStats = {
+      at: Date.now(),
+      cards: cardDbCount,
+      expected: totalCount,
+      pagesTotal: totalPages,
+      pagesFailed,
+      failedPages: failedPages.slice(0, 50),
+      complete: pagesFailed === 0 && cardDbCount >= totalCount * 0.995,
+    };
+
     if (pagesFailed > 0) {
-      console.warn(`[CARD-DB] Download complete with ${pagesFailed} failed page(s): ${failedPages.slice(0, 30).join(',')}${failedPages.length > 30 ? '…' : ''}`);
+      const shortBy = Math.max(0, totalCount - cardDbCount);
+      console.warn(`[CARD-DB] INCOMPLETE: ${cardDbCount}/${totalCount} cards ` +
+        `(short ~${shortBy}), ${pagesFailed} failed page(s): ` +
+        `${failedPages.slice(0, 30).join(',')}${failedPages.length > 30 ? '…' : ''} — ` +
+        're-run a refresh to fill the gaps');
     } else {
-      console.log(`[CARD-DB] Download complete! ${cardDbCount} cards (${CARD_PRICES.size} priced).`);
+      console.log(`[CARD-DB] Download complete! ${cardDbCount}/${totalCount} cards (${CARD_PRICES.size} priced).`);
     }
 
     saveCardDbToFile();
