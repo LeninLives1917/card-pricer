@@ -45,12 +45,45 @@ const MANIFEST_FILE = join(CACHE_DIR, 'manifest.json');
 // and when embedding a query, hence a separate artifact rather than a flag that
 // could be set on one side only.
 const NORMALISE = process.env.EMB_NORMALISE === '1';
-const OUT_FILE = join(CACHE_DIR, NORMALISE ? 'embeddings-norm.json' : 'embeddings.json');
+const OUT_FILE = join(CACHE_DIR,
+  NORMALISE ? 'embeddings-norm.json'
+  : (process.env.EMB_AUGMENT === '1' ? 'embeddings-aug.json' : 'embeddings.json'));
 
 env.cacheDir = join(CACHE_DIR, 'models');
 
 const MODEL = process.env.EMB_MODEL || 'Xenova/dinov2-small';
 const DTYPE = process.env.EMB_DTYPE || 'q8';
+
+// Centroid augmentation (EMB_AUGMENT=1).
+//
+// Index each card as the L2-normalised MEAN of its clean render plus a few
+// distorted renders, rather than the clean render alone. Index size and query
+// cost are unchanged — it is still one vector per card — but the vector sits
+// nearer the middle of the cloud a real photo lands in.
+//
+// The distortions are fitted to MEASURED residuals, not guessed. Running
+// scripts/v3-bench/measure-residuals.js over the 51 confirmed photos gives, for
+// what survives rectification (photo relative to reference):
+//
+//   framing     +/-1.2% x, +/-0.9% y   median 0.000  <- rectification solved it
+//   contrast    0.60-0.85x             median 0.76x  <- dominant residual
+//   sharpness   0.14-1.14x             median 0.59x  <- photos are much softer
+//   brightness  0.97-1.42x             median 1.08x  <- skewed BRIGHT, not symmetric
+//
+// Two corrections to the obvious guesses fall out of that. Framing jitter is
+// nearly pointless — a +/-2.5% envelope would be double the measured value,
+// spent simulating a problem rectification already fixes. And brightness is
+// asymmetric, so a symmetric +/-15% band would model light the photos do not
+// actually have. Contrast reduction, the largest real effect, is not something
+// anyone listed by intuition.
+const AUGMENT = process.env.EMB_AUGMENT === '1';
+const VARIANTS = [
+  // brightness, contrast (linear multiplier), blur sigma, framing inset
+  { b: 1.00, c: 1.00, blur: 0,   inset: 0.000 },   // clean render
+  { b: 1.08, c: 0.76, blur: 1.1, inset: 0.006 },   // the median photo
+  { b: 1.35, c: 0.62, blur: 1.8, inset: 0.012 },   // bright, hazy, soft (p90)
+  { b: 0.97, c: 0.85, blur: 0.5, inset: 0.000 },   // dim but sharp (p10)
+];
 
 function argVal(flag) {
   const i = process.argv.indexOf(flag);
@@ -108,7 +141,8 @@ async function main() {
   let ids = Object.keys(manifest.cards).sort();
   if (LIMIT) ids = ids.slice(0, LIMIT);
 
-  console.log(`[embeddings] model=${MODEL} dtype=${DTYPE} normalise=${NORMALISE}`);
+  console.log(`[embeddings] model=${MODEL} dtype=${DTYPE} normalise=${NORMALISE} augment=${AUGMENT}` +
+    (AUGMENT ? ` (${VARIANTS.length} renders/card, centroid-pooled)` : ''));
   console.log(`[embeddings] ${ids.length} cards`);
 
   const t0 = Date.now();
@@ -146,13 +180,47 @@ async function main() {
     try {
       // Decode via sharp: RawImage.read cannot handle every WebP variant, and
       // this keeps decoding identical to every other stage of the benchmark.
-      let pipe = sharp(path).removeAlpha();
-      if (NORMALISE) pipe = pipe.normalise();
-      const { data, info } = await pipe.raw().toBuffer({ resolveWithObject: true });
-      const img = new RawImage(new Uint8ClampedArray(data), info.width, info.height, 3);
+      const variants = AUGMENT ? VARIANTS : [VARIANTS[0]];
+      let clsAcc = null, meanAcc = null;
 
-      const out = await fe(img);
-      const { cls, mean } = poolTokens(out.data, out.dims);
+      for (const v of variants) {
+        let pipe = sharp(path).removeAlpha();
+        if (NORMALISE) pipe = pipe.normalise();
+        if (v.inset > 0) {
+          const meta = await sharp(path).metadata();
+          const ix = Math.round(meta.width * v.inset), iy = Math.round(meta.height * v.inset);
+          pipe = pipe.extract({
+            left: ix, top: iy,
+            width: Math.max(1, meta.width - ix * 2), height: Math.max(1, meta.height - iy * 2),
+          }).resize(meta.width, meta.height, { fit: 'fill' });
+        }
+        if (v.b !== 1) pipe = pipe.modulate({ brightness: v.b });
+        // linear(a, b) applies a*x + b; a<1 with a lifting offset reduces
+        // contrast about mid-grey, which is what haze and glare do.
+        if (v.c !== 1) pipe = pipe.linear(v.c, 128 * (1 - v.c));
+        if (v.blur > 0) pipe = pipe.blur(v.blur);
+
+        const { data, info } = await pipe.raw().toBuffer({ resolveWithObject: true });
+        const img = new RawImage(new Uint8ClampedArray(data), info.width, info.height, 3);
+        const out = await fe(img);
+        const pooled = poolTokens(out.data, out.dims);
+        if (!clsAcc) { clsAcc = Float32Array.from(pooled.cls); meanAcc = Float32Array.from(pooled.mean); }
+        else {
+          for (let i = 0; i < clsAcc.length; i++) clsAcc[i] += pooled.cls[i];
+          for (let i = 0; i < meanAcc.length; i++) meanAcc[i] += pooled.mean[i];
+        }
+      }
+
+      // Re-normalise the summed vectors: the mean of unit vectors is not itself
+      // a unit vector, and cosine scoring assumes one.
+      const renorm = v => {
+        let s2 = 0; for (const x of v) s2 += x * x;
+        const n = Math.sqrt(s2) || 1;
+        for (let i = 0; i < v.length; i++) v[i] /= n;
+        return v;
+      };
+      const cls = renorm(clsAcc);
+      const mean = renorm(meanAcc);
       D = cls.length;
       cards[id] = {
         set_id: m.set_id, number: m.number, name: m.name,
