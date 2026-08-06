@@ -13,6 +13,7 @@ import { widget_loaded_total } from '../../../infra/observability/metrics.js';
 import { supabase } from '../_clients.js';
 import { getCardDbState, getCatalogueBuiltAt } from '../_card-db-boot.js';
 import { getFastPathCounts } from '../../../infra/observability/fast-path-counters.js';
+import { isEnabled as rectifyEnabled } from '../../../pricing/card-rectify.js';
 
 const router = express.Router();
 
@@ -129,8 +130,11 @@ export async function buildHealthPayload(deps = {}) {
     // at its default. scripts/preflight.js still WARNs when it is off.
     rectify: {
       ok: true,
-      enabled: env.CARD_RECTIFY === '1',
-      detail: env.CARD_RECTIFY === '1'
+      // Same predicate the pipeline uses, imported rather than re-implemented:
+      // a health check that disagrees with the code it reports on is worse than
+      // no health check.
+      enabled: rectifyEnabled(env),
+      detail: rectifyEnabled(env)
         ? 'CARD_RECTIFY=1 — perspective rectification active'
         : 'OFF — cropToCard falls back to the .trim() heuristic, which measured ' +
           '1.0% top-1 on realistic scenes against 40.5% rectified',

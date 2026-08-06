@@ -20,6 +20,11 @@ import {
 } from '../../pricing/card-rectify.js';
 import { cropToCard } from '../../pricing/phash.js';
 
+import fs from 'fs';
+import { join, dirname } from 'path';
+import { fileURLToPath } from 'url';
+const RECTIFY_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
+
 // --- fixtures ---------------------------------------------------------------
 
 /** A card-like image: coloured border, lighter interior, plausible proportions. */
@@ -210,4 +215,33 @@ test('flag on: cropToCard does not throw on a corrupt buffer', async () => {
     const out = await cropToCard(Buffer.from('garbage'));
     assert.ok(Buffer.isBuffer(out));
   });
+});
+
+// ---------------------------------------------------------------------------
+// Flag parsing. isEnabled() required the literal string '1', so CARD_RECTIFY=true
+// looked correct, did nothing, and said nothing. In production the value was set
+// correctly in the Render dashboard and was dropped by blueprint reconciliation
+// because it was not declared in render.yaml — two silent ways for the same flag
+// to be off while everyone believed it was on.
+
+test('accepts the values a person would reasonably type', () => {
+  for (const v of ['1', 'true', 'TRUE', 'Yes', ' on ', 'enabled']) {
+    assert.equal(isEnabled({ CARD_RECTIFY: v }), true, `"${v}" should enable`);
+  }
+});
+
+test('anything unrecognised stays OFF — a flag must not enable itself', () => {
+  for (const v of ['0', 'false', 'no', 'off', '', '   ', 'maybe', undefined]) {
+    assert.equal(isEnabled({ CARD_RECTIFY: v }), false, `"${v}" must not enable`);
+  }
+  assert.equal(isEnabled({}), false);
+});
+
+test('CARD_RECTIFY is declared in render.yaml, not only in the dashboard', () => {
+  // Render reconciles the environment against the blueprint on every deploy, so
+  // a dashboard-only variable is silently dropped. This is how it was set
+  // correctly and still read as off.
+  const yaml = fs.readFileSync(join(RECTIFY_ROOT, 'render.yaml'), 'utf8');
+  assert.match(yaml, /- key: CARD_RECTIFY\s*\n\s*value: "1"/,
+    'declare it in render.yaml or the next deploy will drop it');
 });

@@ -150,6 +150,17 @@ services:
       # adapter was swapped from TCGPlayer Pro to Cardmarket sealed.)
 
       # ---------------- Runtime (NON-SECRET) ----------------
+      # Perspective rectification for card photos. MUST be declared here, not
+      # only in the dashboard: Render reconciles the environment against this
+      # blueprint on every deploy, so a dashboard-only variable is silently
+      # dropped on the next one. That is exactly what happened — the value was
+      # saved correctly and vanished, while ANTHROPIC_API_KEY (declared here
+      # with sync:false) kept working.
+      #
+      # Off falls back to cropToCard's .trim() heuristic, which measured 1.0%
+      # top-1 on realistic scenes against 40.5% rectified.
+      - key: CARD_RECTIFY
+        value: "1"
       - key: NODE_VERSION
         value: 20.10.0
       - key: NODE_ENV

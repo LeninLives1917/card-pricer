@@ -60,8 +60,15 @@ const MAX_AREA_FRAC = 0.98;
 // 96% while accuracy FELL.
 const BORDER_EPS = 0.02;
 
-export function isEnabled() {
-  return process.env.CARD_RECTIFY === '1';
+// Accept the values a person would reasonably type. Requiring the literal '1'
+// was a trap: CARD_RECTIFY=true looks correct to anyone, sets nothing, and
+// reports nothing — the same invisible-failure shape as the rest of this
+// codebase's history. Anything unrecognised stays OFF, so the flag can never
+// enable itself by accident.
+const TRUTHY = new Set(['1', 'true', 'yes', 'on', 'enabled']);
+
+export function isEnabled(env = process.env) {
+  return TRUTHY.has(String(env.CARD_RECTIFY ?? '').trim().toLowerCase());
 }
 
 // -----------------------------------------------------------------------------
