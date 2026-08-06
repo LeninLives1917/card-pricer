@@ -27,7 +27,10 @@ const catalogue = (over = {}) => () =>
   ({ ready: true, count: 20427, built_at: Date.now(), download: null, ...over });
 
 const health = (opts = {}) => buildHealthPayload({
-  db: live(), cardDb: catalogue(), env: HEALTHY_ENV, ...opts,
+  db: live(), cardDb: catalogue(), env: HEALTHY_ENV,
+  fastPath: () => ({ attempted: 0, hit: 0, miss: 0, unusable: 0, skipped: 0,
+    hit_rate: null, unusable_rate: null }),
+  ...opts,
 });
 
 test('a healthy stack reports ok', async () => {
@@ -123,4 +126,56 @@ test('a throwing card-db accessor degrades rather than throwing', async () => {
   assert.equal(body.status, 'degraded');
   assert.equal(body.checks.catalogue.ok, false);
   assert.equal(body.has_supabase, true, 'one failed check must not poison the others');
+});
+
+// ---------------------------------------------------------------------------
+// Fast-path counters (D3). Falling back is fine; falling back invisibly is the
+// defect that hid a completely dead pHash path for months.
+
+const fastPath = (over = {}) => () => {
+  const c = { attempted: 0, hit: 0, miss: 0, unusable: 0, skipped: 0, ...over };
+  return {
+    ...c,
+    hit_rate: c.attempted ? c.hit / c.attempted : null,
+    unusable_rate: c.attempted ? c.unusable / c.attempted : null,
+  };
+};
+
+test('THE DEAD-FAST-PATH CASE: attempts climbing while hits stay at zero', async () => {
+  const body = await health({ fastPath: fastPath({ attempted: 400, hit: 0, miss: 400 }) });
+  assert.equal(body.checks.fast_path.ok, false);
+  assert.match(body.checks.fast_path.detail, /DEAD/);
+  assert.ok(body.degraded.includes('fast_path'));
+});
+
+test('a small sample is not evidence of anything', async () => {
+  // A freshly restarted instance has not been asked enough times to prove a
+  // dead fast path, and crying wolf on every deploy trains the operator to
+  // ignore the endpoint.
+  const body = await health({ fastPath: fastPath({ attempted: 3, hit: 0, miss: 3 }) });
+  assert.equal(body.checks.fast_path.ok, true);
+  assert.equal(body.status, 'ok');
+});
+
+test('never asked is distinguished from asked and always failed', async () => {
+  const body = await health({ fastPath: fastPath({ attempted: 0 }) });
+  assert.equal(body.checks.fast_path.hit_rate, null,
+    'a 0% hit rate and "never asked" are different states');
+});
+
+test('hits discarded for a missing reference_image are called out separately', async () => {
+  // The index is correct and the answer is thrown away — a data gap, not a
+  // matcher failure, and a much cheaper fix.
+  const body = await health({
+    fastPath: fastPath({ attempted: 200, hit: 40, unusable: 120, miss: 40 }),
+  });
+  assert.equal(body.checks.fast_path.ok, false);
+  assert.match(body.checks.fast_path.detail, /reference_image/);
+});
+
+test('a working fast path reports its rate and stays ok', async () => {
+  const body = await health({ fastPath: fastPath({ attempted: 200, hit: 190, miss: 10 }) });
+  assert.equal(body.checks.fast_path.ok, true);
+  assert.match(body.checks.fast_path.detail, /95\.0% hit rate/);
+  assert.equal(body.status, 'ok');
 });

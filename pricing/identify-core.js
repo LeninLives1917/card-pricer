@@ -29,6 +29,7 @@ import {
 } from './confidence.js';
 import { fixPokemonSuffix, extractPokemonSuffix } from './adapters/pokemontcg.js';
 import { computePhash, computeDhash, computeWhash, cropToCard, lookupByHashes } from './phash.js';
+import { countFastPath } from '../infra/observability/fast-path-counters.js';
 // One-time exception: lookupLocalDb lives in apps/server/ but pricing/ already
 // imports from that boundary (adapters/pokemontcg.js:24). Consistent with prior art.
 import { lookupLocalDb } from '../apps/server/_card-db-boot.js';
@@ -286,7 +287,10 @@ export async function identifyCore({ buffer, hint }) {
   // pHash/dHash/wHash lookup — runs after SHA-1 (cheapest) and before Sonnet (expensive).
   // Skipped when hint is set (hint bypasses all caches).
   let hashes = null;
-  if (!hint) {
+  if (hint) {
+    countFastPath('skipped');
+  } else {
+    countFastPath('attempted');
     const cropped = await cropToCard(optimized);
     hashes = {
       phash: await computePhash(cropped),
@@ -302,6 +306,7 @@ export async function identifyCore({ buffer, hint }) {
       // image breaks client rendering — fall through to Sonnet so the user
       // gets a fully-populated card via the existing identify path.
       if (fullCard && fullCard.reference_image) {
+        countFastPath('hit');
         console.log(`[PHASH] HIT distance=${phashHit.distance} type=${phashHit.hashType} set_id=${phashHit.card.set_id} number=${phashHit.card.number}`);
         return {
           cached: true,
@@ -318,7 +323,13 @@ export async function identifyCore({ buffer, hint }) {
       // and the image-cascade write-through (resolveImageFallback in
       // pricing/price.js) will then fill in CARD_DB.image so future
       // pHash hits on this card return enriched cleanly.
+      // The index was RIGHT and the work is being thrown away. That is worth
+      // counting separately from an ordinary miss: it is a data gap, not a
+      // matcher failure, and it used to be a console.warn nobody read.
+      countFastPath('unusable');
       console.warn(`[PHASH] HIT set_id=${phashHit.card.set_id} number=${phashHit.card.number} but lookupLocalDb has no image — falling through to Sonnet`);
+    } else {
+      countFastPath('miss');
     }
   }
 

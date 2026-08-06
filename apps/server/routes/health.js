@@ -13,6 +13,7 @@ import express from 'express';
 import { widget_loaded_total } from '../../../infra/observability/metrics.js';
 import { supabase } from '../_clients.js';
 import { getCardDbState, getCardDbFile } from '../_card-db-boot.js';
+import { getFastPathCounts } from '../../../infra/observability/fast-path-counters.js';
 
 const router = express.Router();
 
@@ -58,6 +59,7 @@ export async function buildHealthPayload(deps = {}) {
   const env = deps.env ?? process.env;
   const probeDb = deps.db ?? supabaseLiveness;
   const readCardDb = deps.cardDb ?? safeCardDbState;
+  const readFastPath = deps.fastPath ?? getFastPathCounts;
 
   // Flat boolean keys consumed by the V2 admin tab (apps/vendor/modules/tabs/admin.js).
   // V1 nested `apis.*` shape is preserved alongside for backward compat with any
@@ -115,6 +117,7 @@ export async function buildHealthPayload(deps = {}) {
           ? `stale — ${catalogueAge.toFixed(0)}d old, a set has likely released since`
           : 'fresh',
     },
+    fast_path: fastPathCheck(readFastPath()),
   };
 
   // Degraded, not down: the scanner still answers via the vision fallback, so
@@ -155,6 +158,40 @@ router.get('/api/health', async (req, res) => {
       error: err.message });
   }
 });
+
+// Below this many attempts, a 0% hit rate is noise rather than evidence — a
+// freshly restarted instance has not been asked enough times to prove anything.
+const FAST_PATH_MIN_SAMPLE = 50;
+
+/**
+ * The fast path is the whole point of V3, and its failure mode is silence: it
+ * simply falls through to the vision model and nobody can tell that from never
+ * having been asked. So the check is a ratio, not a count — `attempted`
+ * climbing while `hit` stays at zero is a dead fast path.
+ */
+function fastPathCheck(c) {
+  if (!c || c.attempted < FAST_PATH_MIN_SAMPLE) {
+    return {
+      ok: true, ...c,
+      detail: `only ${c?.attempted ?? 0} attempt(s) — too few to judge ` +
+        `(need ${FAST_PATH_MIN_SAMPLE})`,
+    };
+  }
+  if (c.hit === 0) {
+    return { ok: false, ...c,
+      detail: `DEAD — ${c.attempted} attempts, 0 hits. This is the state it sat ` +
+        'in for months: check the index is populated and CARD_RECTIFY=1' };
+  }
+  // A high unusable rate is a different, cheaper problem: the index is right
+  // and the answer is being discarded for want of a reference image.
+  if (c.unusable_rate > 0.2) {
+    return { ok: false, ...c,
+      detail: `${(c.unusable_rate * 100).toFixed(0)}% of hits discarded for a ` +
+        'missing reference_image — the index is correct, CARD_DB is not enriched' };
+  }
+  return { ok: true, ...c,
+    detail: `${(c.hit_rate * 100).toFixed(1)}% hit rate over ${c.attempted} attempts` };
+}
 
 // The health endpoint must never be the thing that breaks. If card-db state is
 // unavailable for any reason, report it as unknown rather than throwing.
