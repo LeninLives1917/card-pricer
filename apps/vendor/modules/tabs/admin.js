@@ -91,7 +91,16 @@ async function loadHealth() {
     ['Status', h.status || '—'],
     ['Uptime', h.uptime_human || (h.uptime_s ? Math.round(h.uptime_s) + 's' : '—')],
     ['Anthropic', h.has_anthropic_key ? 'configured' : 'missing'],
-    ['Supabase', h.has_supabase ? 'configured' : 'missing'],
+    // Supabase and the catalogue are now live checks, so say what actually
+    // happened rather than 'configured' — a paused project is configured.
+    ['Supabase', h.checks?.supabase
+      ? (h.checks.supabase.ok ? 'live' : `DOWN — ${h.checks.supabase.detail}`)
+      : (h.has_supabase ? 'configured' : 'missing')],
+    ['Catalogue', h.checks?.catalogue
+      ? `${(h.checks.catalogue.cards || 0).toLocaleString()} cards` +
+        (h.checks.catalogue.age_days == null ? '' : `, ${h.checks.catalogue.age_days}d old`) +
+        (h.checks.catalogue.ok ? '' : ` — ${h.checks.catalogue.detail}`)
+      : '—'],
     ['Stripe', h.has_stripe ? 'configured' : 'missing'],
     ['eBay', h.has_ebay ? 'configured' : 'missing'],
     ['JustTCG', h.has_justtcg ? 'configured' : 'missing'],
