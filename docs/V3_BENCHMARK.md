@@ -1,7 +1,8 @@
 # V3 Phase 0 — Retrieval Benchmark
 
-**Status: GATE RUN ON REAL PHOTOGRAPHS. NOT CLEARED — 45.3% top-1 against a ~90% bar.**
-**Date: 5 August 2026 · Branch: `v3` · Catalogue: 19,890 Pokémon cards**
+**Status: GATE RE-RUN ON A CORRECTED CATALOGUE — 76.6% top-1, 96.1% on matchable cards.**
+**Date: 6 August 2026 · Branch: `v3` · Catalogue: 20,427 Pokémon cards**
+**§13 supersedes §12. The 45.3% in §12 was measuring a catalogue bug, not a matcher.**
 
 Every number below comes from a measurement run on this machine against the full
 catalogue. Nothing is estimated or carried over from V2 documentation.
@@ -620,6 +621,103 @@ Ranked by measured value:
 4. **Ship the confidence threshold regardless.** 0.78 gives free, error-free
    identification on a third of cards with the existing Sonnet path untouched
    beneath it.
+
+---
+
+## 13. GATE RESULT — corrected catalogue, re-reviewed labels
+
+§12's 45.3% was measured against a catalogue missing three released sets,
+including `me5` (Pitch Black), which dominated the photo set. Set discovery read
+the artifact it was building, so new releases were structurally uncrawlable
+(fixed; see the commit history). With the catalogue corrected to 20,427 cards
+and the operator's "not here" labels re-reviewed — 22 of 35 flipped to a
+confirmed card — the same 64 photographs give:
+
+```
+stage 1 top-1  : 75.0%
+stage 1 top-5  : 79.7%
+stage 2 top-1  : 76.6%      (bottom-right re-rank, +1 query)
+quad detected  : 56/64 (87.5%)
+latency p50    : 273 ms
+```
+
+**On the 51 photographs where the operator confirmed a card: 49 correct — 96.1%.**
+The other 13 are still marked "not here": cards absent even from the corrected
+catalogue (e.g. `Brock's Sudowoodo`) or illegible. They score as misses, which
+is why the all-photos figure is 76.6% and the matchable figure is 96.1%. Quote
+whichever answers the question being asked, but never the first without the
+second.
+
+### 13.1 Every remaining error is one reprint pair
+
+Both misses on confirmed cards are the same card:
+
+```
+truth  sv10-35     Ethan's Slugma  [Destined Rivals]
+got    me2pt5-23   Ethan's Slugma  [Ascended Heroes]   (true card at rank 2)
+```
+
+This is §4's reprint failure mode exactly — two prints sharing artwork — and it
+only appeared because `me2pt5` was one of the sets just added. Adding a set
+creates the confusion it should create. Note the true card is at **rank 2**, so
+it is a near-miss, not an absence.
+
+### 13.2 Near-misses have reappeared — an earlier conclusion was wrong
+
+§12.1 reported top-1 == top-5 == top-10 and concluded there was "no near-miss
+middle ground", so widening the candidate list bought nothing. **That was an
+artifact of the catalogue holes**: a card not in the index cannot appear at
+rank 2. With the catalogue corrected, top-5 (79.7%) now exceeds top-1 (75.0%),
+and stage 2 converts one of those near-misses. Any reasoning that treated
+re-ranking as pointless should be revisited.
+
+### 13.3 The margin gate more than doubles zero-error coverage
+
+Auto-accepting on absolute score alone:
+
+| threshold | accepted | precision | wrong |
+|---:|---:|---:|---:|
+| 0.741 | 45/64 | 95.6% | 2 |
+| 0.798 | 37/64 | 97.3% | 1 |
+| 0.855 | 24/64 | 95.8% | 1 |
+| **0.876** | **11/64 (17.2%)** | **100%** | **0** |
+
+One wrong answer survives to 0.876 — the Slugma reprint, which scores 0.876
+with a runner-up gap of just 0.026. Adding a margin condition removes it:
+
+| gate | accepted | correct | wrong |
+|---|---:|---:|---:|
+| score ≥ 0.850 | 27/64 | 26 | 1 |
+| score ≥ 0.850 **and margin ≥ 0.05** | **25/64 (39%)** | **25** | **0** |
+
+Correct matches above 0.80 carry a median margin of 0.129; the reprint error
+carries 0.026. **Ship the two-condition gate**: 39% of cards auto-identified
+with no wrong answers, against 17.2% on score alone. This is the single
+cheapest coverage gain available and it needs no model change.
+
+### 13.4 Verdict
+
+The ~90% bar is met on matchable cards (96.1%) and not met on the full photo
+set (76.6%), and the gap between those two numbers is catalogue coverage, not
+matcher quality. Ranked by measured value:
+
+1. **Catalogue completeness is the dominant term.** It moved the headline from
+   45.3% to 76.6% with no change to the descriptor. The freshness automation in
+   §D of the reliability plan is therefore accuracy work, not hygiene.
+2. **Ship the score+margin gate** (§13.3) — 39% zero-error coverage today.
+3. **Reprint disambiguation is now the top *matcher* problem**, and it is the
+   only one left on confirmed cards. Stage 2 exists for it and is converting
+   only one query; the bottom-right region measured 4.4× better separation on
+   reprints, so it is under-exploited rather than wrong.
+4. Detection at 87.5% remains ~8 automatic misses.
+
+### 13.5 What this still cannot tell you
+
+The sample is 64 photographs from one 115-second session, one table, one
+lighting condition, roughly 40 distinct cards, dominated by one set. "Zero
+errors at the two-condition gate" is 25/25 — no observed errors, not a bounded
+error rate. The stratified session in the plan (§B5) remains the prerequisite
+for trusting any threshold in production.
 
 ---
 
