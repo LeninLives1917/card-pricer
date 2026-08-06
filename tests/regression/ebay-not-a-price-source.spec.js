@@ -102,3 +102,62 @@ test('the eBay adapter is still importable and still marked as a price source it
   assert.equal(typeof mod.priceEbaySold, 'function');
   assert.equal(typeof mod.__resetTokenCache, 'function');
 });
+
+// ---------------------------------------------------------------------------
+// Drift between the two copies of the pricing cascade.
+//
+// The eBay fix landed in pricing/price.js. apps/server/routes/price.js carries
+// a DUPLICATE of that cascade and kept scoring hotness on eBay sample_size for
+// weeks afterwards, pushing reason strings that read "12 recent eBay sales" —
+// a claim about sales made from a capped list of active asks.
+//
+// Until the duplication is removed, this pins the invariant at the source
+// level. Same style as no-raw-api-fetch.spec.js.
+
+const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
+
+const CASCADES = [
+  'pricing/price.js',
+  'apps/server/routes/price.js',
+];
+
+test('neither cascade scores hotness on eBay listing counts', () => {
+  for (const rel of CASCADES) {
+    const src = fs.readFileSync(join(ROOT, rel), 'utf8');
+    // Strip comments — both files explain at length why this is wrong, and
+    // that prose necessarily contains the words.
+    const code = src
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .split('\n').filter(l => !l.trim().startsWith('//')).join('\n');
+
+    assert.ok(!/hotness\.score\s*[+-]=[^\n]*\n?[^\n]*ebay/i.test(code),
+      `${rel}: hotness.score must not move on eBay data`);
+
+    for (const m of code.match(/hotness\.reasons\.push\([^)]*\)/gi) || []) {
+      assert.ok(!/ebay/i.test(m),
+        `${rel}: reason string mentions eBay — ${m.slice(0, 80)}`);
+    }
+  }
+});
+
+test('neither cascade calls an eBay figure a "sale"', () => {
+  for (const rel of CASCADES) {
+    const src = fs.readFileSync(join(ROOT, rel), 'utf8');
+    const code = src
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .split('\n').filter(l => !l.trim().startsWith('//')).join('\n');
+    // Template literals and plain strings alike.
+    assert.ok(!/(recent )?eBay sales/i.test(code),
+      `${rel}: says "eBay sales" in live code — the adapter returns active ` +
+      'asks, capped at 15, sorted cheapest-first');
+  }
+});
+
+test('volume is labelled with what it actually measures', () => {
+  for (const rel of CASCADES) {
+    const src = fs.readFileSync(join(ROOT, rel), 'utf8');
+    assert.match(src, /volume_basis\s*=\s*'ebay_active_listings_capped'/,
+      `${rel}: hotness.volume is still reported, so it must carry the label ` +
+      'that says it is capped active listings and not sales volume');
+  }
+});

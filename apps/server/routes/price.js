@@ -285,12 +285,22 @@ async function handlePrice(req, res) {
       else                { hotness.score -= 10; hotness.reasons.push(`Price down ${hotness.trend}% (30d)`); }
     }
 
-    const ebayCount = pricing.ebay?.sample_size || 0;
-    hotness.volume = ebayCount;
-    if (ebayCount >= 12)      { hotness.score += 20; hotness.reasons.push(`${ebayCount} recent eBay sales`); }
-    else if (ebayCount >= 6)  { hotness.score += 10; hotness.reasons.push(`${ebayCount} eBay sales`); }
-    else if (ebayCount >= 3)  { hotness.score += 5; }
-    else if (ebayCount === 0) { hotness.score -= 10; hotness.reasons.push('No recent eBay sales'); }
+    // eBay sample_size is NOT a sales-volume signal and no longer scores.
+    // Ported from pricing/price.js, where this was fixed first; this route
+    // carries a duplicate of that cascade and kept the old behaviour.
+    //
+    // It counts active listings returned by a Browse query that is hard-capped
+    // at limit 15, so the 12/6/3 thresholds were really asking "did the query
+    // return a full page?" — a card with 200 listings and one with 15 scored
+    // identically, and a card with genuinely zero listings was indistinguishable
+    // from one whose name simply didn't match the query. It was also worth ±30
+    // points, the largest single term in the score, on that basis. And the
+    // reason strings said "recent eBay sales", which was never true: they are
+    // asks, not sales.
+    //
+    // Volume is still reported for display, relabelled to say what it is.
+    hotness.volume = pricing.ebay?.sample_size || 0;
+    hotness.volume_basis = 'ebay_active_listings_capped';
 
     if (bestPrice && bestPrice >= 10 && hotness.trend && hotness.trend > 0) {
       hotness.score += 10;
