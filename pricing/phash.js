@@ -41,7 +41,18 @@ import { rectifyCard, isEnabled as rectifyEnabled } from './card-rectify.js';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const REPO_ROOT = join(__dirname, '..');
-const PHASH_FILE = join(REPO_ROOT, 'data', 'card-phashes.json');
+// Resolved per call, not at import, so a test can redirect it AFTER importing
+// this module (ESM import hoisting makes setting the env var beforehand
+// awkward). The default is the production artifact.
+//
+// This is not a convenience. tests/regression/phash-concurrent-flush.spec.js
+// exercised flush races against the REAL data/card-phashes.json and unlinked it
+// in its hooks, so `npm test` silently destroyed the index — including a
+// 76,893-entry one that took a multi-hour crawl to build. Nothing failed; the
+// suite went green and the fast path just had nothing to hit. Same signature as
+// every other defect here: destructive, silent, looks like success.
+const phashFile = () =>
+  process.env.PHASH_FILE || join(REPO_ROOT, 'data', 'card-phashes.json');
 
 // In-memory indexes: Map<bigint, { set_id, number }>
 const _phashIndex = new Map();
@@ -508,14 +519,15 @@ async function flushToDisk() {
       };
       const json = JSON.stringify(payload);
 
-      const tmpPath = PHASH_FILE + '.tmp';
+      const target = phashFile();
+      const tmpPath = target + '.tmp';
       await fs.promises.writeFile(tmpPath, json, 'utf8');
       // Atomic rename (POSIX). On Windows falls back to direct overwrite.
       try {
-        await fs.promises.rename(tmpPath, PHASH_FILE);
+        await fs.promises.rename(tmpPath, target);
       } catch (err) {
         if (err.code !== 'EPERM') throw err;
-        await fs.promises.writeFile(PHASH_FILE, json, 'utf8');
+        await fs.promises.writeFile(target, json, 'utf8');
         try { await fs.promises.unlink(tmpPath); } catch { /* best-effort */ }
       }
     } while (_flushQueued);
@@ -545,7 +557,7 @@ async function flushToDisk() {
 export async function loadIndex() {
   let raw;
   try {
-    raw = await fs.promises.readFile(PHASH_FILE, 'utf8');
+    raw = await fs.promises.readFile(phashFile(), 'utf8');
   } catch (err) {
     if (err.code === 'ENOENT') return;
     throw err;
@@ -556,9 +568,9 @@ export async function loadIndex() {
     obj = JSON.parse(raw);
   } catch {
     // Corrupt JSON — preserve for operator inspection, treat as empty.
-    const corruptPath = PHASH_FILE + '.corrupt-' + Date.now();
+    const corruptPath = phashFile() + '.corrupt-' + Date.now();
     try {
-      await fs.promises.rename(PHASH_FILE, corruptPath);
+      await fs.promises.rename(phashFile(), corruptPath);
     } catch {
       // If the rename itself fails, leave the file in place — don't crash.
     }

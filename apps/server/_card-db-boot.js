@@ -818,7 +818,15 @@ function readStamp(file) {
  *
  * Set CARD_DB_AUTO_REFRESH=0 to disable.
  */
-export function maybeRefreshStaleCatalogue({ now = Date.now(), start = downloadCardDatabase } = {}) {
+export function maybeRefreshStaleCatalogue({
+  now = Date.now(),
+  start = downloadCardDatabase,
+  // Paths are injectable so tests never read or write the real artifacts. The
+  // suite already destroyed data/card-phashes.json once by pointing a spec at a
+  // production path; see tests/_setup.mjs.
+  catalogueFile = CARD_DB_FILE,
+  stampFile = REFRESH_STAMP,
+} = {}) {
   if (process.env.CARD_DB_AUTO_REFRESH === '0') {
     return { refreshing: false, reason: 'disabled by CARD_DB_AUTO_REFRESH=0' };
   }
@@ -826,7 +834,7 @@ export function maybeRefreshStaleCatalogue({ now = Date.now(), start = downloadC
     return { refreshing: false, reason: 'a download is already running' };
   }
 
-  const builtAt = readStamp(CARD_DB_FILE);
+  const builtAt = readStamp(catalogueFile);
   if (builtAt === null) {
     return { refreshing: false, reason: 'no catalogue file to age' };
   }
@@ -836,7 +844,7 @@ export function maybeRefreshStaleCatalogue({ now = Date.now(), start = downloadC
     return { refreshing: false, reason: `fresh (${ageDays.toFixed(1)}d)`, age_days: ageDays };
   }
 
-  const lastAttempt = readStamp(REFRESH_STAMP);
+  const lastAttempt = readStamp(stampFile);
   if (lastAttempt !== null && now - lastAttempt < REFRESH_RETRY_HOURS * 3_600_000) {
     const hours = ((now - lastAttempt) / 3_600_000).toFixed(1);
     console.warn(`[CARD-DB] catalogue is ${ageDays.toFixed(0)}d old but a refresh was ` +
@@ -848,7 +856,7 @@ export function maybeRefreshStaleCatalogue({ now = Date.now(), start = downloadC
   // Stamp BEFORE starting. A crawl that dies mid-way must not license an
   // immediate retry on the restart it probably caused.
   try {
-    fs.writeFileSync(REFRESH_STAMP, new Date(now).toISOString());
+    fs.writeFileSync(stampFile, new Date(now).toISOString());
   } catch (err) {
     console.warn('[CARD-DB] could not write refresh stamp:', err.message);
   }

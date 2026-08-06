@@ -15,6 +15,7 @@
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'fs';
+import os from 'os';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 
@@ -28,7 +29,13 @@ import {
 const __filename = fileURLToPath(import.meta.url);
 const __dirname  = dirname(__filename);
 const REPO_ROOT  = join(__dirname, '..', '..');
-const PHASH_FILE = join(REPO_ROOT, 'data', 'card-phashes.json');
+// Redirected AWAY from data/card-phashes.json. This suite unlinks the file it
+// points at, so aiming it at the production artifact meant `npm test` silently
+// destroyed the real index — a 76,893-entry one built by a multi-hour crawl
+// went to a single placeholder entry with the suite reporting all green. A test
+// that deletes production data is not a passing test.
+const PHASH_FILE = join(os.tmpdir(), `card-pricer-phash-test-${process.pid}.json`);
+process.env.PHASH_FILE = PHASH_FILE;
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 

@@ -8,8 +8,8 @@
     "prestart": "node --check apps/server/server.js",
     "start": "node apps/server/server.js",
     "dev": "node apps/server/server.js",
-    "test": "node --test --test-reporter=spec \"tests/**/*.spec.js\"",
-    "test:watch": "node --test --watch --test-reporter=spec \"tests/**/*.spec.js\""
+    "test": "node --test --import ./tests/_setup.mjs --test-reporter=spec \"tests/**/*.spec.js\"",
+    "test:watch": "node --test --watch --import ./tests/_setup.mjs --test-reporter=spec \"tests/**/*.spec.js\""
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.39.0",
