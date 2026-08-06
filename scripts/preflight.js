@@ -87,6 +87,25 @@ function checkManifest() {
     return warn('coverage', 'no card-index-manifest.json',
       'coverage is UNKNOWN — run the crawler once to record it');
   }
+
+  // A manifest older than the data it describes is stale, and stale numbers
+  // reported as current are exactly the failure mode this script exists to
+  // prevent. The crawler only writes the manifest when it reaches
+  // reconciliation, so an interrupted run leaves the previous one in place
+  // describing a catalogue that has since grown.
+  const cardDb = join(DATA, 'card-db.json');
+  const built = Date.parse(m.built_at);
+  if (fs.existsSync(cardDb) && Number.isFinite(built)) {
+    const dataMtime = fs.statSync(cardDb).mtimeMs;
+    if (dataMtime > built + 60_000) {
+      return warn('coverage', `manifest is STALE — written ${fmtAge(built)}, ` +
+        `card-db modified ${fmtAge(dataMtime)} (reports ${(m.coverage * 100).toFixed(2)}%)`,
+        'a crawl was interrupted before it could reconcile. Re-run ' +
+        'node scripts/build-phash-db.js to completion for a current figure ' +
+        '(see the separate "upstream sets" check for live set coverage)');
+    }
+  }
+
   const pct = (m.coverage * 100).toFixed(2);
   const missing = m.missing_sets?.length || 0;
   const short = m.short_sets?.length || 0;
@@ -103,7 +122,6 @@ function checkManifest() {
     ok('coverage', `${pct}% (${m.card_count}/${m.upstream_total})`);
   }
 
-  const built = Date.parse(m.built_at);
   if (Number.isFinite(built) && ageDays(built) > CATALOGUE_MAX_AGE_DAYS) {
     warn('index build age', `last built ${fmtAge(built)}`,
       'a set has likely released since — re-crawl');
