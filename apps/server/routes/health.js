@@ -84,6 +84,11 @@ export async function buildHealthPayload(deps = {}) {
   }
   const catalogueAge = daysSince(cardDb.built_at);
 
+  // A crawl that failed halfway still calls saveCardDbToFile(), so the file's
+  // mtime looks fresh while the catalogue is short. Age alone cannot see that;
+  // the download's own completeness flag can.
+  const incomplete = cardDb.download && cardDb.download.complete === false;
+
   const checks = {
     supabase: {
       ok: has_supabase,
@@ -91,7 +96,8 @@ export async function buildHealthPayload(deps = {}) {
       configured: !!(env.SUPABASE_URL && env.SUPABASE_SERVICE_ROLE_KEY),
     },
     catalogue: {
-      ok: cardDb.ready && cardDb.count > 0 && !(catalogueAge > CATALOGUE_STALE_DAYS),
+      ok: cardDb.ready && cardDb.count > 0 && !incomplete &&
+          !(catalogueAge > CATALOGUE_STALE_DAYS),
       ready: cardDb.ready,
       cards: cardDb.count,
       age_days: catalogueAge === null ? null : Number(catalogueAge.toFixed(1)),
@@ -102,6 +108,9 @@ export async function buildHealthPayload(deps = {}) {
         ? 'catalogue not loaded'
         : cardDb.count === 0
         ? 'catalogue empty'
+        : incomplete
+        ? `last crawl INCOMPLETE — ${cardDb.download.cards}/${cardDb.download.expected} ` +
+          `cards, ${cardDb.download.pagesFailed} page(s) failed`
         : catalogueAge > CATALOGUE_STALE_DAYS
           ? `stale — ${catalogueAge.toFixed(0)}d old, a set has likely released since`
           : 'fresh',

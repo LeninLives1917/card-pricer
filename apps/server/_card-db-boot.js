@@ -798,6 +798,75 @@ async function loadPriceDbFromPostgres() {
   }
 }
 
+// A catalogue older than a release cycle is very likely missing whatever the
+// shop is actually selling.
+const CATALOGUE_MAX_AGE_DAYS = 21;
+// Render restarts often (free-tier sleep, redeploys). Without this floor a
+// stale instance would kick a fresh five-minute crawl on every single cold
+// start, hammering pokemontcg.io for no benefit.
+const REFRESH_RETRY_HOURS = 24;
+const REFRESH_STAMP = join(REPO_ROOT, 'data', '.card-db-refresh');
+
+function readStamp(file) {
+  try { return fs.statSync(file).mtimeMs; } catch { return null; }
+}
+
+/**
+ * Refresh the serving catalogue in the background if it has gone stale.
+ * Exported for testability; returns what it decided and why, so the decision is
+ * inspectable rather than a log line nobody reads.
+ *
+ * Set CARD_DB_AUTO_REFRESH=0 to disable.
+ */
+export function maybeRefreshStaleCatalogue({ now = Date.now(), start = downloadCardDatabase } = {}) {
+  if (process.env.CARD_DB_AUTO_REFRESH === '0') {
+    return { refreshing: false, reason: 'disabled by CARD_DB_AUTO_REFRESH=0' };
+  }
+  if (cardDbLoading) {
+    return { refreshing: false, reason: 'a download is already running' };
+  }
+
+  const builtAt = readStamp(CARD_DB_FILE);
+  if (builtAt === null) {
+    return { refreshing: false, reason: 'no catalogue file to age' };
+  }
+
+  const ageDays = (now - builtAt) / 86_400_000;
+  if (ageDays <= CATALOGUE_MAX_AGE_DAYS) {
+    return { refreshing: false, reason: `fresh (${ageDays.toFixed(1)}d)`, age_days: ageDays };
+  }
+
+  const lastAttempt = readStamp(REFRESH_STAMP);
+  if (lastAttempt !== null && now - lastAttempt < REFRESH_RETRY_HOURS * 3_600_000) {
+    const hours = ((now - lastAttempt) / 3_600_000).toFixed(1);
+    console.warn(`[CARD-DB] catalogue is ${ageDays.toFixed(0)}d old but a refresh was ` +
+      `attempted ${hours}h ago — not retrying for another ` +
+      `${REFRESH_RETRY_HOURS}h. If that attempt failed, check the logs.`);
+    return { refreshing: false, reason: 'retry floor', age_days: ageDays };
+  }
+
+  // Stamp BEFORE starting. A crawl that dies mid-way must not license an
+  // immediate retry on the restart it probably caused.
+  try {
+    fs.writeFileSync(REFRESH_STAMP, new Date(now).toISOString());
+  } catch (err) {
+    console.warn('[CARD-DB] could not write refresh stamp:', err.message);
+  }
+
+  console.warn(`[CARD-DB] catalogue is ${ageDays.toFixed(0)}d old (limit ` +
+    `${CATALOGUE_MAX_AGE_DAYS}d) — refreshing in the background. New sets are ` +
+    'invisible until this completes.');
+
+  Promise.resolve()
+    .then(() => start())
+    .then(() => console.log('[CARD-DB] background refresh complete'))
+    // Never let this reject unhandled: a failed refresh is a degraded
+    // catalogue, not a dead process. /api/health reports the age either way.
+    .catch(err => console.error('[CARD-DB] background refresh FAILED:', err.message));
+
+  return { refreshing: true, reason: `stale (${ageDays.toFixed(1)}d)`, age_days: ageDays };
+}
+
 export async function initCardDb() {
   // Boot signals operator-initiated restart — clear any leftover crawler marker
   // so dirty-save can resume normally. If the crawler is somehow still running
@@ -816,6 +885,14 @@ export async function initCardDb() {
 
   applyPokellectorCorrections();
   saveCardDbToFile();
+
+  // The download above only runs when NEITHER source exists, so once
+  // data/card-db.json is on the Render persistent disk the serving catalogue
+  // never refreshes again — new sets stay invisible forever. Sets ship roughly
+  // every six weeks and a shop's counter skews hard to the newest one, so this
+  // is the expensive kind of stale. Kicked off in the background: boot must not
+  // wait five minutes for it.
+  maybeRefreshStaleCatalogue();
 
   // Boot order for CARD_PRICES (V2 F16 / S10):
   //   1. Postgres card_prices (primary) — survives Render free-tier sleep

@@ -80,10 +80,25 @@ test('an unknown catalogue age does not read as infinitely stale', async () => {
   assert.equal(body.checks.catalogue.ok, true);
 });
 
-test('download stats ride along, because a partial crawl still leaves a file', async () => {
-  const stats = { sets: 174, failed: ['sv3'], complete: false };
+test('THE PARTIAL-CRAWL CASE: a fresh mtime does not mean a whole catalogue', async () => {
+  // downloadCardDatabase() calls saveCardDbToFile() on its failure path too, so
+  // a crawl that died halfway leaves a file with a brand-new mtime and a short
+  // catalogue. Age cannot see that; the download's own flag can.
+  const stats = { cards: 14_000, expected: 20_427, pagesFailed: 9, complete: false };
   const body = await health({ cardDb: catalogue({ download: stats }) });
+
   assert.deepEqual(body.checks.catalogue.last_download, stats);
+  assert.equal(body.checks.catalogue.ok, false,
+    'a freshly-written but incomplete catalogue must not read as healthy');
+  assert.match(body.checks.catalogue.detail, /INCOMPLETE.*14000\/20427/);
+  assert.ok(body.degraded.includes('catalogue'));
+});
+
+test('a completed crawl is not treated as incomplete', async () => {
+  const body = await health({
+    cardDb: catalogue({ download: { cards: 20_427, expected: 20_427, pagesFailed: 0, complete: true } }),
+  });
+  assert.equal(body.checks.catalogue.ok, true);
 });
 
 test('the hardcoded cardmarket banner is gone', async () => {

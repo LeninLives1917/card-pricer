@@ -1,6 +1,7 @@
 node_modules/
 .env
 data/.crawl-active
+data/.card-db-refresh
 *.log
 npm-debug.log*
 .DS_Store
