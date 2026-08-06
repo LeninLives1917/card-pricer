@@ -134,6 +134,13 @@ export async function buildHealthPayload(deps = {}) {
       // a health check that disagrees with the code it reports on is worse than
       // no health check.
       enabled: rectifyEnabled(env),
+      // Diagnostics, because three separate theories about why this was off
+      // were each disproven by evidence rather than confirmed by it. Reporting
+      // what the PROCESS actually sees distinguishes "Render never injected the
+      // key" from "injected with a value we don't accept". CARD_RECTIFY is a
+      // boolean flag, not a secret, so echoing it leaks nothing.
+      key_present: Object.prototype.hasOwnProperty.call(env, 'CARD_RECTIFY'),
+      raw_value: env.CARD_RECTIFY ?? null,
       detail: rectifyEnabled(env)
         ? 'CARD_RECTIFY=1 — perspective rectification active'
         : 'OFF — cropToCard falls back to the .trim() heuristic, which measured ' +
