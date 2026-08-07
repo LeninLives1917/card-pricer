@@ -115,6 +115,44 @@ test('sse-bridge.js still wraps rows in an `entry` field', () => {
   }
 });
 
+// ── Source-level: module JS must never be served stale ───────────────
+
+test('service worker serves /modules/*.js network-first, not stale-while-revalidate', () => {
+  // INCIDENT (twice). v2.1: the customer-PDF button did nothing because
+  // clients held a cached pre-PDF session.js. v3.1: a paired phone held a
+  // cached scan.js + pair.js, so a deployed fix did not run and the correct
+  // fix looked broken. Bumping CACHE_VERSION does not cover the first load
+  // after a deploy, because the bump only applies once the new worker has
+  // activated. Logic must come from the network with cache as FALLBACK.
+  const src = fs.readFileSync(join(REPO_ROOT, 'apps/vendor/service-worker.js'), 'utf8');
+
+  assert.match(src, /isModule/,
+    'the SW must special-case module JS');
+  assert.match(src, /url\.pathname\.startsWith\('\/modules\/'\)/,
+    'the module branch must match the /modules/ prefix');
+
+  // The module branch must appear BEFORE the stale-while-revalidate block,
+  // otherwise the generic handler swallows it first.
+  const moduleIdx = src.indexOf('isModule');
+  const swrIdx = src.indexOf('stale-while-revalidate', moduleIdx);
+  const genericIdx = src.lastIndexOf('cache.match(request)');
+  assert.ok(moduleIdx > 0 && moduleIdx < genericIdx,
+    'the module branch must be evaluated before the generic asset handler');
+  assert.ok(swrIdx === -1 || swrIdx > moduleIdx,
+    'modules must not fall into the stale-while-revalidate path');
+});
+
+test('a newly activated worker tells open clients, so a deploy lands in one load', () => {
+  const sw = fs.readFileSync(join(REPO_ROOT, 'apps/vendor/service-worker.js'), 'utf8');
+  const pwa = fs.readFileSync(join(REPO_ROOT, 'apps/vendor/modules/pwa.js'), 'utf8');
+
+  assert.match(sw, /sw-activated/, 'activate must notify clients');
+  assert.match(pwa, /sw-activated/, 'the app must listen for it');
+  assert.match(pwa, /sessionStorage/,
+    'the reload must be guarded against looping — a looping scanner at a show ' +
+    'is worse than a stale one');
+});
+
 // ── Source-level: scanner-mode must not regress to the OS camera ─────
 
 test('scanner-mode uses a live viewfinder, not the OS camera app, as its primary path', () => {

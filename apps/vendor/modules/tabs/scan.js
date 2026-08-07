@@ -388,6 +388,13 @@ async function submitManualEntry() {
 // Scanner-mode UI — phone runs the camera flow only
 // ============================================================
 
+// Bump whenever scanner-mode behaviour changes. Rendered on screen so the
+// question "is the phone actually running the new code?" is answered by
+// looking, not by inference. A cached module served an OLD scanner UI on a
+// NEW deploy and cost an entire debugging round — the same lesson as the
+// key_present field on /api/health.
+const SCANNER_BUILD = 'v3.2-live-camera';
+
 // Upload tally. Shown to the operator, because "sent" with nothing arriving
 // on the laptop is precisely the failure this mode shipped with.
 const _scannerCounts = { captured: 0, sent: 0, failed: 0, inflight: 0 };
@@ -415,6 +422,9 @@ function showScannerMode() {
         <button class="btn" id="scannerTorch" style="display:none; padding:18px 14px;" aria-label="Toggle torch">Light</button>
       </div>
       <div id="scannerStatus" style="font-size:11px; color:var(--paper-300); margin-top:var(--p-2); min-height:14px;"></div>
+      <div id="scannerBuild" style="font-size:10px; color:var(--paper-300); opacity:0.65; margin-top:var(--p-1);">
+        build ${SCANNER_BUILD} · mode <span id="scannerModeLabel">starting…</span>
+      </div>
     </div>`;
 
   const video    = document.getElementById('scannerVideo');
@@ -460,10 +470,16 @@ function showScannerMode() {
       });
   };
 
+  const setMode = (label) => {
+    const el = document.getElementById('scannerModeLabel');
+    if (el) el.textContent = label;
+  };
+
   const showFallback = (message) => {
     if (camWrap) camWrap.style.display = 'none';
     if (fallback) fallback.style.display = 'block';
     if (fbMsg) fbMsg.textContent = message;
+    setMode('CAMERA-APP FALLBACK (asks you to confirm each shot)');
     if (shutter) shutter.style.display = 'none';
     const input = document.getElementById('scannerFileInput');
     const fileBtn = document.getElementById('scannerFileBtn');
@@ -499,6 +515,7 @@ function showScannerMode() {
     }
 
     if (camWrap) camWrap.style.display = 'block';
+    setMode('LIVE CAMERA (no confirm step)');
     renderStatus('ready');
 
     if (torchBtn && capture.hasTorch()) {

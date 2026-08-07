@@ -166,13 +166,32 @@ async function receiveRemoteScan(msg) {
     try {
       await _onScanReceived(entry);
       _counts.delivered++;
+      renderPairCounts();
     } catch (e) {
       console.warn('[PAIR] receive handler threw:', e);
-      showPairToast('Scan received but failed to process');
+      _counts.handler_threw = (_counts.handler_threw || 0) + 1;
+      renderPairCounts();
+      showPairToast('Scan received but FAILED to process — see the scan tab');
       return;
     }
   }
   showPairToast('Scan received from phone');
+}
+
+// Delivery state on the host, visible rather than inferred. "Received" and
+// "priced" are different events; a phone scan can arrive perfectly and then
+// die in the identify call (401 when the laptop is signed out is the common
+// one). Showing both numbers separates those two failures at a glance.
+function renderPairCounts() {
+  const el = document.getElementById('pairStatus');
+  if (!el) return;
+  const c = _counts;
+  const bits = [`${c.delivered} received`];
+  if (c.handler_threw) bits.push(`${c.handler_threw} FAILED TO PROCESS`);
+  if (c.dropped_no_image) bits.push(`${c.dropped_no_image} DROPPED (no image)`);
+  if (c.deduped) bits.push(`${c.deduped} duplicate`);
+  const room = _roomId ? `Room ${_roomId} · ` : '';
+  el.textContent = room + bits.join(' · ');
 }
 
 // ============================================================

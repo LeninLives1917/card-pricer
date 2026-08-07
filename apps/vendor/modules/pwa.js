@@ -15,6 +15,22 @@ export function registerServiceWorker() {
   // until S22 cutover. apps/vendor/service-worker.js is staged but not the
   // file the orchestrator wires from URL → file system. We register at the
   // canonical URL either way.
+  // A newly activated worker means the modules this page is running were
+  // built by the previous one. Reload once so the fix that just deployed
+  // actually executes. Guarded by a sessionStorage flag so a worker that
+  // re-activates cannot put the tab in a reload loop — at a show, a
+  // looping scanner is worse than a stale one.
+  navigator.serviceWorker.addEventListener('message', (ev) => {
+    if (ev.data?.type !== 'sw-activated') return;
+    const key = 'cp_sw_reloaded_' + ev.data.version;
+    try {
+      if (sessionStorage.getItem(key)) return;
+      sessionStorage.setItem(key, '1');
+    } catch { return; }   // private mode: skip the reload rather than loop
+    console.log('[APP] new SW active (' + ev.data.version + ') — reloading once');
+    location.reload();
+  });
+
   window.addEventListener('load', () => {
     navigator.serviceWorker
       .register('/service-worker.js', { updateViaCache: 'none' })

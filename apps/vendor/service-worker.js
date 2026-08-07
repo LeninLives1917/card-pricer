@@ -19,7 +19,11 @@
 //           has already opened the app keeps its cached scan.js and pair.js
 //           and neither fix takes effect.
 
-const CACHE_VERSION = 'cardpricer-v3.1';
+//   v3.2 — modules moved OFF stale-while-revalidate (see the fetch handler).
+//           Also: on activate the worker now tells live clients it took
+//           over, so a deploy lands in one navigation instead of two.
+
+const CACHE_VERSION = 'cardpricer-v3.2';
 
 const SHELL = [
   '/',
@@ -35,12 +39,21 @@ self.addEventListener('install', (event) => {
 });
 
 self.addEventListener('activate', (event) => {
-  event.waitUntil(
-    caches.keys().then((keys) =>
-      Promise.all(keys.filter((k) => k !== CACHE_VERSION).map((k) => caches.delete(k)))
-    )
-  );
-  self.clients.claim();
+  event.waitUntil((async () => {
+    const keys = await caches.keys();
+    await Promise.all(keys.filter((k) => k !== CACHE_VERSION).map((k) => caches.delete(k)));
+    await self.clients.claim();
+
+    // Tell any page already open that a new worker took over. The page it
+    // is currently running was assembled by the OLD worker, so its modules
+    // are the old ones; pwa.js reloads once on this message. Without it the
+    // operator must know to load twice after every deploy, which is not a
+    // thing anyone should have to know.
+    const clients = await self.clients.matchAll({ type: 'window' });
+    for (const c of clients) {
+      try { c.postMessage({ type: 'sw-activated', version: CACHE_VERSION }); } catch (_) {}
+    }
+  })());
 });
 
 self.addEventListener('fetch', (event) => {
@@ -76,7 +89,38 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // Static assets (CSS / module JS / images): stale-while-revalidate.
+  // Application MODULES are behaviour, not assets — network-first.
+  //
+  // This has now caused two incidents. v2.1: the customer-PDF button did
+  // nothing because clients kept a cached pre-PDF session.js. v3.1: a
+  // paired phone kept a cached scan.js and pair.js, so a shipped fix to
+  // both simply did not run, and the operator saw the OLD behaviour on a
+  // NEW deploy — the most expensive kind of confusion, because it makes a
+  // correct fix look broken.
+  //
+  // Bumping CACHE_VERSION was the standing remedy and it is not good
+  // enough: the bump only lands after the new worker activates, which is
+  // itself one navigation later, so the first load after any deploy still
+  // ran stale code. Stale code is never the right answer for logic — only
+  // for bytes. Offline still works via the cache fallback below.
+  const isModule = url.pathname.startsWith('/modules/') && url.pathname.endsWith('.js');
+
+  if (isModule) {
+    event.respondWith(
+      fetch(request)
+        .then((resp) => {
+          if (resp && resp.ok) {
+            const copy = resp.clone();
+            caches.open(CACHE_VERSION).then((cache) => cache.put(request, copy));
+          }
+          return resp;
+        })
+        .catch(() => caches.match(request))
+    );
+    return;
+  }
+
+  // Everything else (CSS, images, fonts): stale-while-revalidate.
   event.respondWith(
     caches.open(CACHE_VERSION).then(async (cache) => {
       const cached = await cache.match(request);
