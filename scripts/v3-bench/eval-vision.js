@@ -45,6 +45,87 @@ const argNum = (flag, dflt) => {
 };
 const LIMIT = argNum('--limit', Infinity);
 const CONCURRENCY = argNum('--concurrency', 3);
+const argStr = (flag, dflt) => {
+  const i = argv.indexOf(flag);
+  return i >= 0 && argv[i + 1] ? argv[i + 1] : dflt;
+};
+const PROVIDER = argStr('--provider', 'claude');
+const GEMINI_MODEL = argStr('--model', 'gemini-3-flash-preview');
+
+// The production system prompt, read from source rather than copied, so a
+// cross-provider comparison cannot silently drift from what ships.
+//
+// FAIRNESS CAVEAT, stated up front: this prompt is 3,651 tokens tuned against
+// Claude over many iterations. Handing it unchanged to another model measures
+// "which model does best on Claude's prompt", which favours the incumbent. It
+// is still the right FIRST test, because it is exactly the drop-in swap an
+// operator would actually make. A verdict either way deserves a re-tuned
+// prompt before it is treated as settled.
+const CARD_ID_SYSTEM_PROMPT = (() => {
+  const src = fs.readFileSync(join(process.cwd(), 'pricing', 'identify-core.js'), 'utf8');
+  const m = src.match(/CARD_ID_SYSTEM_PROMPT\s*=\s*`([\s\S]*?)`;/);
+  if (!m) throw new Error('could not extract CARD_ID_SYSTEM_PROMPT');
+  return m[1];
+})();
+
+const USER_MSG = 'Identify this trading card. FIRST read the card number at the bottom of the card — this is the most critical field. If it has no slash (like SM211, SWSH066) it is a PROMO card. Be extremely precise with the set code and card number.';
+
+let _lastUsage = null;
+
+async function readWithGemini(buffer) {
+  const key = process.env.GEMINI_API_KEY;
+  if (!key) throw new Error('GEMINI_API_KEY not set');
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${key}`;
+  const body = {
+    systemInstruction: { parts: [{ text: CARD_ID_SYSTEM_PROMPT }] },
+    contents: [{
+      role: 'user',
+      parts: [
+        { inline_data: { mime_type: 'image/jpeg', data: buffer.toString('base64') } },
+        { text: USER_MSG },
+      ],
+    }],
+    // 2048 was not enough: Gemini 3 thinks by default and spent 1,962 tokens
+    // reasoning, leaving 71 for the answer — every response came back as
+    // truncated JSON with finishReason MAX_TOKENS. That is a harness bug, not
+    // a model failure, and scoring it as a model failure would have been a
+    // false result in the incumbent's favour.
+    generationConfig: { responseMimeType: 'application/json', maxOutputTokens: 8192 },
+  };
+  // Retry 429/5xx with backoff. A rate limit mid-run silently truncated an
+  // earlier evaluation to 13 of 64 photos, and a partial run that still prints
+  // a percentage is exactly the kind of half-measured number this project has
+  // been bitten by. Fail loudly after the retries instead.
+  let r, lastBody = '';
+  for (let attempt = 0; attempt < 5; attempt++) {
+    r = await fetch(url, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (r.ok) break;
+    lastBody = (await r.text()).slice(0, 200);
+    if (r.status !== 429 && r.status < 500) break;
+    await new Promise((res) => setTimeout(res, 2000 * 2 ** attempt));
+  }
+  if (!r.ok) throw new Error(`gemini ${r.status} after retries: ${lastBody}`);
+  const j = await r.json();
+  const finish = j.candidates?.[0]?.finishReason;
+  const text = j.candidates?.[0]?.content?.parts?.map((x) => x.text).filter(Boolean).join('') ?? '';
+  if (finish === 'MAX_TOKENS') throw new Error('gemini truncated (MAX_TOKENS) — raise maxOutputTokens');
+  if (!text) throw new Error(`gemini empty response (finish=${finish})`);
+  _lastUsage = j.usageMetadata ?? null;
+  let parsed;
+  try { parsed = JSON.parse(text); }
+  catch {
+    const m = text.match(/\{[\s\S]*\}/);
+    if (!m) throw new Error('gemini returned unparseable JSON');
+    parsed = JSON.parse(m[0]);
+  }
+  return parsed.cards ?? [];
+}
+
+const _usageTotals = { prompt: 0, output: 0, thoughts: 0, calls: 0 };
 
 function walk(dir, out = []) {
   for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
@@ -139,15 +220,30 @@ const truthOf = (raw) => {
  * the labels) stays identical, so the comparison isolates the reader.
  */
 async function readCard(buffer) {
-  const out = await identifyCore({ buffer });
-  const raw = out.cached ? (out.result?.cards ?? []) : (out.parsed?.cards ?? []);
+  let raw;
+  if (PROVIDER === 'gemini') {
+    raw = await readWithGemini(buffer);
+    if (_lastUsage) {
+      _usageTotals.calls++;
+      _usageTotals.prompt += _lastUsage.promptTokenCount ?? 0;
+      _usageTotals.output += _lastUsage.candidatesTokenCount ?? 0;
+      _usageTotals.thoughts += _lastUsage.thoughtsTokenCount ?? 0;
+    }
+  } else {
+    const out = await identifyCore({ buffer });
+    raw = out.cached ? (out.result?.cards ?? []) : (out.parsed?.cards ?? []);
+  }
+  // Verification, resolution and scoring are IDENTICAL for every provider —
+  // only the read differs, so a difference in the result is a difference in
+  // the reader.
   const verified = raw.length ? await verifyIdentified(raw) : [];
-  return { raw: raw[0] ?? null, card: verified[0] ?? null, source: out.source ?? 'vision' };
+  return { raw: raw[0] ?? null, card: verified[0] ?? null, source: PROVIDER };
 }
 
 async function main() {
-  if (!process.env.ANTHROPIC_API_KEY) {
-    console.error('[eval-vision] ANTHROPIC_API_KEY not set');
+  const needKey = PROVIDER === 'gemini' ? 'GEMINI_API_KEY' : 'ANTHROPIC_API_KEY';
+  if (!process.env[needKey]) {
+    console.error(`[eval-vision] ${needKey} not set`);
     process.exit(1);
   }
   if (!fs.existsSync(LABELS)) {
@@ -159,6 +255,7 @@ async function main() {
   const photos = walk(PHOTO_DIR).filter((p) => labels[relative(PHOTO_DIR, p).split(sep).join('/')] !== undefined);
   const work = photos.slice(0, LIMIT);
 
+  console.log(`[eval-vision] provider=${PROVIDER}${PROVIDER === 'gemini' ? ' model=' + GEMINI_MODEL : ''}`);
   console.log(`[eval-vision] ${work.length} labelled photos, concurrency ${CONCURRENCY}`);
   console.log('[eval-vision] this spends real API credit — roughly $0.016/photo\n');
 
@@ -194,6 +291,9 @@ async function main() {
         set_code: card?.set_code ?? raw?.set_code ?? null,
         card_number: card?.card_number ?? raw?.card_number ?? null,
         verified: card?.verified ?? false,
+        // The prompt tells the model to drop confidence below 0.5 when it
+        // cannot read the card. Nothing in production reads this field.
+        model_confidence: raw?.confidence ?? null,
         confidence: card?.confidence_score ?? null,
         // Candidate lists already exist inside verify and are discarded at the
         // route boundary. Captured here because they are what an amber lane
@@ -260,7 +360,8 @@ async function main() {
     for (const r of unlabelled) console.log(`  ${r.rel.slice(-24).padEnd(26)} said=${String(r.said_all?.join('/') ?? r.said).padEnd(22)} "${r.name}" ${r.set_code} ${r.card_number}`);
   }
 
-  fs.writeFileSync(OUT, JSON.stringify({ model: 'claude (production identifyCore)', rows }, null, 2));
+  const outFile = PROVIDER === 'gemini' ? OUT.replace('.json', `-${GEMINI_MODEL}.json`) : OUT;
+  fs.writeFileSync(outFile, JSON.stringify({ provider: PROVIDER, model: PROVIDER === 'gemini' ? GEMINI_MODEL : 'claude-sonnet-4-6 (production identifyCore)', rows }, null, 2));
   console.log(`\n[eval-vision] wrote ${OUT}`);
   console.log('\nN is small. Report the interval, not the point estimate:');
   console.log(`  ${correct.length}/${scorable.length} is a sample, and "0 wrong" over ${scorable.length} bounds the`);

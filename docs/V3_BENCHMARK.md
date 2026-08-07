@@ -1009,3 +1009,80 @@ gates.** `pricing/accept-gate.js` exists and is still wired to nothing.
 It does not say Claude reads cards at 70%. It says **this pipeline** resolves
 identity at 70.6% on **these** photographs. The name is right 88% of the time;
 most of the loss is downstream of the read.
+
+---
+
+## 17. TWO READERS — 100% observed precision at 62.7% coverage
+
+**Date:** 2026-08-07. **Sample:** the 51 confirmed-label photographs of §16.
+**Reproduce:** `node scripts/v3-bench/eval-vision.js --provider gemini --model gemini-3-flash-preview`
+
+Same photos, same prompt, same verifier, same scoring rule. Only the reader
+differs, so a difference in the result is a difference in the reader.
+
+### Head to head
+
+| | Claude sonnet-4-6 | Gemini 3 Flash |
+|---|---|---|
+| card name | 45/51 · 88.2% | 48/51 · **94.1%** |
+| collector number | 36/51 · **70.6%** | 35/51 · 68.6% |
+| name + number | 36/51 · **70.6%** | 35/51 · 68.6% |
+| full identity via set_code | 25/51 · 49.0% | 26/51 · **51.0%** |
+
+**They are tied.** Gemini reads names slightly better and numbers slightly
+worse; full identity is one photograph apart. Neither is a reason to switch.
+
+Note the prompt is 3,651 tokens tuned over many iterations against Claude and
+was handed to Gemini unchanged. That handicap did not decide the outcome, but
+a re-tuned prompt has not been tried for either model.
+
+### The finding
+
+| | |
+|---|---|
+| both correct | 32 |
+| both wrong | 12 |
+| only Claude correct | 4 |
+| only Gemini correct | 3 |
+| **agreed on an answer** | **32 / 51 — 62.7% coverage** |
+| **of those, correct** | **32 — 100% precision** |
+| disagreed → review | 19 |
+
+**Agreement was never wrong.** There were 12 photographs both models failed,
+and they failed them differently every time — not once did the two agree on a
+wrong answer. Uncorrelated failure modes are the entire mechanism here, and
+this is why one model sampled twice is not a substitute: it repeats its own
+mistake, so agreement carries no information.
+
+Operating point: **63% of cards priced with no observed error; 37% become one
+operator tap.** The shipping pipeline answers on 100% of cards at 61%
+precision.
+
+### Caveats
+
+- **32/32 is no OBSERVED errors, not a bounded error rate.** With 32 samples
+  the true error rate is bounded only to roughly ≤11%. Do not quote "100%".
+- One photographer, one session, mostly two sets (Pitch Black, Destined
+  Rivals). Not stratified.
+- Coverage and precision both move with the set-code fix below; re-measure
+  after it lands rather than assuming these numbers carry over.
+
+### Consequence for the roadmap
+
+Set attribution drags BOTH readers from ~70% (name+number) down to ~50% (full
+identity). That is a bigger lever than the choice of model:
+
+1. Resolve on (name, number, printed total) — `verifyPokemon` already queries
+   `set.printedTotal` — and never on the model's set-code guess.
+2. Fix `pricing/verify.js` `set_code: verified.set_code || card.set_code`,
+   which lets a correctly matched card be returned carrying the model's wrong
+   set.
+3. Then wire `pricing/accept-gate.js` to two-reader agreement and re-measure
+   coverage.
+
+### Falsified here
+
+**"Preliminary results from a small subset generalise."** A 12-photo partial
+run of this same comparison showed Gemini ahead 75% to 42% on full identity.
+At 51 photos the gap is 51% to 49%. The subset was not a preview of the
+result; it was noise with a percentage sign on it.
