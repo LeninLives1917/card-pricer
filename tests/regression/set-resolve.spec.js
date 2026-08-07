@@ -21,6 +21,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
+import { readFileSync } from 'node:fs';
 import { resolveIdentity, printedTotalOf, normNumber } from '../../pricing/set-resolve.js';
 
 // Minimal catalogue slice. Real values: Pitch Black is printedTotal 84,
@@ -122,4 +123,18 @@ test('verify.js must not fall back to the model set_code — source-level guard'
     'restoring this fallback re-opens the defect: a correctly matched card ' +
     'gets returned carrying the model\'s wrong set code');
   assert.match(src, /resolveIdentity/, 'verify must resolve identity, not trust the guess');
+});
+
+test('the RESOLVER wins over the verifier set_code — caught in pre-deploy testing', () => {
+  // The first production wiring was `verified.set_code || resolved.set_code`,
+  // which let the model's guess win: a read of "SSP 072/191" made the API
+  // return an SSP card, and that wrong answer came back wearing an
+  // authoritative source. The shipped path therefore did NOT reproduce the
+  // 68.6% measured offline until this precedence was flipped.
+  const src = readFileSync(new URL('../../pricing/verify.js', import.meta.url), 'utf8');
+  assert.doesNotMatch(src, /set_code:\s*verified\.set_code\s*\|\|\s*resolved\.set_code/,
+    'the verifier set_code must not outrank the resolver — it only reflects ' +
+    'the query the model asked for');
+  assert.match(src, /set_code:\s*resolved\.set_code\s*\|\|/,
+    'resolved.set_code must come first');
 });

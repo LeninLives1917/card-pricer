@@ -164,12 +164,18 @@ export async function verifyCard(card) {
       return {
         ...card,
         name: verified.name || card.name,
-        set_name: verified.set_name || card.set_name,
         // NEVER fall back to the model's set_code. It was `verified.set_code ||
         // card.set_code`, so a card the verifier had matched CORRECTLY could be
         // returned — and displayed — carrying the model's wrong set. That is
         // how a right answer came back labelled with the wrong set for weeks.
-        set_code: verified.set_code || resolved.set_code || null,
+        // RESOLVER FIRST. `verified.set_code` is only as good as the query the
+        // model asked for: when the read said "SSP 072/191", the API faithfully
+        // returned an SSP card, so trusting it reproduces the model's mistake
+        // with an authoritative-looking source. Caught in pre-deploy testing —
+        // the wiring did NOT reproduce the 68.6% measured offline until this
+        // precedence was flipped.
+        set_code: resolved.set_code || verified.set_code || null,
+        set_name: resolved.set_name || verified.set_name || card.set_name,
         resolved_id: resolved.id,
         resolve_confidence: resolved.confidence,
         resolve_reason: resolved.reason,

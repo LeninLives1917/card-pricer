@@ -32,6 +32,9 @@ import sharp from 'sharp';
 
 import { identifyCore } from '../../pricing/identify-core.js';
 import { verifyIdentified } from '../../pricing/verify.js';
+// The catalogue must be loaded or set resolution silently disables itself and
+// this harness measures the OLD behaviour while reporting it as the new one.
+import { initCardDb, CARD_DB } from '../../apps/server/_card-db-boot.js';
 
 const CACHE_DIR = process.env.V3_CACHE_DIR || join(homedir(), '.card-pricer-v3');
 const PHOTO_DIR = process.env.V3_PHOTO_DIR || join(CACHE_DIR, 'photos');
@@ -250,6 +253,14 @@ async function main() {
     console.error(`[eval-vision] no labels at ${LABELS}`);
     process.exit(1);
   }
+
+  await initCardDb();
+  if (CARD_DB.size === 0) {
+    console.error('[eval-vision] catalogue empty after initCardDb() — refusing to ' +
+      'run, the result would measure the wrong pipeline');
+    process.exit(1);
+  }
+  console.log(`[eval-vision] catalogue: ${CARD_DB.size} cards`);
 
   const labels = JSON.parse(fs.readFileSync(LABELS, 'utf8'));
   const photos = walk(PHOTO_DIR).filter((p) => labels[relative(PHOTO_DIR, p).split(sep).join('/')] !== undefined);

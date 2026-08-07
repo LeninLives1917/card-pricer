@@ -36,6 +36,7 @@ const SETS_FILE = join(REPO_ROOT, 'data', 'pokemon-sets.json');
 
 let _sets = null;
 let _warned = false;
+let _emptyWarned = false;
 
 /** [{id, name, ptcgoCode, printedTotal, total}] — refresh via scripts/fetch-sets.js */
 export function loadSets() {
@@ -90,6 +91,20 @@ export function resolveIdentity(read, cardDb) {
   }
 
   const entries = cardDb instanceof Map ? cardDb : new Map(Object.entries(cardDb || {}));
+
+  // An empty catalogue makes EVERY card look absent, so resolution silently
+  // disables itself and the caller falls back to the model's set-code guess —
+  // the exact defect this module exists to fix, wearing a different hat. It
+  // cost a pre-deploy debugging round; say it out loud instead.
+  if (entries.size === 0) {
+    if (!_emptyWarned) {
+      console.warn('[SET-RESOLVE] catalogue is EMPTY — set resolution is disabled ' +
+        'and callers fall back to the model set_code. Was initCardDb() called?');
+      _emptyWarned = true;
+    }
+    return { id: null, set_id: null, set_code: null, set_name: null,
+      confidence: 'low', reason: 'catalogue_empty', candidates: [], contradiction: false };
+  }
 
   // Every catalogue entry with this name at this collector number.
   const matches = [];
