@@ -18,6 +18,8 @@
 
 import { axios } from '../apps/server/_clients.js';
 import { HP_MISMATCH_TOLERANCE } from './confidence.js';
+import { resolveIdentity } from './set-resolve.js';
+import { CARD_DB } from '../apps/server/_card-db-boot.js';
 import { verifyPokemon, prefetchRefImage } from './adapters/pokemontcg.js';
 import { verifyMagic } from './adapters/scryfall.js';
 import { verifySWU } from './adapters/swu-db.js';
@@ -140,11 +142,41 @@ export async function verifyCard(card) {
       }
 
       console.log(`[VERIFY] CORRECTED -> "${verified.name}" from ${verified.set_name} (${verified.set_code}) #${verified.card_number}`);
+
+      // Resolve the set from (name, collector number, printed total) rather
+      // than from the model's set-code guess. MEASURED: this lifted identity
+      // accuracy from 49.0% to 68.6% and precision from 61% to 97.2% across
+      // 51 photographs (docs/V3_BENCHMARK.md §18), and it fixes BOTH readers —
+      // Gemini 3 Flash gained the same way, so it is not a model-specific
+      // patch. See pricing/set-resolve.js for why a correction table does not
+      // work here.
+      // HINT ONLY. Named separately so it can never be mistaken for the
+      // answer — the regression guard in tests/regression/set-resolve.spec.js
+      // fails if the model's set code is ever returned as `set_code` again.
+      const setCodeHint = verified.set_code || card.set_code;
+      const resolved = resolveIdentity(
+        { name: verified.name || card.name,
+          card_number: verified.card_number || card.card_number,
+          set_code: setCodeHint },
+        CARD_DB,
+      );
+
       return {
         ...card,
         name: verified.name || card.name,
         set_name: verified.set_name || card.set_name,
-        set_code: verified.set_code || card.set_code,
+        // NEVER fall back to the model's set_code. It was `verified.set_code ||
+        // card.set_code`, so a card the verifier had matched CORRECTLY could be
+        // returned — and displayed — carrying the model's wrong set. That is
+        // how a right answer came back labelled with the wrong set for weeks.
+        set_code: verified.set_code || resolved.set_code || null,
+        resolved_id: resolved.id,
+        resolve_confidence: resolved.confidence,
+        resolve_reason: resolved.reason,
+        // True when the read refuted itself — e.g. "TWM 073/084" when
+        // Twilight Masquerade has printedTotal 167. Carried 69% of the
+        // observed set-attribution failures.
+        read_contradicts_itself: resolved.contradiction,
         card_number: verified.card_number || card.card_number,
         rarity: verified.rarity || card.rarity,
         reference_image: verified.image || null,

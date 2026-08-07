@@ -1086,3 +1086,93 @@ identity). That is a bigger lever than the choice of model:
 run of this same comparison showed Gemini ahead 75% to 42% on full identity.
 At 51 photos the gap is 51% to 49%. The subset was not a preview of the
 result; it was noise with a percentage sign on it.
+
+---
+
+## 18. SET RESOLUTION — 49.0% → 68.6%, precision 61% → 97.2%
+
+**Date:** 2026-08-07. **Sample:** the 51 confirmed-label photographs of §16–§17.
+**Measured offline against the saved reads — no new inference, so the fix was
+validated before any production code changed.**
+
+### The question asked
+
+"If the model consistently misnames one set, just correct that." A correction
+table is the obvious fix and the repo already has the machinery for it
+(`pricing/corrections.js`, `set-aliases.js`). The data says it cannot work.
+
+| true set | codes the model returned instead |
+|---|---|
+| Pitch Black (Claude) | TWM×4, JTG×2, PAF, PRE, PAL — **5 distinct** |
+| Destined Rivals (Claude) | TWM×2, JTG×2, BST×2, PRE, DDR, SVI, OBF, MEW — **9 distinct** |
+| Pitch Black (Gemini) | SFA×2, SCR×2, SV8A, MEW, SV2, PAL, TWM — **8 distinct** |
+| Destined Rivals (Gemini) | SCR×4, SSP×2, XY2×2, PAR, CES, SVI, DRM, ASR, JTG — **9 distinct** |
+
+The errors **scatter rather than repeat** — no wrong code appears more than
+four times — and the two models scatter to *different* wrong codes, so a table
+fitted to one is noise for the other. Worse, `TWM` is a real set: a blanket
+rewrite would destroy correct reads of genuine Twilight Masquerade cards.
+
+### What works instead: the read refutes itself
+
+A card printed `073/084` is from an 84-card set. Twilight Masquerade has
+`printedTotal: 167`. **"TWM 073/084" is internally inconsistent** — and 69% of
+the wrong reads carried exactly that contradiction.
+
+So `pricing/set-resolve.js` does not correct the set code. It **distrusts** it,
+resolving on the three fields that corroborate one another — name, collector
+number, printed total — and consulting the set code only to break a tie the
+printed total has already narrowed.
+
+### Result
+
+| | Claude | Gemini 3 Flash |
+|---|---|---|
+| identity **before** (set_code) | 25/51 · 49.0% | 26/51 · 51.0% |
+| identity **after** | **35/51 · 68.6%** | **34/51 · 66.7%** |
+| wrong after | 1 · 2.0% | 5 · 9.8% |
+| abstained | 15 · 29.4% | 12 · 23.5% |
+| **precision when answering** | **97.2%** | 87.2% |
+| self-refuting reads caught | 9 | 2 |
+
+**+19.6 points for Claude, and precision rises from 61% to 97.2%** — because
+it now abstains on 15 cards instead of guessing at them. It fixes **both**
+readers, which choosing between models does not.
+
+Two readers on the *resolved* identity: 31/51 agreed (60.8% coverage), **31/31
+correct**, zero wrong.
+
+### Operating points now available
+
+| | coverage | wrong | precision |
+|---|---|---|---|
+| shipping today | 100% | 20/51 | 61% |
+| Claude + resolver | 70.6% | **1** | **97.2%** |
+| both readers + resolver | 60.8% | **0** | **100%** |
+
+Single-reader-plus-resolver buys 4 more correct answers for 1 wrong one
+against the two-reader arrangement. Which is right depends on what a wrong
+price costs relative to a review tap — that is an operator decision, not a
+technical one.
+
+### Also fixed
+
+`pricing/verify.js` did `set_code: verified.set_code || card.set_code`, so a
+correctly matched card could be returned — and displayed — carrying the
+model's wrong set. Pinned by a source-level guard in
+`tests/regression/set-resolve.spec.js`.
+
+### Caveats
+
+- Measured offline on saved reads. The end-to-end path has NOT been re-run.
+- `data/pokemon-sets.json` (174 sets, `printedTotal`) is a new reference file
+  and can rot like any other. It degrades to name+number matching with a
+  warning rather than failing silently, but it needs a refresh path.
+- Still 51 photographs, one photographer, mostly two sets.
+
+### Falsified — do not retry
+
+**Per-set correction tables for set-code misreads.** Measured above: errors
+scatter across 5–9 distinct wrong codes per set, the two models scatter
+differently, and the most common "wrong" code is the set *id* form (`ME5` for
+`PBL`), which is a representation mismatch and not an error at all.
