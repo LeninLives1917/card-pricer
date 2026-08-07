@@ -185,3 +185,29 @@ test('every rejection increments a counter something can read', () => {
   assert.equal(c.green, 1);
   resetGateCounts();
 });
+
+test('the gate is ADVISORY — it must never block the shutter', async () => {
+  // INCIDENT: the gate shipped blocking and never went green on real frames.
+  // locateCard takes the bounding box of ALL gradient energy — on a plain
+  // synthetic background that is the card; on a real camera frame it is the
+  // table, a hand, and everything else in shot, so the box spans the frame and
+  // reads as permanently clipped. Thresholds fitted to 51 downscaled
+  // photographs were never validated against live video.
+  //
+  // Blocking capture on an unvalidated gate is worse than no gate: it stops
+  // the operator working. Advise, tag the upload, always fire the shutter.
+  const { readFileSync } = await import('node:fs');
+  const src = readFileSync(new URL('../../apps/vendor/modules/tabs/scan.js', import.meta.url), 'utf8');
+  assert.match(src, /ADVISORY, NOT BLOCKING/,
+    'the gate must stay advisory until its thresholds are validated on live frames');
+  assert.doesNotMatch(src, /tap again to force/,
+    'a force-to-capture path means the gate is blocking again');
+});
+
+test('the live numbers are shown, so thresholds get calibrated not guessed', async () => {
+  const { readFileSync } = await import('node:fs');
+  const src = readFileSync(new URL('../../apps/vendor/modules/tabs/scan.js', import.meta.url), 'utf8');
+  assert.match(src, /scannerGateDebug/,
+    'sharpness and fill must be visible on the device, or the next threshold ' +
+    'is another guess fitted to photographs');
+});

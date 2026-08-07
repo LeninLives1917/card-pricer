@@ -25,7 +25,8 @@
 
 //   v3.3 — frame gate + framing reticle (modules/frame-gate.js, new).
 //   v3.4 — price provenance shown on the result sheet.
-const CACHE_VERSION = 'cardpricer-v3.4';
+//   v3.5 — frame gate demoted to advisory; it never went green on live frames.
+const CACHE_VERSION = 'cardpricer-v3.5';
 
 const SHELL = [
   '/',

@@ -393,7 +393,7 @@ async function submitManualEntry() {
 // looking, not by inference. A cached module served an OLD scanner UI on a
 // NEW deploy and cost an entire debugging round — the same lesson as the
 // key_present field on /api/health.
-const SCANNER_BUILD = 'v3.3-gated-viewfinder';
+const SCANNER_BUILD = 'v3.5-gate-advisory';
 
 // Upload tally. Shown to the operator, because "sent" with nothing arriving
 // on the laptop is precisely the failure this mode shipped with.
@@ -433,6 +433,7 @@ function showScannerMode() {
       <div id="scannerBuild" style="font-size:10px; color:var(--paper-300); opacity:0.65; margin-top:var(--p-1);">
         build ${SCANNER_BUILD} · mode <span id="scannerModeLabel">starting…</span>
       </div>
+      <div id="scannerGateDebug" style="font-size:10px; color:var(--paper-300); opacity:0.55; margin-top:2px; font-variant-numeric:tabular-nums;"></div>
     </div>`;
 
   const video    = document.getElementById('scannerVideo');
@@ -444,7 +445,6 @@ function showScannerMode() {
   const fallback = document.getElementById('scannerFallback');
   const fbMsg    = document.getElementById('scannerFallbackMsg');
 
-  let _forceNext = false;
   let _gateCounts = null;
 
   const renderStatus = (extra) => {
@@ -581,21 +581,32 @@ function showScannerMode() {
       }
       // One word, never a number. Nobody reads a variance score over a table.
       if (hintEl) hintEl.textContent = v.locked ? 'Ready' : v.hint;
+      // Raw numbers on screen. The thresholds were fitted to photographs and
+      // are unproven on live video — this is how they get calibrated from real
+      // frames instead of from another guess.
+      const dbg = document.getElementById('scannerGateDebug');
+      if (dbg) {
+        dbg.textContent = `sharp ${Math.round(v.sharpness)} · fill ${v.fill.toFixed(2)}`
+          + ` · ${v.clipped ? 'CLIPPED' : 'framed'} · ${v.state}`;
+      }
     }
     const gateTimer = setInterval(analyse, 120);
     window.addEventListener('pagehide', () => clearInterval(gateTimer));
 
     const grab = () => {
-      // Refuse a frame the gate has not cleared. Force-capture stays available
-      // by tapping again immediately — a forced shot is TAGGED, not blocked.
-      if (lastVerdict && !lastVerdict.locked && !_forceNext) {
-        _forceNext = true;
-        setTimeout(() => { _forceNext = false; }, 1500);
-        if (hintEl) hintEl.textContent = lastVerdict.hint + ' — tap again to force';
-        if (navigator.vibrate) { try { navigator.vibrate([30, 60, 30]); } catch { /* unsupported */ } }
-        return;
-      }
-      _forceNext = false;
+      // ADVISORY, NOT BLOCKING.
+      //
+      // The gate shipped blocking and never went green on real frames. The
+      // cause is locateCard: it takes the bounding box of ALL gradient energy,
+      // which on the plain-background synthetic tests is the card and on a real
+      // camera frame is the table, the operator's hand, and everything else in
+      // shot — so the box spans the frame and reads as permanently clipped.
+      //
+      // Thresholds fitted to 51 downscaled photographs were never validated
+      // against live video, and blocking capture on an unvalidated gate is
+      // worse than no gate: it stops the operator working. The reticle still
+      // advises, the verdict is still attached to the upload, but the shutter
+      // always fires.
       const dataUrl = capture.captureFrame(video);
       if (!dataUrl) { renderStatus('no frame — hold still'); return; }
       // Visual confirmation only; the viewfinder never stops, so the next
