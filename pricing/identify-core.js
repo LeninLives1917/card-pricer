@@ -30,6 +30,7 @@ import {
 import { fixPokemonSuffix, extractPokemonSuffix } from './adapters/pokemontcg.js';
 import { computePhash, computeDhash, computeWhash, cropToCard, lookupByHashes } from './phash.js';
 import { countFastPath } from '../infra/observability/fast-path-counters.js';
+import { getFastPathMode, FAST_PATH_MODES } from './fast-path-mode.js';
 // One-time exception: lookupLocalDb lives in apps/server/ but pricing/ already
 // imports from that boundary (adapters/pokemontcg.js:24). Consistent with prior art.
 import { lookupLocalDb } from '../apps/server/_card-db-boot.js';
@@ -287,8 +288,13 @@ export async function identifyCore({ buffer, hint }) {
   // pHash/dHash/wHash lookup — runs after SHA-1 (cheapest) and before Sonnet (expensive).
   // Skipped when hint is set (hint bypasses all caches).
   let hashes = null;
+  let shadow = null;
+  const fastPathMode = getFastPathMode();
+
   if (hint) {
     countFastPath('skipped');
+  } else if (fastPathMode === FAST_PATH_MODES.OFF) {
+    countFastPath('disabled');
   } else {
     countFastPath('attempted');
     const cropped = await cropToCard(optimized);
@@ -308,14 +314,42 @@ export async function identifyCore({ buffer, hint }) {
       if (fullCard && fullCard.reference_image) {
         countFastPath('hit');
         console.log(`[PHASH] HIT distance=${phashHit.distance} type=${phashHit.hashType} set_id=${phashHit.card.set_id} number=${phashHit.card.number}`);
-        return {
-          cached: true,
-          source: 'phash',
-          result: { cards: [{ ...fullCard, source: 'phash' }] },
+
+        // MEASURED 2026-08-07: in shadow's absence this returned immediately
+        // and skipped the vision model. Across the first 11 production scans
+        // the fast path fired 4 times and was wrong all 4 times — confirmed
+        // per-row by the source badge, against 7/7 correct from the vision
+        // path. Every failure was an unrelated card, the signature of a
+        // fingerprint collision rather than a near miss.
+        //
+        // The cause is structural, not a bad threshold: PHASH_HAMMING_MAX=8
+        // over 64 bits was set when the index held 3 entries, it now holds
+        // 76,637, and lookupByHashes tries pHash, dHash AND wHash — three
+        // chances to collide per scan. Nothing verified the result;
+        // accept-gate.js exists for exactly this and is wired to nothing.
+        //
+        // Re-tuning the number against 4 observations would be fitting to
+        // noise. So the fast path keeps running and keeps being scored, but
+        // no longer answers, until agreement is measured over a real N.
+        if (fastPathMode === FAST_PATH_MODES.PRIMARY) {
+          return {
+            cached: true,
+            source: 'phash',
+            result: { cards: [{ ...fullCard, source: 'phash' }] },
+            distance: phashHit.distance,
+            cacheKey,
+          };
+        }
+
+        shadow = {
+          card: fullCard,
           distance: phashHit.distance,
-          cacheKey,
+          hashType: phashHit.hashType,
+          set_id: phashHit.card.set_id,
+          number: phashHit.card.number,
         };
-      }
+        console.log('[PHASH] SHADOW — not returning; vision model will answer');
+      } else {
       // fullCard is null OR fullCard.reference_image is null. Fall through
       // to Sonnet. The pHash index is correct (the visual fingerprint
       // matches a known card identity) but we can't enrich without the
@@ -326,8 +360,9 @@ export async function identifyCore({ buffer, hint }) {
       // The index was RIGHT and the work is being thrown away. That is worth
       // counting separately from an ordinary miss: it is a data gap, not a
       // matcher failure, and it used to be a console.warn nobody read.
-      countFastPath('unusable');
-      console.warn(`[PHASH] HIT set_id=${phashHit.card.set_id} number=${phashHit.card.number} but lookupLocalDb has no image — falling through to Sonnet`);
+        countFastPath('unusable');
+        console.warn(`[PHASH] HIT set_id=${phashHit.card.set_id} number=${phashHit.card.number} but lookupLocalDb has no image — falling through to Sonnet`);
+      }
     } else {
       countFastPath('miss');
     }
@@ -386,7 +421,7 @@ export async function identifyCore({ buffer, hint }) {
   // money while an abstention costs a second. Index entries should come from
   // reference images via scripts/build-phash-db.js, never from inference.
 
-  return { cached: false, parsed, cacheKey, imageBase64: imageData, imageMediaType: optimizedFormat === 'png' ? 'image/png' : 'image/jpeg' };
+  return { cached: false, parsed, cacheKey, shadow, imageBase64: imageData, imageMediaType: optimizedFormat === 'png' ? 'image/png' : 'image/jpeg' };
 }
 
 // =============================================================================

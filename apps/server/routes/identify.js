@@ -25,6 +25,30 @@ import { dirname, join } from 'path';
 
 import { axios, anthropic, supabase } from '../_clients.js';
 import { requireAuth } from '../middleware/auth.js';
+import { scoreShadow } from '../../../infra/observability/fast-path-counters.js';
+import { sameCard } from '../../../pricing/fast-path-mode.js';
+
+// Score the local fast path's shadow prediction against what the vision
+// model actually concluded, AFTER verification — the verified card is the
+// one that would have been priced, so it is the only fair comparison.
+//
+// Called for its side effect on the counters; it must never affect the
+// response. A measurement that can break a scan is worse than no
+// measurement, so failures here are swallowed deliberately.
+function recordShadow(out) {
+  if (!out?.shadow) return;
+  try {
+    const outcome = scoreShadow(out.shadow.card, out.parsed?.cards, sameCard);
+    const said = out.parsed?.cards?.[0];
+    console.log(
+      `[PHASH] SHADOW ${outcome} — fingerprint said ` +
+      `${out.shadow.set_id}-${out.shadow.number} (d=${out.shadow.distance}, ${out.shadow.hashType}); ` +
+      `vision said ${said?.set_code ?? '?'}-${said?.card_number ?? '?'} "${said?.name ?? '?'}"`
+    );
+  } catch (e) {
+    console.warn('[PHASH] shadow scoring failed (non-fatal):', e.message);
+  }
+}
 import { enforceQuota, logScanEvent } from '../middleware/quota.js';
 import { identifyLimiter, quoteLeadLimiter } from '../middleware/rate-limit.js';
 // S15 (OCR-first): pipeline + collaborators. Only the route handler at
@@ -88,6 +112,8 @@ router.post('/api/identify', identifyLimiter, requireAuth, enforceQuota, upload.
       out.parsed.cards = await doubleCheckAll(out.imageBase64, out.imageMediaType, out.parsed.cards);
     }
 
+    recordShadow(out);
+
     const anyRejected = (out.parsed.cards || []).some(c => c?.verify_rejected);
     out.parsed.cards = stripInternals(out.parsed.cards);
     if (out.cacheKey && !anyRejected) cacheSet(out.cacheKey, out.parsed);
@@ -133,6 +159,8 @@ router.post('/api/identify-stream', identifyLimiter, requireAuth, enforceQuota, 
         console.error('[IDENT-STREAM] verify error:', e.message);
       }
     }
+    recordShadow(out);
+
     out.parsed.cards = stripInternals(out.parsed.cards);
     send({ type: 'verified', cards: out.parsed.cards || [] });
 

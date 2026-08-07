@@ -14,6 +14,10 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { buildHealthPayload } from '../../apps/server/routes/health.js';
+import { getFastPathMode, sameCard } from '../../pricing/fast-path-mode.js';
+import {
+  scoreShadow, getFastPathCounts, resetFastPathCounts,
+} from '../../infra/observability/fast-path-counters.js';
 
 const HEALTHY_ENV = {
   SUPABASE_URL: 'https://x.supabase.co',
@@ -148,8 +152,14 @@ const fastPath = (over = {}) => () => {
   };
 };
 
+// The hit-rate checks below describe PRIMARY mode, where a hit is served as
+// the answer. The default is now 'shadow' (the fast path runs and is scored
+// but does not answer) after it was measured wrong 4 times out of 4 in
+// production on 2026-08-07, so these must say which mode they mean.
+const PRIMARY_ENV = { ...HEALTHY_ENV, PHASH_FAST_PATH: 'primary' };
+
 test('THE DEAD-FAST-PATH CASE: attempts climbing while hits stay at zero', async () => {
-  const body = await health({ fastPath: fastPath({ attempted: 400, hit: 0, miss: 400 }) });
+  const body = await health({ env: PRIMARY_ENV, fastPath: fastPath({ attempted: 400, hit: 0, miss: 400 }) });
   assert.equal(body.checks.fast_path.ok, false);
   assert.match(body.checks.fast_path.detail, /DEAD/);
   assert.ok(body.degraded.includes('fast_path'));
@@ -174,14 +184,92 @@ test('hits discarded for a missing reference_image are called out separately', a
   // The index is correct and the answer is thrown away — a data gap, not a
   // matcher failure, and a much cheaper fix.
   const body = await health({
+    env: PRIMARY_ENV,
     fastPath: fastPath({ attempted: 200, hit: 40, unusable: 120, miss: 40 }),
   });
   assert.equal(body.checks.fast_path.ok, false);
   assert.match(body.checks.fast_path.detail, /reference_image/);
 });
 
+// ── Shadow mode ──────────────────────────────────────────────────────
+//
+// INCIDENT 2026-08-07. The fast path answered 4 of the first 11 production
+// scans and was wrong on all 4 — confirmed per row by the source badge,
+// against 7/7 correct from the vision model. Every failure was an unrelated
+// card: a fingerprint collision, not a near miss. PHASH_HAMMING_MAX=8 was
+// chosen when the index held 3 entries and now guards 76,637.
+
+test('shadow mode is the default — an unconfigured deploy must not let the fast path answer', () => {
+  assert.equal(getFastPathMode({}), 'shadow');
+  assert.equal(getFastPathMode({ PHASH_FAST_PATH: '' }), 'shadow');
+});
+
+test('an unrecognised mode falls back to shadow, never to primary', () => {
+  // A typo must not silently grant the fast path authority it has not earned.
+  assert.equal(getFastPathMode({ PHASH_FAST_PATH: 'primry' }), 'shadow');
+  assert.equal(getFastPathMode({ PHASH_FAST_PATH: 'on' }), 'shadow');
+  assert.equal(getFastPathMode({ PHASH_FAST_PATH: 'true' }), 'shadow');
+});
+
+test('in shadow, a perfect hit rate with poor agreement is NOT healthy', async () => {
+  // Precisely the measured state: the fast path fired on everything it was
+  // asked about and was wrong about all of it. Judging it by hit rate is how
+  // "it answered a lot" gets mistaken for "it answered well".
+  const body = await health({
+    fastPath: fastPath({
+      attempted: 100, hit: 100, miss: 0,
+      shadow_agree: 10, shadow_disagree: 90,
+      shadow_scored: 100, shadow_agree_rate: 0.1,
+    }),
+  });
+  assert.equal(body.checks.fast_path.ok, false);
+  assert.match(body.checks.fast_path.detail, /10\.0% of 100/);
+  assert.match(body.checks.fast_path.detail, /must NOT be promoted/);
+});
+
+test('in shadow, too small a sample says so rather than passing quietly', async () => {
+  const body = await health({
+    fastPath: fastPath({ attempted: 5, hit: 5, shadow_agree: 5, shadow_scored: 5, shadow_agree_rate: 1 }),
+  });
+  assert.equal(body.checks.fast_path.ok, true);
+  assert.match(body.checks.fast_path.detail, /need 50/);
+  assert.match(body.checks.fast_path.detail, /not answering/);
+});
+
+test('health reports which mode the fast path is in', async () => {
+  const shadowBody = await health({ fastPath: fastPath({ attempted: 1 }) });
+  assert.equal(shadowBody.checks.fast_path.mode, 'shadow');
+  const offBody = await health({ env: { ...HEALTHY_ENV, PHASH_FAST_PATH: 'off' }, fastPath: fastPath({}) });
+  assert.equal(offBody.checks.fast_path.mode, 'off');
+  assert.match(offBody.checks.fast_path.detail, /OFF/);
+});
+
+test('sameCard compares printing identity, not just name', () => {
+  // Two printings sharing a name are different cards for pricing purposes;
+  // agreeing on name alone would flatter the fast path into promotion.
+  assert.equal(sameCard({ set_id: 'base4', number: '18' }, { set_id: 'base4', number: '018' }), true);
+  assert.equal(sameCard({ set_id: 'base4', number: '18' }, { set_id: 'neo1', number: '18' }), false);
+  assert.equal(
+    sameCard({ set_id: 'base4', number: '4/102' }, { set_id: 'base4', number: '4' }), true,
+    'collector numbers carry a denominator that is not part of the identity');
+  assert.equal(sameCard({ name: 'Venusaur' }, { name: 'venusaur' }), true, 'name is the fallback only');
+});
+
+test('scoreShadow counts disagreement — the state that was invisible', () => {
+  resetFastPathCounts();
+  scoreShadow({ set_id: 'base4', number: '18' }, [{ set_id: 'sv9', number: '38' }], sameCard);
+  scoreShadow({ set_id: 'me1', number: '136' }, [{ set_id: 'me1', number: '136' }], sameCard);
+  scoreShadow({ set_id: 'me1', number: '1' }, [], sameCard);   // vision found nothing
+  const c = getFastPathCounts();
+  assert.equal(c.shadow_disagree, 1);
+  assert.equal(c.shadow_agree, 1);
+  assert.equal(c.shadow_unscored, 1);
+  assert.equal(c.shadow_agree_rate, 0.5, 'unscored must not count in the denominator');
+  resetFastPathCounts();
+});
+
 test('a working fast path reports its rate and stays ok', async () => {
-  const body = await health({ fastPath: fastPath({ attempted: 200, hit: 190, miss: 10 }) });
+  const body = await health({ env: PRIMARY_ENV, fastPath: fastPath({ attempted: 200, hit: 190, miss: 10 }) });
   assert.equal(body.checks.fast_path.ok, true);
   assert.match(body.checks.fast_path.detail, /95\.0% hit rate/);
   assert.equal(body.status, 'ok');

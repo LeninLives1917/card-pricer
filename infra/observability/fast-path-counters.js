@@ -36,6 +36,26 @@ const counts = {
   unusable: 0,
   /** hint set — caller explicitly bypassed all caches. Not a failure. */
   skipped: 0,
+  /** PHASH_FAST_PATH=off — the lookup was not run at all. */
+  disabled: 0,
+
+  // ── Shadow scoring ────────────────────────────────────────────────
+  //
+  // In shadow mode the fast path still runs and still records a hit, but
+  // does not answer; the vision model does. Comparing the two turns every
+  // production scan into a labelled data point at no risk to the operator.
+  //
+  // This exists because the fast path was measured wrong 4 times out of 4
+  // on 2026-08-07 while answering authoritatively. `agree` is what must
+  // climb before it is allowed to answer again, over a stated N — and NOT
+  // by re-tuning PHASH_HAMMING_MAX against those same 4 observations.
+
+  /** shadow said the same card the vision model did. */
+  shadow_agree: 0,
+  /** shadow said a DIFFERENT card — a false positive it would have served. */
+  shadow_disagree: 0,
+  /** shadow fired but the vision model returned nothing to compare against. */
+  shadow_unscored: 0,
 };
 
 export function countFastPath(outcome) {
@@ -43,7 +63,8 @@ export function countFastPath(outcome) {
 }
 
 export function getFastPathCounts() {
-  const { attempted, hit, unusable } = counts;
+  const { attempted, hit, unusable, shadow_agree, shadow_disagree } = counts;
+  const scored = shadow_agree + shadow_disagree;
   return {
     ...counts,
     // null rather than 0 when nothing has been attempted: "0% hit rate" and
@@ -51,7 +72,27 @@ export function getFastPathCounts() {
     // fast path hides.
     hit_rate: attempted > 0 ? hit / attempted : null,
     unusable_rate: attempted > 0 ? unusable / attempted : null,
+    // The number that decides whether the fast path may answer again. null
+    // until something has actually been scored — an unmeasured path must
+    // never read as a safe one.
+    shadow_agree_rate: scored > 0 ? shadow_agree / scored : null,
+    shadow_scored: scored,
   };
+}
+
+/**
+ * Score one shadow prediction against what the vision model concluded.
+ * Returns the outcome recorded, for logging.
+ */
+export function scoreShadow(shadowCard, visionCards, sameCard) {
+  const vision = Array.isArray(visionCards) ? visionCards[0] : null;
+  if (!shadowCard || !vision) {
+    counts.shadow_unscored += 1;
+    return 'unscored';
+  }
+  const agreed = sameCard(shadowCard, vision);
+  counts[agreed ? 'shadow_agree' : 'shadow_disagree'] += 1;
+  return agreed ? 'agree' : 'disagree';
 }
 
 /** Test seam. */

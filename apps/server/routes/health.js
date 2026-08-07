@@ -14,6 +14,7 @@ import { supabase } from '../_clients.js';
 import { getCardDbState, getCatalogueBuiltAt } from '../_card-db-boot.js';
 import { getFastPathCounts } from '../../../infra/observability/fast-path-counters.js';
 import { isEnabled as rectifyEnabled } from '../../../pricing/card-rectify.js';
+import { getFastPathMode } from '../../../pricing/fast-path-mode.js';
 
 const router = express.Router();
 
@@ -122,7 +123,7 @@ export async function buildHealthPayload(deps = {}) {
           ? `stale — ${catalogueAge.toFixed(0)}d old, a set has likely released since`
           : 'fresh',
     },
-    fast_path: fastPathCheck(readFastPath()),
+    fast_path: fastPathCheck(readFastPath(), env),
     // Reported because it was previously unverifiable from outside the box:
     // the only way to know whether rectification was on in production was to
     // trust that someone had set it. Informational, not a failure — health
@@ -197,10 +198,40 @@ const FAST_PATH_MIN_SAMPLE = 50;
  * having been asked. So the check is a ratio, not a count — `attempted`
  * climbing while `hit` stays at zero is a dead fast path.
  */
-function fastPathCheck(c) {
+function fastPathCheck(c, env = process.env) {
+  const mode = getFastPathMode(env);
+
+  // In shadow the fast path answers nothing, so hit rate is not the question —
+  // AGREEMENT is. A hit rate of 100% with 0% agreement is exactly the state
+  // measured on 2026-08-07 (4 hits, 4 wrong), and reporting it as healthy
+  // because hits were plentiful is how the original defect stayed invisible.
+  if (mode === 'shadow') {
+    const scored = c?.shadow_scored ?? 0;
+    const rate = c?.shadow_agree_rate;
+    const base = { ok: true, mode, ...c };
+    if (scored < FAST_PATH_MIN_SAMPLE) {
+      return { ...base,
+        detail: `SHADOW — not answering. ${scored} scored against the vision ` +
+          `model, need ${FAST_PATH_MIN_SAMPLE} before its accuracy can be judged` };
+    }
+    if (rate !== null && rate < 0.95) {
+      return { ...base, ok: false,
+        detail: `SHADOW — agrees with the vision model only ` +
+          `${(rate * 100).toFixed(1)}% of ${scored} scored scans. It must NOT ` +
+          'be promoted to primary at this rate' };
+    }
+    return { ...base,
+      detail: `SHADOW — ${(rate * 100).toFixed(1)}% agreement over ${scored} ` +
+        'scored scans; candidate for promotion once the sample is convincing' };
+  }
+
+  if (mode === 'off') {
+    return { ok: true, mode, ...c, detail: 'OFF — PHASH_FAST_PATH=off, lookup not run' };
+  }
+
   if (!c || c.attempted < FAST_PATH_MIN_SAMPLE) {
     return {
-      ok: true, ...c,
+      ok: true, mode, ...c,
       detail: `only ${c?.attempted ?? 0} attempt(s) — too few to judge ` +
         `(need ${FAST_PATH_MIN_SAMPLE})`,
     };

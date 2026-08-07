@@ -161,6 +161,20 @@ services:
       # top-1 on realistic scenes against 40.5% rectified.
       - key: CARD_RECTIFY
         value: "1"
+      # How much authority the local pHash fast path has: off | shadow | primary.
+      #
+      # Set explicitly to shadow on 2026-08-07. It had been answering
+      # authoritatively and was measured wrong 4 times out of 4 across the
+      # first 11 production scans — every failure an unrelated card, the
+      # signature of a fingerprint collision. The 7 cards that reached the
+      # vision model were all correct.
+      #
+      # In shadow it still runs and is still scored against the vision
+      # model's answer, so agreement accumulates in /api/health. Promote to
+      # primary only on a measured agreement rate over a real sample — not
+      # by re-tuning PHASH_HAMMING_MAX against those 4 observations.
+      - key: PHASH_FAST_PATH
+        value: shadow
       - key: NODE_VERSION
         value: 20.10.0
       - key: NODE_ENV
