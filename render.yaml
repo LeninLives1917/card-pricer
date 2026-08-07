@@ -169,12 +169,17 @@ services:
       # signature of a fingerprint collision. The 7 cards that reached the
       # vision model were all correct.
       #
-      # In shadow it still runs and is still scored against the vision
-      # model's answer, so agreement accumulates in /api/health. Promote to
-      # primary only on a measured agreement rate over a real sample — not
-      # by re-tuning PHASH_HAMMING_MAX against those 4 observations.
+      # Then measured properly against 64 labelled photographs
+      # (docs/V3_BENCHMARK.md §15, scripts/v3-bench/phash-sweep.js): the
+      # correct card sits at median Hamming distance 26 while some unrelated
+      # card is always within 4-12. In 51 of 51 photos the right answer is
+      # FARTHER away than a wrong one, and 0 of 51 fall within the threshold
+      # of 8. There is no threshold to find — every match it ever served was
+      # a collision. Set to off; the replacement is the DINOv2 embedding
+      # index, which scores ~96% on catalogue-present cards.
       - key: PHASH_FAST_PATH
-        value: shadow
+        value: "off"
+
       - key: NODE_VERSION
         value: 20.10.0
       - key: NODE_ENV

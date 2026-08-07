@@ -855,3 +855,84 @@ Cache lives at `~/.card-pricer-v3` — deliberately outside the repo and outside
 OneDrive. It holds third-party card artwork and is a benchmark artefact only:
 never committed, deleted when Phase 0 closes. The shipped index contains
 descriptors, not pictures.
+
+---
+
+## 15. pHash IS NOT SALVAGEABLE — measured, not argued
+
+**Date:** 2026-08-07. **Sample:** the same 64 real photographs as §12–§14;
+51 whose true card is present in the index, 13 deliberately absent.
+**Reproduce:** `node scripts/v3-bench/phash-sweep.js`
+
+### What prompted it
+
+The pHash fast path had never really run: the index sat at a 3-entry canary
+for months (§5.1). Rebuilding it to 76,637 hashes switched it on for real.
+Across the first 11 production scans it answered 4 times and was **wrong all
+4 times**, while the 7 cards that fell through to the vision model were all
+correct. Attribution is per-row and confirmed by the operator via the
+`source` badge, not inferred from counters.
+
+The question that mattered was whether that is a *threshold* problem —
+`PHASH_HAMMING_MAX = 8` was chosen when the index was empty — or a
+*descriptor* problem. Four observations cannot answer that. 64 labelled
+photographs can.
+
+### Result: there is no threshold, because the signal sits below the noise
+
+| Hamming distance from the photo's hash | min | p25 | median | max |
+|---|---|---|---|---|
+| to the **correct** card | 14 | 24 | **26** | 30 |
+| to the **nearest** card of any kind | 4 | 6 | **7** | 12 |
+
+A 64-bit hash of two unrelated images averages distance 32. The correct
+card sits at **median 26** — barely distinguishable from random. Meanwhile,
+across 76,637 entries there is always *some* unrelated card at distance 4–12
+purely by chance.
+
+- **51 of 51 photographs (100%)**: the correct card is farther away than
+  some unrelated card.
+- **0 of 51**: the correct card falls within the production threshold of 8.
+
+So every match the fast path has ever served was a collision. Lowering the
+threshold cannot help — nothing true is down there. Raising it to 14 to
+admit real matches would admit most of the index first.
+
+### Three accept rules swept, all fail identically
+
+`phash-sweep.js` evaluated: **A** current behaviour (min distance across
+pHash/dHash/wHash); **B** A plus a runner-up margin, porting the §13
+accept-gate insight; **C** consensus, requiring ≥2 of the 3 hash types to
+name the same card.
+
+At every threshold 0–12: **0 correct out of up to 63 fires.** Rules B and C
+never fire at all. The margin and consensus ideas are sound — they simply
+cannot rescue a descriptor whose true matches are already beyond the noise
+floor.
+
+### Why it fails
+
+pHash is a global 8×8 DCT signature. It assumes the query and the reference
+are near-identical framings. Reference images are flat scans; ours are
+photographs with perspective, glare, sleeve reflections, shadow and
+background. `CARD_RECTIFY` corrects geometry and still leaves median 26 —
+geometry was not the limiting factor.
+
+### What replaces it
+
+DINOv2-small embeddings on the identical photo set: **76.6% top-1 across all
+64** (79.7% after stage 2), and ~96% on catalogue-present cards (§13). That
+is the local matcher; pHash never was one.
+
+### Actions
+
+- `PHASH_FAST_PATH=off` — was `shadow` from `bb809c9` as a precaution while
+  this was still an open question. It is no longer open. Shadow's purpose
+  was to gather this measurement and the measurement is now in hand, more
+  rigorously than production sampling could have delivered.
+- `pricing/accept-gate.js` stays. Its score-plus-margin logic is correct and
+  belongs to the embedding matcher, which produces the ranked candidates and
+  cosine scores it was written for.
+- **Do not retry**: re-tuning `PHASH_HAMMING_MAX`, adding margin to pHash,
+  hash-type consensus, or hashing a better crop. All four are measured dead
+  above. Added to the falsified list in `CLAUDE.md`.

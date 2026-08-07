@@ -93,6 +93,14 @@ Recorded in `docs/V3_BENCHMARK.md`:
 - **Synthetic benchmark images** — measured ~12 points optimistic; the generator
   fed a bare card filling the frame with no background, flattering every
   strategy. Measure on real photographs.
+- **pHash as a photo-to-reference matcher** — measured dead (§15). On 64 real
+  photographs the correct card sits at median Hamming distance **26** of 64,
+  while some unrelated card is always within 4-12. In 51/51 photos the right
+  answer is FARTHER than a wrong one; 0/51 fall inside the threshold of 8.
+  Every match it ever served was a collision. Do not retry re-tuning
+  `PHASH_HAMMING_MAX`, adding a runner-up margin, hash-type consensus, or
+  hashing a better crop — all four were swept and all fail identically.
+
 - **"No near-miss middle ground"** (top-1 == top-5 == top-10) was an artifact of
   catalogue holes — a card absent from the index cannot rank 2. Do not reason
   from it.
