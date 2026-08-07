@@ -936,3 +936,76 @@ is the local matcher; pHash never was one.
 - **Do not retry**: re-tuning `PHASH_HAMMING_MAX`, adding margin to pHash,
   hash-type consensus, or hashing a better crop. All four are measured dead
   above. Added to the falsified list in `CLAUDE.md`.
+
+---
+
+## 16. THE VISION PATH, MEASURED — 70.6% identity, 49% end-to-end
+
+**Date:** 2026-08-07. **Sample:** the same 64 real photographs as §12–§15; 51
+with a confirmed positive label. **Reproduce:** `node scripts/v3-bench/eval-vision.js`
+**Cost:** ~$1 of API credit per run.
+
+### Why this exists
+
+Every accuracy figure this project had published measured the *embedding*
+path. The path that actually serves customers — Claude reads the card,
+`verifyIdentified` resolves it — had never been measured beyond one
+paired-phone session that scored 7/7. Seven is not a sample.
+
+### Result
+
+| Question | Correct | Rate |
+|---|---|---|
+| Card **name** | 45/51 | **88.2%** |
+| **Collector number** | 36/51 | **70.6%** |
+| Name **and** number | 36/51 | **70.6%** |
+| Full identity, via the returned `set_code` | 25/51 | **49.0%** |
+
+Read the last two rows together: **set attribution costs 21 points.** In 11 of
+the 16 strict failures the model named the card correctly AND read its
+collector number correctly, then attributed it to the wrong set —
+"Antique Skull Fossil 073/084" is exactly right, and `me5` is Pitch Black.
+
+### The failure modes, in order of size
+
+1. **Set code.** The single largest loss. The model frequently reports the
+   printed `number/total` correctly (`073/084`) while guessing the wrong set.
+   The printed total is a strong disambiguator and `verifyPokemon` already
+   queries `set.printedTotal` — the pipeline should resolve on
+   (name, number, printedTotal) and never on the model's set-code guess.
+2. **`verified.set_code` falls back to the model's guess.** `pricing/verify.js`
+   does `set_code: verified.set_code || card.set_code`, so a correctly matched
+   card can be returned — and displayed — carrying the wrong set. This also
+   means an earlier reading of the `JTG 038` anomaly may have been a labelling
+   artifact rather than a misidentification.
+3. **Missing collector number.** Several reads returned no number at all
+   (Meditite, Dhelmise, Backtrack Badge). Those must abstain, not guess.
+4. **Owner-prefix names.** "Slugma" for *Ethan's Slugma*, "Sudowoodo" for
+   *Ethan's Sudowoodo*. Different cards, different prices.
+5. **Instability.** The same card photographed twice gets different answers —
+   Meditite, Huntail and Sudowoodo each read two ways across adjacent frames.
+   A second independent read would catch this class outright.
+
+### Precision, which is what actually matters
+
+Strict precision when the pipeline answered was **61%**. It answered on every
+one of the 51 photos — it never abstained. Under an operating rule of "a wrong
+price is expensive, abstaining is cheap", that is the finding: **nothing
+gates.** `pricing/accept-gate.js` exists and is still wired to nothing.
+
+### Caveats — do not quote these numbers without them
+
+- 51 photographs, one session, one photographer, mostly two sets (Pitch Black
+  and Destined Rivals). Not a stratified sample.
+- These bench photos deliberately include hard cases; the production
+  paired-phone session scored 7/7 on what were probably better-framed shots.
+  **Two samples disagree** (7/7 vs 36/51). The larger one is not obviously the
+  more representative one — resolve it with the stratified set, don't average.
+- Labels are human-confirmed against embedding candidates, not independently
+  re-verified for this run.
+
+### What this does NOT say
+
+It does not say Claude reads cards at 70%. It says **this pipeline** resolves
+identity at 70.6% on **these** photographs. The name is right 88% of the time;
+most of the loss is downstream of the read.
