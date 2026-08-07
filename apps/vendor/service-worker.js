@@ -14,8 +14,12 @@
 //           session.js to existing clients, so the button click did
 //           nothing because no handler was wired. Bumping the version
 //           evicts every cached module on next load.
+//   v3.1 — scanner-mode live camera (modules/capture.js, new) + the pair.js
+//           envelope fix. Same trap as v2.1: without this bump a phone that
+//           has already opened the app keeps its cached scan.js and pair.js
+//           and neither fix takes effect.
 
-const CACHE_VERSION = 'cardpricer-v3.0';
+const CACHE_VERSION = 'cardpricer-v3.1';
 
 const SHELL = [
   '/',

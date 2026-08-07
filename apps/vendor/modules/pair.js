@@ -13,6 +13,7 @@
 
 import { request, postJson } from './api-client.js';
 import { state } from './state.js';
+import { unwrapScanFrame, FRAME_ACTIONS } from './pair-frame.js';
 
 let _eventSource = null;
 let _roomId = null;
@@ -130,15 +131,46 @@ function useApiQrServer(url) {
   if (canvas) canvas.style.display = 'none';
 }
 
-// Host receives a scan event from the SSE stream. The payload from
-// /api/room/:id/scan is whatever the scanner POSTed; if it's a raw image
-// we run identify-stream + price locally. If it's an already-priced card
-// (uncommon path), we pass it straight to the session log adder.
-async function receiveRemoteScan(payload) {
-  if (!payload) return;
+// Delivery counters. CLAUDE.md: every fallback path increments a counter
+// something reads. A phone scan that never reaches the laptop must be
+// countable, not merely absent.
+const _counts = {
+  messages: 0,        // SSE frames parsed
+  non_scan: 0,        // hello / control frames — expected, not a failure
+  delivered: 0,       // handed to the host handler
+  deduped: 0,         // already seen (bridge replay or double-broadcast)
+  dropped_no_image: 0, // envelope present but carried no image — a DEFECT
+};
+export function getPairCounts() { return { ..._counts }; }
+
+const _seenScanIds = new Set();
+
+// Host receives a scan event from the SSE stream. The envelope contract and
+// the reason it bit us live in pair-frame.js, where node --test can reach it.
+async function receiveRemoteScan(msg) {
+  if (!msg) return;
+  _counts.messages++;
+
+  const { action, entry, reason } = unwrapScanFrame(msg, _seenScanIds);
+
+  if (action === FRAME_ACTIONS.IGNORE) { _counts.non_scan++; return; }
+  if (action === FRAME_ACTIONS.DEDUPE) { _counts.deduped++; return; }
+  if (action === FRAME_ACTIONS.DROP) {
+    _counts.dropped_no_image++;
+    console.warn('[PAIR] scan frame dropped (' + reason + '):', Object.keys(msg || {}));
+    showPairToast('Scan arrived but carried no image');
+    return;
+  }
+
   if (_onScanReceived) {
-    try { await _onScanReceived(payload); }
-    catch (e) { console.warn('[PAIR] receive handler threw:', e); }
+    try {
+      await _onScanReceived(entry);
+      _counts.delivered++;
+    } catch (e) {
+      console.warn('[PAIR] receive handler threw:', e);
+      showPairToast('Scan received but failed to process');
+      return;
+    }
   }
   showPairToast('Scan received from phone');
 }

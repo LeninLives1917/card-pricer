@@ -388,37 +388,164 @@ async function submitManualEntry() {
 // Scanner-mode UI — phone runs the camera flow only
 // ============================================================
 
+// Upload tally. Shown to the operator, because "sent" with nothing arriving
+// on the laptop is precisely the failure this mode shipped with.
+const _scannerCounts = { captured: 0, sent: 0, failed: 0, inflight: 0 };
+
 function showScannerMode() {
   const root = document.getElementById('tab-scan');
   if (!root) return;
+
   root.innerHTML = `
     <div class="surface" style="margin:var(--p-3) 0;">
       <div class="display" style="font-size:18px; margin-bottom:var(--p-2);">Phone connected</div>
-      <p style="font-size:12px; color:var(--paper-300); line-height:1.5;">
-        Snap cards. They'll appear instantly on the paired laptop's session.
-      </p>
-      <div style="margin-top:var(--p-3); display:flex; gap:var(--p-2);">
+      <div id="scannerCamWrap" style="position:relative; border-radius:10px; overflow:hidden; background:#000; display:none;">
+        <video id="scannerVideo" playsinline autoplay muted
+               style="width:100%; display:block; max-height:60vh; object-fit:cover;"></video>
+        <div id="scannerFlash" style="position:absolute; inset:0; background:#fff; opacity:0; pointer-events:none; transition:opacity 120ms;"></div>
+      </div>
+      <div id="scannerFallback" style="display:none; margin-top:var(--p-2);">
+        <p id="scannerFallbackMsg" style="font-size:12px; color:var(--paper-300); line-height:1.5;"></p>
         <input type="file" id="scannerFileInput" accept="image/*" capture="environment" style="display:none;" />
-        <button class="btn primary" id="scannerCaptureBtn" style="flex:1; justify-content:center;">Take photo</button>
+        <button class="btn" id="scannerFileBtn" style="width:100%; justify-content:center; margin-top:var(--p-2);">Use phone camera app</button>
+      </div>
+      <div style="margin-top:var(--p-3); display:flex; gap:var(--p-2); align-items:center;">
+        <button class="btn primary" id="scannerShutter"
+                style="flex:1; justify-content:center; padding:18px 0; font-size:16px;">Capture</button>
+        <button class="btn" id="scannerTorch" style="display:none; padding:18px 14px;" aria-label="Toggle torch">Light</button>
       </div>
       <div id="scannerStatus" style="font-size:11px; color:var(--paper-300); margin-top:var(--p-2); min-height:14px;"></div>
     </div>`;
-  const input = document.getElementById('scannerFileInput');
-  const btn = document.getElementById('scannerCaptureBtn');
-  const status = document.getElementById('scannerStatus');
-  if (btn && input) btn.addEventListener('click', () => input.click());
-  if (input) input.addEventListener('change', async (ev) => {
-    const f = ev.target.files?.[0];
-    ev.target.value = '';
-    if (!f) return;
-    if (status) status.textContent = 'Sending…';
-    const reader = new FileReader();
-    reader.onload = async () => {
-      const r = await uploadRawScanToRoom(reader.result);
-      if (status) status.textContent = r.ok ? 'Sent. Take another.' : 'Send failed.';
+
+  const video    = document.getElementById('scannerVideo');
+  const camWrap  = document.getElementById('scannerCamWrap');
+  const flash    = document.getElementById('scannerFlash');
+  const shutter  = document.getElementById('scannerShutter');
+  const torchBtn = document.getElementById('scannerTorch');
+  const status   = document.getElementById('scannerStatus');
+  const fallback = document.getElementById('scannerFallback');
+  const fbMsg    = document.getElementById('scannerFallbackMsg');
+
+  const renderStatus = (extra) => {
+    if (!status) return;
+    const c = _scannerCounts;
+    const bits = [`${c.sent} sent`];
+    if (c.inflight) bits.push(`${c.inflight} sending`);
+    if (c.failed) bits.push(`${c.failed} FAILED`);
+    status.textContent = (extra ? extra + ' — ' : '') + bits.join(' · ');
+  };
+
+  // Fire-and-forget: the upload must never gate the next capture. This is
+  // the whole point of the mode — shoot the stack at the operator's pace,
+  // let the network catch up behind them.
+  const send = (dataUrl) => {
+    _scannerCounts.captured++;
+    _scannerCounts.inflight++;
+    renderStatus();
+    uploadRawScanToRoom(dataUrl)
+      .then((r) => {
+        if (r && r.ok) _scannerCounts.sent++;
+        else {
+          _scannerCounts.failed++;
+          console.warn('[SCANNER] upload rejected:', r);
+        }
+      })
+      .catch((e) => {
+        _scannerCounts.failed++;
+        console.warn('[SCANNER] upload threw:', e);
+      })
+      .finally(() => {
+        _scannerCounts.inflight--;
+        renderStatus();
+      });
+  };
+
+  const showFallback = (message) => {
+    if (camWrap) camWrap.style.display = 'none';
+    if (fallback) fallback.style.display = 'block';
+    if (fbMsg) fbMsg.textContent = message;
+    if (shutter) shutter.style.display = 'none';
+    const input = document.getElementById('scannerFileInput');
+    const fileBtn = document.getElementById('scannerFileBtn');
+    if (fileBtn && input) fileBtn.addEventListener('click', () => input.click());
+    if (input) input.addEventListener('change', (ev) => {
+      const f = ev.target.files?.[0];
+      ev.target.value = '';
+      if (!f) return;
+      const reader = new FileReader();
+      reader.onload = () => send(reader.result);
+      reader.readAsDataURL(f);
+    });
+  };
+
+  (async () => {
+    const capture = await import('../capture.js');
+    const res = await capture.startCamera(video);
+
+    if (!res.ok) {
+      // Never fail silently to a dead button — say which of the handful of
+      // real causes it was, so the operator can act on it at a table.
+      const why = {
+        denied:    'Camera permission was refused. Allow it in the browser address bar, then reload.',
+        no_camera: 'No camera found on this device.',
+        in_use:    'The camera is being used by another app. Close it and reload.',
+        insecure:  'The camera needs an HTTPS connection.',
+        unsupported: 'This browser cannot open a live camera.',
+        no_frames: 'The camera opened but sent no picture.',
+      }[res.reason] || ('Camera failed: ' + res.error);
+      showFallback(why + ' Falling back to the phone camera app (slower — it asks you to confirm each shot).');
+      renderStatus('camera unavailable');
+      return;
+    }
+
+    if (camWrap) camWrap.style.display = 'block';
+    renderStatus('ready');
+
+    if (torchBtn && capture.hasTorch()) {
+      let on = false;
+      torchBtn.style.display = 'inline-flex';
+      torchBtn.addEventListener('click', async () => {
+        on = !on;
+        const applied = await capture.setTorch(on);
+        if (!applied) on = false;
+        torchBtn.classList.toggle('primary', on);
+      });
+    }
+
+    const grab = () => {
+      const dataUrl = capture.captureFrame(video);
+      if (!dataUrl) { renderStatus('no frame — hold still'); return; }
+      // Visual confirmation only; the viewfinder never stops, so the next
+      // card can be shot immediately.
+      if (flash) {
+        flash.style.opacity = '0.75';
+        setTimeout(() => { flash.style.opacity = '0'; }, 120);
+      }
+      if (navigator.vibrate) { try { navigator.vibrate(15); } catch { /* unsupported */ } }
+      send(dataUrl);
     };
-    reader.readAsDataURL(f);
-  });
+
+    if (shutter) shutter.addEventListener('click', grab);
+    // Tapping the preview shoots too — faster than reaching for the button.
+    if (camWrap) camWrap.addEventListener('click', grab);
+    // Volume-key shutters surface as keydown on some Android browsers.
+    window.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); grab(); }
+    });
+
+    // Release the camera when backgrounded — a three-hour session on
+    // battery is the real constraint — and reopen on return.
+    document.addEventListener('visibilitychange', async () => {
+      if (document.hidden) {
+        capture.stopCamera();
+        renderStatus('paused');
+      } else if (!capture.isRunning()) {
+        const again = await capture.startCamera(video);
+        renderStatus(again.ok ? 'ready' : 'camera did not reopen — reload');
+      }
+    });
+    window.addEventListener('pagehide', () => capture.stopCamera());
+  })();
 }
 
 function escapeHtml(s) {
