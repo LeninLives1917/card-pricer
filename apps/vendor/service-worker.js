@@ -24,7 +24,8 @@
 //           over, so a deploy lands in one navigation instead of two.
 
 //   v3.3 — frame gate + framing reticle (modules/frame-gate.js, new).
-const CACHE_VERSION = 'cardpricer-v3.3';
+//   v3.4 — price provenance shown on the result sheet.
+const CACHE_VERSION = 'cardpricer-v3.4';
 
 const SHELL = [
   '/',

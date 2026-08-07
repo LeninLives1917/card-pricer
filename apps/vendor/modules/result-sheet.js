@@ -112,6 +112,16 @@ export function renderResultSheet() {
       <div class="sheet-price">
         <div class="sheet-price-label">Market</div>
         <div class="sheet-price-val figure">€${isPending ? '…' : Number(mv).toFixed(2)}</div>
+        <!-- WHICH SOURCE SAID SO. The server has computed price_source on every
+             price all along and no surface displayed it, so a price that is
+             wrong by 37x (Charizard ex SVP 56: EUR 561.50 shown against ~EUR 15
+             on the Cardmarket page the sheet itself links to) could not be
+             attributed to a source without reading server logs. Same shape as
+             the fast-path counters and the accept gate: the diagnostic existed
+             and nothing read it. -->
+        <div class="sheet-price-src" style="font-size:10px; opacity:.6; margin-top:2px; line-height:1.3;">${
+          isPending ? '' : escapeHtml(priceSourceLabel(entry))
+        }</div>
       </div>
       <div class="sheet-price sell">
         <div class="sheet-price-label">Sell at</div>
@@ -325,4 +335,29 @@ function renderSheetThumbs(userImg, refImg) {
   }
   const single = userImg || refImg || '';
   return `<div class="sheet-card-thumb" style="width:72px; aspect-ratio:5/7; border-radius:var(--r-2); background:var(--ink-300) center/cover; ${single ? `background-image:url('${escapeAttr(single)}')` : ''}"></div>`;
+}
+
+/**
+ * Which source produced the market figure, in a few words.
+ *
+ * A price with no visible provenance cannot be challenged. When the sheet says
+ * EUR 561.50 and the Cardmarket link it renders says EUR 15, the only useful
+ * next question is "according to whom?" — and until now the answer lived in a
+ * server log nobody reads.
+ */
+export function priceSourceLabel(entry) {
+  const bp = entry?.buy_price || {};
+  // A graded comp on a raw card is the most expensive way to be wrong: a
+  // PSA-10 figure against an ungraded card can be an order of magnitude out.
+  // pricing/price.js takes the graded branch whenever card.graded carries a
+  // company and grade, so a mis-set flag silently swaps the whole basis.
+  if (bp.graded && bp.graded.company) {
+    return `GRADED COMP — ${bp.graded.company} ${bp.graded.grade} · ${bp.price_source || 'source unknown'}`;
+  }
+  if (bp.price_source) return String(bp.price_source);
+  if (entry?.price_source) return String(entry.price_source);
+  const cm = entry?.cardmarket || {};
+  if (cm.source) return `Cardmarket (${cm.source})`;
+  if (cm.price != null) return 'Cardmarket';
+  return 'source unknown';
 }
