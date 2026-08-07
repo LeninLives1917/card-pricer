@@ -23,7 +23,8 @@
 //           Also: on activate the worker now tells live clients it took
 //           over, so a deploy lands in one navigation instead of two.
 
-const CACHE_VERSION = 'cardpricer-v3.2';
+//   v3.3 — frame gate + framing reticle (modules/frame-gate.js, new).
+const CACHE_VERSION = 'cardpricer-v3.3';
 
 const SHELL = [
   '/',

@@ -1176,3 +1176,71 @@ model's wrong set. Pinned by a source-level guard in
 scatter across 5–9 distinct wrong codes per set, the two models scatter
 differently, and the most common "wrong" code is the set *id* form (`ME5` for
 `PBL`), which is a representation mismatch and not an error at all.
+
+---
+
+## 19. IMAGE QUALITY IS THE LARGEST REMAINING FACTOR
+
+**Date:** 2026-08-07. **Sample:** the 51 confirmed-label photographs, scored
+after the §18 resolver. Sharpness = Laplacian variance at 512px, computed
+offline — no inference, no cost.
+
+| | median sharpness |
+|---|---|
+| correct reads | **585** |
+| failures | **241** |
+
+| third of the photo set | not correct |
+|---|---|
+| blurriest | 11/17 · **65%** |
+| sharpest | 2/17 · **12%** |
+
+**69% of all failures sit in the blurriest third.** In the sharpest third the
+pipeline scores **88%** against 68.6% overall.
+
+### Threshold sweep
+
+| gate | kept | correct of kept | rejected for retake |
+|---|---|---|---|
+| none (today) | 51/51 | 68.6% | 0% |
+| 150 | 46/51 | 76.1% | 10% |
+| **250** | **40/51** | **85.0%** | **22%** |
+| 300 | 38/51 | 86.8% | 25% |
+| 400 | 34/51 | 85.3% | 33% |
+
+The knee is ~250–300; above it the curve flattens then declines. **250 chosen
+as the knee, not the peak** — picking the maximum of a 51-photo curve is
+fitting. Threshold is provisional and counted, not a constant to trust.
+
+A rejected frame is not a lost card. It costs half a second of "hold still",
+versus 1.6¢, a round trip, and sometimes a wrong price. The gate therefore
+also reduces cost.
+
+**Implemented:** `apps/vendor/modules/frame-gate.js` (pure, unit-tested) with a
+framing reticle wired into scanner mode — green only when the card is present,
+un-clipped, filling the frame and sharp, held stable for 3 frames. Feedback is
+one word; force-capture remains available on a second tap and is tagged.
+
+---
+
+## 20. CHEAPER MODEL TIER — Haiku 4.5 CANNOT do this task
+
+**Sample:** the identical 51 photographs, prompt, verifier and scoring rule.
+
+| after §18 resolver | name | number | identity | wrong | abstained | precision |
+|---|---|---|---|---|---|---|
+| **Sonnet 4.6** | 88.2% | **70.6%** | **68.6%** | 1 | 15 | **97.2%** |
+| **Haiku 4.5** | 37.3% | **0.0%** | **0.0%** | 6 | 45 | 0.0% |
+| **Gemini 3 Flash** | **94.1%** | 68.6% | 66.7% | 5 | 12 | 87.2% |
+
+**Haiku 4.5 got zero of 51 collector numbers right.** Not a harness artifact —
+it returned numbers, they were fabricated: "Antique Skull Fossil, SV 167/198"
+for a Pitch Black card, at self-reported confidence **0.92**. Its confidence is
+anti-correlated with correctness, so it cannot even be gated on.
+
+At ~$5.80 per 1,000 cards against Sonnet's $17.50 it is a third of the price
+and returns nothing usable. **The cheap tier is not an option here.**
+
+Worth noting what saved it from being expensive: the §18 resolver **abstained
+on 45 of 51** rather than emitting garbage prices. The gate works even against
+a reader this bad.

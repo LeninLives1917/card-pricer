@@ -165,7 +165,9 @@ export const OCR_FIRST_FP_THRESHOLD = 0.02;
  * DO NOT BUMP WITHOUT a regression run on the fixture set
  * (tests/regression/identify-pipeline.spec.js).
  */
-export const IDENT_MODEL = 'claude-sonnet-4-6';
+// Overridable so scripts/v3-bench/eval-vision.js can score a cheaper tier on
+// the identical photos, labels and scoring rule. Production leaves it unset.
+export const IDENT_MODEL = process.env.IDENT_MODEL || 'claude-sonnet-4-6';
 
 /**
  * Model used by /api/read-set-code (the OCR-first short prompt that returns

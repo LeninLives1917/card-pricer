@@ -393,7 +393,7 @@ async function submitManualEntry() {
 // looking, not by inference. A cached module served an OLD scanner UI on a
 // NEW deploy and cost an entire debugging round — the same lesson as the
 // key_present field on /api/health.
-const SCANNER_BUILD = 'v3.2-live-camera';
+const SCANNER_BUILD = 'v3.3-gated-viewfinder';
 
 // Upload tally. Shown to the operator, because "sent" with nothing arriving
 // on the laptop is precisely the failure this mode shipped with.
@@ -410,6 +410,14 @@ function showScannerMode() {
         <video id="scannerVideo" playsinline autoplay muted
                style="width:100%; display:block; max-height:60vh; object-fit:cover;"></video>
         <div id="scannerFlash" style="position:absolute; inset:0; background:#fff; opacity:0; pointer-events:none; transition:opacity 120ms;"></div>
+        <!-- Framing reticle. Card aspect is 63x88mm (1:1.4); filling this box
+             puts the most pixels on the collector number, which is the field
+             costing ~30% of failures. -->
+        <div id="scannerReticle" style="position:absolute; left:50%; top:50%; transform:translate(-50%,-50%);
+             width:62%; aspect-ratio:63/88; border:3px solid rgba(255,255,255,.5); border-radius:10px;
+             pointer-events:none; transition:border-color 120ms, box-shadow 120ms;"></div>
+        <div id="scannerHint" style="position:absolute; left:0; right:0; bottom:10px; text-align:center;
+             font-size:15px; font-weight:600; color:#fff; text-shadow:0 1px 4px rgba(0,0,0,.8); pointer-events:none;"></div>
       </div>
       <div id="scannerFallback" style="display:none; margin-top:var(--p-2);">
         <p id="scannerFallbackMsg" style="font-size:12px; color:var(--paper-300); line-height:1.5;"></p>
@@ -436,10 +444,20 @@ function showScannerMode() {
   const fallback = document.getElementById('scannerFallback');
   const fbMsg    = document.getElementById('scannerFallbackMsg');
 
+  let _forceNext = false;
+  let _gateCounts = null;
+
   const renderStatus = (extra) => {
     if (!status) return;
     const c = _scannerCounts;
     const bits = [`${c.sent} sent`];
+    // Every rejection is counted. A gate that silently discards most frames
+    // is indistinguishable from a camera that is not working.
+    if (_gateCounts && _gateCounts.analysed) {
+      const g = _gateCounts;
+      const rejected = g.blurry + g.clipped + g.too_small;
+      if (rejected) bits.push(`${rejected} frames rejected`);
+    }
     if (c.inflight) bits.push(`${c.inflight} sending`);
     if (c.failed) bits.push(`${c.failed} FAILED`);
     status.textContent = (extra ? extra + ' — ' : '') + bits.join(' · ');
@@ -529,7 +547,55 @@ function showScannerMode() {
       });
     }
 
+    // ── Frame gate ───────────────────────────────────────────────────
+    // MEASURED (docs/V3_BENCHMARK.md §19): sharpness is the single largest
+    // predictor of a correct identification — 69% of all failures sat in the
+    // blurriest third of the photo set, and the sharpest third scored 88%
+    // against 68.6% overall. A soft frame is not a hard card, it is a frame
+    // that should never have been sent.
+    const gate = await import('../frame-gate.js');
+    const reticle = document.getElementById('scannerReticle');
+    const hintEl = document.getElementById('scannerHint');
+    const gcanvas = document.createElement('canvas');
+    let lastVerdict = null;
+    const stabilise = gate.createStabiliser();
+
+    const COLOURS = { green: '#3ddc84', amber: '#ffb020', red: '#ff5c5c' };
+
+    function analyse() {
+      if (!video.videoWidth || document.hidden) return;
+      const S = gate.ANALYSIS_SIZE;
+      const scale = Math.min(1, S / Math.max(video.videoWidth, video.videoHeight));
+      const w = Math.max(8, Math.round(video.videoWidth * scale));
+      const h = Math.max(8, Math.round(video.videoHeight * scale));
+      if (gcanvas.width !== w) { gcanvas.width = w; gcanvas.height = h; }
+      const ctx = gcanvas.getContext('2d', { willReadFrequently: true });
+      ctx.drawImage(video, 0, 0, w, h);
+      const v = stabilise(gate.gateFrame(ctx.getImageData(0, 0, w, h)));
+      _gateCounts = gate.getGateCounts();
+      lastVerdict = v;
+      const colour = v.locked ? COLOURS.green : (v.state === 'red' ? COLOURS.red : COLOURS.amber);
+      if (reticle) {
+        reticle.style.borderColor = colour;
+        reticle.style.boxShadow = v.locked ? `0 0 0 3px ${colour}55` : 'none';
+      }
+      // One word, never a number. Nobody reads a variance score over a table.
+      if (hintEl) hintEl.textContent = v.locked ? 'Ready' : v.hint;
+    }
+    const gateTimer = setInterval(analyse, 120);
+    window.addEventListener('pagehide', () => clearInterval(gateTimer));
+
     const grab = () => {
+      // Refuse a frame the gate has not cleared. Force-capture stays available
+      // by tapping again immediately — a forced shot is TAGGED, not blocked.
+      if (lastVerdict && !lastVerdict.locked && !_forceNext) {
+        _forceNext = true;
+        setTimeout(() => { _forceNext = false; }, 1500);
+        if (hintEl) hintEl.textContent = lastVerdict.hint + ' — tap again to force';
+        if (navigator.vibrate) { try { navigator.vibrate([30, 60, 30]); } catch { /* unsupported */ } }
+        return;
+      }
+      _forceNext = false;
       const dataUrl = capture.captureFrame(video);
       if (!dataUrl) { renderStatus('no frame — hold still'); return; }
       // Visual confirmation only; the viewfinder never stops, so the next
