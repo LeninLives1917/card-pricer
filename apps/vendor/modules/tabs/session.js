@@ -202,6 +202,13 @@ function renderSessionLog() {
     const thumbHtml = renderRowThumbs(userImg, refImg);
     const dup = e.duplicate_count > 0 ? `<span class="data-badge" style="margin-left:6px;">×${e.duplicate_count + 1}</span>` : '';
     const want = e.want_hit ? `<span class="status-badge live" style="margin-left:6px;">WANT</span>` : '';
+    // Which engine produced this row. Two engines answer identify calls and
+    // they fail in completely different ways: the local pHash index returns
+    // an unrelated card when it false-positives, the vision model returns a
+    // near-miss. Until this badge existed, both looked identical in the log,
+    // so "4 of 11 were wrong" could not be attributed to either — and a
+    // production change was very nearly made on a coincidence. The card
+    // already carried `source`; nothing displayed it.
     const status = e.status === 'bought' ? `<span class="status-badge up">BOUGHT</span>`
       : e.status === 'passed' ? `<span class="status-badge muted">PASSED</span>`
       : '';
@@ -214,7 +221,7 @@ function renderSessionLog() {
         ${thumbHtml}
         <div>
           <div class="name">${escapeHtml(card.name || 'Unknown')}${dup}${want}${status ? ' ' + status : ''}</div>
-          <div class="meta">${escapeHtml((card.set_code || '').toUpperCase())} ${escapeHtml(card.card_number || '')}${card.rarity ? ' · ' + escapeHtml(card.rarity) : ''}</div>
+          <div class="meta">${escapeHtml((card.set_code || '').toUpperCase())} ${escapeHtml(card.card_number || '')}${card.rarity ? ' · ' + escapeHtml(card.rarity) : ''}${sourceBadge(card)}</div>
         </div>
         <div class="price">
           €${mv.toFixed(2)}<br>
@@ -577,6 +584,24 @@ function applyBulkDiscount() {
   }
   saveAllSessions();
   renderAll();
+}
+
+// Provenance badge. `source: 'phash'` is set by the local fast path in
+// pricing/identify-core.js; anything else came through the vision model and
+// its verifier. Rendered plainly rather than colour-coded, because this is
+// evidence for a diagnosis, not a judgement about which engine is better.
+function sourceBadge(card) {
+  const src = card?.source;
+  if (src === 'phash') {
+    return ' · <span class="data-badge" style="font-size:10px; opacity:0.8;" ' +
+           'title="matched locally by image fingerprint, no vision model">pHash</span>';
+  }
+  if (src === 'manual') {
+    return ' · <span class="data-badge" style="font-size:10px; opacity:0.8;" ' +
+           'title="corrected by hand">manual</span>';
+  }
+  return ' · <span class="data-badge" style="font-size:10px; opacity:0.55;" ' +
+         'title="identified by the vision model">AI</span>';
 }
 
 function escapeHtml(s) {
