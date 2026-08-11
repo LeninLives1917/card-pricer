@@ -13,6 +13,7 @@ import { widget_loaded_total } from '../../../infra/observability/metrics.js';
 import { supabase } from '../_clients.js';
 import { getCardDbState, getCatalogueBuiltAt } from '../_card-db-boot.js';
 import { getFastPathCounts } from '../../../infra/observability/fast-path-counters.js';
+import { getSnapshotCounts } from '../../../infra/observability/price-snapshot-counters.js';
 import { isEnabled as rectifyEnabled } from '../../../pricing/card-rectify.js';
 import { getFastPathMode } from '../../../pricing/fast-path-mode.js';
 
@@ -61,6 +62,7 @@ export async function buildHealthPayload(deps = {}) {
   const probeDb = deps.db ?? supabaseLiveness;
   const readCardDb = deps.cardDb ?? safeCardDbState;
   const readFastPath = deps.fastPath ?? getFastPathCounts;
+  const readSnapshots = deps.snapshots ?? getSnapshotCounts;
 
   // Flat boolean keys consumed by the V2 admin tab (apps/vendor/modules/tabs/admin.js).
   // V1 nested `apis.*` shape is preserved alongside for backward compat with any
@@ -124,6 +126,7 @@ export async function buildHealthPayload(deps = {}) {
           : 'fresh',
     },
     fast_path: fastPathCheck(readFastPath(), env),
+    price_history: priceHistoryCheck(readSnapshots()),
     // Reported because it was previously unverifiable from outside the box:
     // the only way to know whether rectification was on in production was to
     // trust that someone had set it. Informational, not a failure — health
@@ -198,6 +201,51 @@ const FAST_PATH_MIN_SAMPLE = 50;
  * having been asked. So the check is a ratio, not a count — `attempted`
  * climbing while `hit` stays at zero is a dead fast path.
  */
+/**
+ * Report the append-only price history writer.
+ *
+ * The failure this exists to catch: the snapshot write is fire-and-forget, so
+ * if it starts failing the app carries on serving prices perfectly and nobody
+ * notices until someone asks for a chart months later. That already happened
+ * once — card_prices overwrote itself from May to August 2026 and the only
+ * surviving history came from two accidental Wayback captures.
+ *
+ * `attempted` climbing while `written` stays at 0 is the dead state. It is
+ * reported as NOT ok, because unlike a cache miss this loses data permanently.
+ */
+function priceHistoryCheck(c) {
+  const attempted = c?.attempted ?? 0;
+  const base = { ...c };
+
+  // Never attempted is not the same as failing, and must not read as either
+  // healthy-and-working or broken. A refresh simply has not run yet this boot.
+  if (attempted === 0) {
+    return { ...base, ok: true,
+      detail: c?.last_write_at
+        ? `no refresh yet this boot; last append ${c.last_write_at}`
+        : 'no refresh yet this boot and no append on record — unverified' };
+  }
+
+  if (c.written === 0) {
+    return { ...base, ok: false,
+      detail: `DEAD — ${attempted} refresh cycle(s) attempted, 0 written. ` +
+        'Price history is being lost and cannot be backfilled: upstream only ' +
+        'serves current prices' };
+  }
+
+  const rate = c.write_rate;
+  if (rate !== null && rate < 1) {
+    return { ...base, ok: false,
+      detail: `DEGRADED — only ${(rate * 100).toFixed(0)}% of ${attempted} ` +
+        `cycle(s) appended cleanly (${c.rows_written} rows total). Every ` +
+        'failed cycle is a permanently missing day' };
+  }
+
+  return { ...base, ok: true,
+    detail: `${c.written}/${attempted} cycle(s) appended, ${c.rows_written} ` +
+      `rows total; last ${c.last_write_at}` };
+}
+
 function fastPathCheck(c, env = process.env) {
   const mode = getFastPathMode(env);
 

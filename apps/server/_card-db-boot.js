@@ -26,6 +26,7 @@ import { axios, supabase } from './_clients.js';
 import { getWithRetry } from '../../pricing/pokemontcg-client.js';
 import {
   bulkSaveCardPrices,
+  snapshotCardPrices,
   loadAllCardPrices,
 } from '../../db/price-snapshot/store.js';
 
@@ -429,6 +430,21 @@ function savePriceDbToFile() {
     .catch((err) => {
       console.warn('[PRICE-DB] Postgres dual-write threw:', err?.message || err);
     });
+
+  // Append-only history alongside the overwrite above. Logged loudly on
+  // failure and counted either way — see the module header on
+  // price-snapshot-counters.js for why silence here is the expensive outcome.
+  snapshotCardPrices(rows)
+    .then((res) => {
+      if (!res.ok) {
+        console.warn(`[PRICE-HISTORY] snapshot completed with errors (${res.errors.length}): first=${res.errors[0]}`);
+      } else {
+        console.log(`[PRICE-HISTORY] appended ${res.written} rows for today`);
+      }
+    })
+    .catch((err) => {
+      console.warn('[PRICE-HISTORY] snapshot threw:', err?.message || err);
+    });
 }
 
 function loadPriceDbFromFile() {
@@ -758,6 +774,14 @@ function processPageData(cards) {
   if (priceRowsForPg.length > 0 && supabase) {
     bulkSaveCardPrices(priceRowsForPg).catch((err) => {
       console.warn(`[PRICE-DB] Postgres dual-write failed for page (${priceRowsForPg.length} rows):`, err?.message || err);
+    });
+    // Append-only history. Separate call, separate failure domain: this must
+    // never be able to break the latest-price write above. Every outcome is
+    // counted (see infra/observability/price-snapshot-counters.js) because a
+    // history writer that stops silently loses data that cannot be recovered —
+    // upstream only ever serves today's price.
+    snapshotCardPrices(priceRowsForPg).catch((err) => {
+      console.warn(`[PRICE-HISTORY] snapshot append failed for page (${priceRowsForPg.length} rows):`, err?.message || err);
     });
   }
 }

@@ -32,8 +32,10 @@
 //   string. Don't change the key shape without updating admin.js.
 
 import { supabase as defaultClient } from '../../apps/server/_clients.js';
+import { countSnapshot } from '../../infra/observability/price-snapshot-counters.js';
 
 const TABLE = 'card_prices';
+const SNAPSHOT_TABLE = 'card_price_snapshots';
 const CHUNK_SIZE = 1000;
 
 /**
@@ -145,6 +147,80 @@ export async function bulkSaveCardPrices(rows, client = defaultClient) {
   }
 
   return { ok: errors.length === 0, inserted, errors };
+}
+
+/**
+ * APPEND one dated row per card into `card_price_snapshots`.
+ *
+ * This is the history writer. `bulkSaveCardPrices` above overwrites — it
+ * answers "what does this card cost now". This one answers "what did it cost
+ * in June", which the upstream APIs cannot tell you after the fact. A refresh
+ * cycle that is not captured here is a data point gone permanently.
+ *
+ * Deliberately separate from bulkSaveCardPrices rather than folded into it:
+ * the latest-price write is load-bearing for the arbitrage UI and must not
+ * acquire a new failure mode. If the snapshot write dies, prices keep working.
+ *
+ * Failsafe by the same contract as bulkSaveCardPrices — never throws, returns
+ * a benign shape on a null client — but every outcome increments a counter
+ * that /api/health reads. A history writer that fails silently is worse than
+ * one that fails loudly, because the loss is unrecoverable.
+ *
+ * Idempotent per day: onConflict on the composite key means a second refresh
+ * on the same date replaces that day's row rather than erroring or doubling.
+ *
+ * @param {CardPriceRow[]} rows
+ * @param {object} [client]
+ * @returns {Promise<{ ok: boolean, written: number, errors: Array<string> }>}
+ */
+export async function snapshotCardPrices(rows, client = defaultClient) {
+  if (!client) {
+    countSnapshot('no_client');
+    return { ok: true, written: 0, errors: [] };
+  }
+  if (!Array.isArray(rows) || rows.length === 0) {
+    countSnapshot('empty');
+    return { ok: true, written: 0, errors: [] };
+  }
+
+  countSnapshot('attempted');
+
+  // Only the price payload is historised. Name/rarity/image live in
+  // card_prices and do not change per-day; duplicating them across every
+  // capture would multiply the table for no analytical gain.
+  const snapshots = rows
+    .filter((r) => r && r.set_id && r.number)
+    .map((r) => ({
+      set_id: r.set_id,
+      number: r.number,
+      tcg: r.tcg ?? null,
+      cm: r.cm ?? null,
+    }));
+
+  if (snapshots.length === 0) {
+    countSnapshot('empty');
+    return { ok: true, written: 0, errors: [] };
+  }
+
+  const errors = [];
+  let written = 0;
+
+  for (let i = 0; i < snapshots.length; i += CHUNK_SIZE) {
+    const chunk = snapshots.slice(i, i + CHUNK_SIZE);
+    const { error } = await client
+      .from(SNAPSHOT_TABLE)
+      .upsert(chunk, { onConflict: 'set_id,number,captured_on' });
+
+    if (error) {
+      errors.push(error.message || String(error));
+      continue;
+    }
+    written += chunk.length;
+  }
+
+  const ok = errors.length === 0;
+  countSnapshot(ok ? 'written' : 'failed', written);
+  return { ok, written, errors };
 }
 
 /**
