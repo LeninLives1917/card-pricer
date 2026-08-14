@@ -14,6 +14,7 @@ import { supabase } from '../_clients.js';
 import { getCardDbState, getCatalogueBuiltAt } from '../_card-db-boot.js';
 import { getFastPathCounts } from '../../../infra/observability/fast-path-counters.js';
 import { getSnapshotCounts } from '../../../infra/observability/price-snapshot-counters.js';
+import { getPriceMatchCounts } from '../../../infra/observability/price-match-counters.js';
 import { isEnabled as rectifyEnabled } from '../../../pricing/card-rectify.js';
 import { getFastPathMode } from '../../../pricing/fast-path-mode.js';
 
@@ -63,6 +64,7 @@ export async function buildHealthPayload(deps = {}) {
   const readCardDb = deps.cardDb ?? safeCardDbState;
   const readFastPath = deps.fastPath ?? getFastPathCounts;
   const readSnapshots = deps.snapshots ?? getSnapshotCounts;
+  const readPriceMatch = deps.priceMatch ?? getPriceMatchCounts;
 
   // Flat boolean keys consumed by the V2 admin tab (apps/vendor/modules/tabs/admin.js).
   // V1 nested `apis.*` shape is preserved alongside for backward compat with any
@@ -127,6 +129,7 @@ export async function buildHealthPayload(deps = {}) {
     },
     fast_path: fastPathCheck(readFastPath(), env),
     price_history: priceHistoryCheck(readSnapshots()),
+    price_match: priceMatchCheck(readPriceMatch()),
     // Reported because it was previously unverifiable from outside the box:
     // the only way to know whether rectification was on in production was to
     // trust that someone had set it. Informational, not a failure — health
@@ -213,6 +216,34 @@ const FAST_PATH_MIN_SAMPLE = 50;
  * `attempted` climbing while `written` stays at 0 is the dead state. It is
  * reported as NOT ok, because unlike a cache miss this loses data permanently.
  */
+/**
+ * Report the TCGGO product-match gate.
+ *
+ * The failure this exists to catch: the adapter used to price the first search
+ * result whatever it was, so a wrong-set match came back as a confident price
+ * (€561.50 for a €15 card, 14 Aug 2026). The gate now requires the card number
+ * to agree, which trades coverage for correctness — and a trade nobody can see
+ * is a trade nobody can revisit.
+ *
+ * Informational, never `ok: false`. Rejections are the gate WORKING; failing
+ * health because it rejected things would train everyone to ignore it. The
+ * number to watch is match_rate: near 1.0 means the gate is idle, a collapse
+ * means either upstream search degraded or our card numbers are being misread.
+ */
+function priceMatchCheck(c) {
+  const rate = c?.match_rate;
+  if (rate == null) {
+    return { ...c, ok: true, detail: 'no card priced via TCGGO yet this boot' };
+  }
+  return {
+    ...c,
+    ok: true,
+    detail: `${(rate * 100).toFixed(0)}% of TCGGO lookups matched on card number ` +
+      `(${c.matched} priced, ${c.rejected_no_number_match} rejected on mismatch, ` +
+      `${c.rejected_no_number_read} with no number read)`,
+  };
+}
+
 function priceHistoryCheck(c) {
   const attempted = c?.attempted ?? 0;
   const base = { ...c };

@@ -11,8 +11,28 @@
 
 import { axios } from '../../apps/server/_clients.js';
 import { PKM_SET_NAMES } from '../set-aliases.js';
+import { countPriceMatch } from '../../infra/observability/price-match-counters.js';
 
 const NAME = 'tcggo-rapidapi';
+
+/**
+ * Reduce a printed card number to a comparable token.
+ *
+ * "073/084" -> "73", "56" -> "56", "SVP 056" -> "svp056". The denominator is
+ * dropped because upstream stores the numerator alone, and leading zeros are
+ * stripped because the two sides disagree about them constantly — the old
+ * comparison tested `"073" === "73"` and lost, which quietly widened the set of
+ * cards that fell through to the first search hit.
+ *
+ * @param {string|number|null|undefined} n
+ * @returns {string|null} null when there is nothing to compare.
+ */
+export function normaliseCardNumber(n) {
+  if (n == null) return null;
+  const s = String(n).trim().replace(/\/.*$/, '').replace(/\s+/g, '').toLowerCase();
+  if (!s) return null;
+  return s.replace(/^0+(?=.)/, '');
+}
 
 /**
  * Legacy V1 entrypoint — kept exported for the /api/price route's import
@@ -49,23 +69,62 @@ export async function fetchRapidAPICardmarketPrice(card) {
 
     const data = resp.data?.data;
     if (!data || data.length === 0) {
+      countPriceMatch('no_candidates');
       console.log('[TCGGO] No results');
       return null;
     }
 
-    let best = data[0];
+    // --- THE MATCH GATE ------------------------------------------------------
+    //
+    // This block previously read:
+    //
+    //     let best = data[0];  let bestScore = 0;
+    //     for (...) { if (score > bestScore) { bestScore = score; best = item; } }
+    //
+    // `best` was seeded to the top search hit and returned no matter what it
+    // scored. A name-only match — 50 of a possible 140, wrong set, wrong
+    // number — was priced as the identified card, and nothing downstream ever
+    // compared the priced product's number against the one we asked for.
+    //
+    // Measured, 14 Aug 2026: a Charizard ex SVP 56 worth about €15 on
+    // Cardmarket was quoted at €561.50, because a different Charizard ex headed
+    // the five-result search page. The Cardmarket link beside it was correct —
+    // it is built from our own identity, not from the matched product — so link
+    // and price disagreed by 37x with nothing positioned to notice.
+    //
+    // The card number is the identifying field. If it does not agree we do not
+    // know what we priced, and a price we cannot attribute is a guess. This
+    // costs coverage on purpose: an absent price costs nothing, a wrong one on
+    // a buy-list costs money. Same reasoning already applied to eBay in
+    // pricing/price.js.
+    const reqNum = normaliseCardNumber(card.card_number);
+    if (!reqNum) {
+      countPriceMatch('rejected_no_number_read');
+      console.log(`[TCGGO] REJECTED: no card number was read for "${card.name}" — cannot confirm which printing to price`);
+      return null;
+    }
+
+    let best = null;
     let bestScore = 0;
     for (const item of data) {
-      let score = 0;
+      // The number must agree before anything else is considered. Name and set
+      // only ever break ties among printings that already share the number.
+      if (normaliseCardNumber(item.card_number) !== reqNum) continue;
+      let score = 60;
       if (item.name?.toLowerCase().includes(card.name.toLowerCase())) score += 50;
-      if (card.card_number) {
-        const num = card.card_number.replace(/\/.*/, '');
-        const itemNum = String(item.card_number);
-        if (itemNum === num || itemNum === card.card_number) score += 60;
-      }
       if (card.set_name && item.episode?.name?.toLowerCase().includes(card.set_name.toLowerCase())) score += 30;
       if (score > bestScore) { bestScore = score; best = item; }
     }
+
+    if (!best) {
+      countPriceMatch('rejected_no_number_match', { requested: reqNum, candidates: data.length });
+      console.log(
+        `[TCGGO] REJECTED: no candidate matched #${reqNum} for "${searchTerm}" — ` +
+        `${data.length} offered: ${data.map((d) => `${d.name} #${d.card_number}`).join(', ')}`,
+      );
+      return null;
+    }
+    countPriceMatch('matched');
 
     const cm = best.prices?.cardmarket || {};
     const tcg = best.prices?.tcg_player || {};
@@ -92,6 +151,12 @@ export async function fetchRapidAPICardmarketPrice(card) {
       graded_cgc10: cm.graded?.cgc?.cgc10 || null,
       tcgplayer_market: tcg.market_price || null,
       tcgplayer_mid: tcg.mid_price || null,
+      // Evidence for WHICH product this price describes. The displayed
+      // Cardmarket link is built from our own identity, so without this there
+      // is no way — in a log, in /api/health, or on the result sheet — to see
+      // that the price and the link are talking about different cards.
+      requested_number: reqNum,
+      match_score: bestScore,
     };
 
     result.price = result.lowest_nm || result.avg7 || result.avg30;

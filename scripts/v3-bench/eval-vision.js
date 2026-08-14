@@ -128,6 +128,82 @@ async function readWithGemini(buffer) {
   return parsed.cards ?? [];
 }
 
+// Ximilar is not a general vision model — it is a purpose-built card identifier
+// with its own catalogue behind it. The shared system prompt therefore does not
+// apply to it at all.
+//
+// FAIRNESS CAVEAT, stated up front like the Gemini one: this asymmetry cuts
+// both ways. Ximilar is spared a prompt tuned over many iterations for Claude;
+// Claude is spared having to agree with Ximilar's catalogue. What stays
+// identical is the photo, the verifier, the resolver and the scorer — so the
+// comparison still isolates "which reader gets this card right", which is the
+// only question being asked.
+async function readWithXimilar(buffer) {
+  const key = process.env.XIMILAR_API_KEY;
+  if (!key) throw new Error('XIMILAR_API_KEY not set');
+  const body = {
+    records: [{ _base64: buffer.toString('base64') }],
+    // analyze_all would price every card in the frame. The benchmark photos are
+    // one card each, so leave it off — turning it on here would change what is
+    // being measured without changing the label set.
+    analyze_all: false,
+  };
+  let r, lastBody = '';
+  for (let attempt = 0; attempt < 5; attempt++) {
+    r = await fetch('https://api.ximilar.com/collectibles/v2/tcg_id', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Token ${key}` },
+      body: JSON.stringify(body),
+    });
+    if (r.ok) break;
+    lastBody = (await r.text()).slice(0, 200);
+    if (r.status !== 429 && r.status < 500) break;
+    await new Promise((res) => setTimeout(res, 2000 * 2 ** attempt));
+  }
+  if (!r.ok) throw new Error(`ximilar ${r.status} after retries: ${lastBody}`);
+  const j = await r.json();
+
+  // Fail loudly on a record-level error. Ximilar reports per-record status
+  // inside a 200 response, so a quota or decode failure arrives looking like a
+  // card that simply could not be identified. Scoring that as a miss would
+  // charge the model for a harness fault — the exact mistake the Gemini
+  // maxOutputTokens bug already caused once.
+  const rec = j.records?.[0];
+  if (!rec) throw new Error(`ximilar returned no records: ${JSON.stringify(j).slice(0, 200)}`);
+  const rstat = rec._status?.text || rec._status?.code;
+  if (rec._status && rec._status.code >= 400) {
+    throw new Error(`ximilar record error ${rstat}`);
+  }
+
+  const obj = (rec._objects || []).find((o) => o?._identification?.best_match);
+  if (!obj) return [];
+  const m = obj._identification.best_match;
+
+  // set-resolve.js parses the printed total out of the card_number DENOMINATOR
+  // ("073/084"). Ximilar returns the halves separately — card_number "73",
+  // out_of "84" — so recombine them. Omitting this would hand the printedTotal
+  // contradiction check to Claude and deny it to Ximilar, and that check is
+  // what lifted Claude's precision from 61% to 97.2%. It would not be a small
+  // unfairness.
+  const num = m.card_number != null ? String(m.card_number) : null;
+  const outOf = m.out_of != null ? String(m.out_of) : null;
+  const cardNumber = num && outOf && !num.includes('/') ? `${num}/${outOf}` : num;
+
+  return [{
+    game: 'pokemon',
+    name: m.name ?? null,
+    set_name: m.set ?? m.series ?? null,
+    set_code: m.set_code ?? null,
+    card_number: cardNumber,
+    rarity: m.rarity ?? null,
+    // Ximilar reports no self-confidence for the identification, so leave it
+    // null rather than inventing 1.0. A fabricated confidence would flow into
+    // the accept gate and read as certainty nobody measured.
+    confidence: null,
+    graded: null,
+  }];
+}
+
 const _usageTotals = { prompt: 0, output: 0, thoughts: 0, calls: 0 };
 
 function walk(dir, out = []) {
@@ -224,7 +300,9 @@ const truthOf = (raw) => {
  */
 async function readCard(buffer) {
   let raw;
-  if (PROVIDER === 'gemini') {
+  if (PROVIDER === 'ximilar') {
+    raw = await readWithXimilar(buffer);
+  } else if (PROVIDER === 'gemini') {
     raw = await readWithGemini(buffer);
     if (_lastUsage) {
       _usageTotals.calls++;
@@ -244,7 +322,8 @@ async function readCard(buffer) {
 }
 
 async function main() {
-  const needKey = PROVIDER === 'gemini' ? 'GEMINI_API_KEY' : 'ANTHROPIC_API_KEY';
+  const KEY_FOR = { gemini: 'GEMINI_API_KEY', ximilar: 'XIMILAR_API_KEY' };
+  const needKey = KEY_FOR[PROVIDER] || 'ANTHROPIC_API_KEY';
   if (!process.env[needKey]) {
     console.error(`[eval-vision] ${needKey} not set`);
     process.exit(1);
@@ -268,7 +347,11 @@ async function main() {
 
   console.log(`[eval-vision] provider=${PROVIDER}${PROVIDER === 'gemini' ? ' model=' + GEMINI_MODEL : ''}`);
   console.log(`[eval-vision] ${work.length} labelled photos, concurrency ${CONCURRENCY}`);
-  console.log('[eval-vision] this spends real API credit — roughly $0.016/photo\n');
+  const COST_NOTE = {
+    ximilar: '10 credits/card — 51 photos = 510 of the 1,000 free monthly credits',
+    gemini: 'billed per image against GEMINI_API_KEY',
+  }[PROVIDER] || 'roughly $0.016/photo';
+  console.log(`[eval-vision] this spends real API credit — ${COST_NOTE}\n`);
 
   const rows = [];
   let done = 0;
@@ -372,7 +455,11 @@ async function main() {
   }
 
   const outFile = PROVIDER === 'gemini' ? OUT.replace('.json', `-${GEMINI_MODEL}.json`) : OUT;
-  fs.writeFileSync(outFile, JSON.stringify({ provider: PROVIDER, model: PROVIDER === 'gemini' ? GEMINI_MODEL : 'claude-sonnet-4-6 (production identifyCore)', rows }, null, 2));
+  const MODEL_LABEL = {
+    gemini: GEMINI_MODEL,
+    ximilar: 'ximilar collectibles/v2/tcg_id',
+  }[PROVIDER] || 'claude-sonnet-4-6 (production identifyCore)';
+  fs.writeFileSync(outFile, JSON.stringify({ provider: PROVIDER, model: MODEL_LABEL, rows }, null, 2));
   console.log(`\n[eval-vision] wrote ${OUT}`);
   console.log('\nN is small. Report the interval, not the point estimate:');
   console.log(`  ${correct.length}/${scorable.length} is a sample, and "0 wrong" over ${scorable.length} bounds the`);
