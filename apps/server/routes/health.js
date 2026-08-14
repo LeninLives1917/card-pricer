@@ -234,7 +234,7 @@ const FAST_PATH_MIN_SAMPLE = 50;
 function priceMatchCheck(c) {
   const rate = c?.match_rate;
   if (rate == null) {
-    return { ...c, ok: true, detail: 'no card priced via TCGGO yet this boot' };
+    return { ...c, ok: true, detail: 'no card priced yet this boot' };
   }
   // Per-source, never blended. A blended rate hides the case that matters: one
   // adapter's gate tightening while the next one down the cascade prices the
@@ -248,7 +248,7 @@ function priceMatchCheck(c) {
     detail: `${(rate * 100).toFixed(0)}% of price lookups matched on card number ` +
       `(${c.matched} priced, ${c.rejected_no_number_match} rejected on mismatch, ` +
       `${c.rejected_no_number_read} with no number read)` +
-      (perSource ? ` — ${perSource}` : ''),
+      (perSource ? ` [${perSource}]` : ''),
   };
 }
 
