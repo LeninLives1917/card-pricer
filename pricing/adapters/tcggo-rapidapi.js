@@ -12,27 +12,16 @@
 import { axios } from '../../apps/server/_clients.js';
 import { PKM_SET_NAMES } from '../set-aliases.js';
 import { countPriceMatch } from '../../infra/observability/price-match-counters.js';
+import { normaliseCardNumber } from '../card-number.js';
 
 const NAME = 'tcggo-rapidapi';
 
-/**
- * Reduce a printed card number to a comparable token.
- *
- * "073/084" -> "73", "56" -> "56", "SVP 056" -> "svp056". The denominator is
- * dropped because upstream stores the numerator alone, and leading zeros are
- * stripped because the two sides disagree about them constantly — the old
- * comparison tested `"073" === "73"` and lost, which quietly widened the set of
- * cards that fell through to the first search hit.
- *
- * @param {string|number|null|undefined} n
- * @returns {string|null} null when there is nothing to compare.
- */
-export function normaliseCardNumber(n) {
-  if (n == null) return null;
-  const s = String(n).trim().replace(/\/.*$/, '').replace(/\s+/g, '').toLowerCase();
-  if (!s) return null;
-  return s.replace(/^0+(?=.)/, '');
-}
+// Was 5. The match gate requires the card number to agree, so the only way a
+// correct printing gets priced is if it appears on the search page at all — a
+// 5-result page is the binding constraint on coverage, not the gate. Same call,
+// same credit, four times the chance the right card is on it.
+const SEARCH_PAGE_SIZE = 20;
+
 
 /**
  * Legacy V1 entrypoint — kept exported for the /api/price route's import
@@ -58,7 +47,7 @@ export async function fetchRapidAPICardmarketPrice(card) {
     console.log(`[TCGGO] Searching: "${searchTerm}"`);
 
     const resp = await axios.get('https://pokemon-tcg-api.p.rapidapi.com/cards/search', {
-      params: { search: searchTerm, per_page: 5 },
+      params: { search: searchTerm, per_page: SEARCH_PAGE_SIZE },
       headers: {
         'X-RapidAPI-Key': apiKey,
         'X-RapidAPI-Host': 'pokemon-tcg-api.p.rapidapi.com',
@@ -69,7 +58,7 @@ export async function fetchRapidAPICardmarketPrice(card) {
 
     const data = resp.data?.data;
     if (!data || data.length === 0) {
-      countPriceMatch('no_candidates');
+      countPriceMatch('tcggo', 'no_candidates');
       console.log('[TCGGO] No results');
       return null;
     }
@@ -99,7 +88,7 @@ export async function fetchRapidAPICardmarketPrice(card) {
     // pricing/price.js.
     const reqNum = normaliseCardNumber(card.card_number);
     if (!reqNum) {
-      countPriceMatch('rejected_no_number_read');
+      countPriceMatch('tcggo', 'rejected_no_number_read');
       console.log(`[TCGGO] REJECTED: no card number was read for "${card.name}" — cannot confirm which printing to price`);
       return null;
     }
@@ -117,14 +106,14 @@ export async function fetchRapidAPICardmarketPrice(card) {
     }
 
     if (!best) {
-      countPriceMatch('rejected_no_number_match', { requested: reqNum, candidates: data.length });
+      countPriceMatch('tcggo', 'rejected_no_number_match', { requested: reqNum, candidates: data.length });
       console.log(
         `[TCGGO] REJECTED: no candidate matched #${reqNum} for "${searchTerm}" — ` +
         `${data.length} offered: ${data.map((d) => `${d.name} #${d.card_number}`).join(', ')}`,
       );
       return null;
     }
-    countPriceMatch('matched');
+    countPriceMatch('tcggo', 'matched');
 
     const cm = best.prices?.cardmarket || {};
     const tcg = best.prices?.tcg_player || {};

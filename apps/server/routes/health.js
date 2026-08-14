@@ -217,13 +217,14 @@ const FAST_PATH_MIN_SAMPLE = 50;
  * reported as NOT ok, because unlike a cache miss this loses data permanently.
  */
 /**
- * Report the TCGGO product-match gate.
+ * Report the price product-match gate, per source.
  *
- * The failure this exists to catch: the adapter used to price the first search
+ * The failure this exists to catch: the adapters used to price the first search
  * result whatever it was, so a wrong-set match came back as a confident price
- * (€561.50 for a €15 card, 14 Aug 2026). The gate now requires the card number
- * to agree, which trades coverage for correctness — and a trade nobody can see
- * is a trade nobody can revisit.
+ * (€561.50 for a €15 card, 14 Aug 2026 — tcggo; the same code was live in
+ * justtcg, directly below it in the cascade). The gate now requires the card
+ * number to agree, which trades coverage for correctness — and a trade nobody
+ * can see is a trade nobody can revisit.
  *
  * Informational, never `ok: false`. Rejections are the gate WORKING; failing
  * health because it rejected things would train everyone to ignore it. The
@@ -235,12 +236,19 @@ function priceMatchCheck(c) {
   if (rate == null) {
     return { ...c, ok: true, detail: 'no card priced via TCGGO yet this boot' };
   }
+  // Per-source, never blended. A blended rate hides the case that matters: one
+  // adapter's gate tightening while the next one down the cascade prices the
+  // rejects off its own first search hit.
+  const perSource = Object.entries(c.by_source || {})
+    .map(([n, s]) => `${n} ${s.match_rate == null ? 'n/a' : (s.match_rate * 100).toFixed(0) + '%'}`)
+    .join(', ');
   return {
     ...c,
     ok: true,
-    detail: `${(rate * 100).toFixed(0)}% of TCGGO lookups matched on card number ` +
+    detail: `${(rate * 100).toFixed(0)}% of price lookups matched on card number ` +
       `(${c.matched} priced, ${c.rejected_no_number_match} rejected on mismatch, ` +
-      `${c.rejected_no_number_read} with no number read)`,
+      `${c.rejected_no_number_read} with no number read)` +
+      (perSource ? ` — ${perSource}` : ''),
   };
 }
 

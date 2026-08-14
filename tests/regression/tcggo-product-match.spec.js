@@ -16,10 +16,8 @@ import { test, describe, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { axios } from '../../apps/server/_clients.js';
-import {
-  fetchRapidAPICardmarketPrice,
-  normaliseCardNumber,
-} from '../../pricing/adapters/tcggo-rapidapi.js';
+import { fetchRapidAPICardmarketPrice } from '../../pricing/adapters/tcggo-rapidapi.js';
+import { normaliseCardNumber } from '../../pricing/card-number.js';
 import {
   getPriceMatchCounts,
   resetPriceMatchCounts,
