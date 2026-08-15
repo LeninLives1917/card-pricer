@@ -73,3 +73,104 @@ Every photograph is **hand-held, under the lighting you'd actually have at a sho
 They stay on your machine. They are the measurement input for `docs/V3_BENCHMARK.md` and the seed of the regression suite B7 will own. They are never committed and never uploaded.
 
 If the numbers come back below ~90% top-1, the recommendation will be the fixed-rig alternative — phone on a stand, marked card stage, constant LED — rather than pushing on. Controlled geometry removes most of the variance, and finding that out here is worth as much as a passing benchmark.
+
+---
+
+# Amendment — 15 Aug 2026
+
+The spec above was written for a descriptor-matching pipeline. pHash is dead
+(`V3_BENCHMARK.md` §15) and the reader is now a vision model, so the thing that
+decides right-or-wrong has changed: it is **whether the collector number is
+legible**, not whether the artwork is recognisable. That is a finer distinction
+and it changes what the set has to contain.
+
+Roughly 51 photographs of the original ~250 exist and are labelled. Everything
+below is what is still needed, in shooting order — most valuable first, so
+stopping early still leaves the important part done.
+
+**Shoot with the phone's normal camera app at full resolution, not through the
+scanner.** `apps/vendor/modules/capture.js` caps at 1600px wide. Keeping the
+originals means any downscale can be simulated offline — including the open
+question of whether a collector number survives at 1/9 of a binder page —
+without asking for another session. Collect gate-free, simulate gates later.
+
+## 1. The blur ladder — 60 photographs, 15 cards
+
+The highest-value block. `SHARPNESS_MIN = 250` in `frame-gate.js` was fitted
+in-sample and has never been validated against live video, and blur is the
+largest measured error term we have: 69% of failures fell in the blurriest
+third, and the sharpest third scored 88% against 68.6% overall.
+
+Four shots of each of 15 cards:
+
+| Suffix | What |
+|---|---|
+| `_s1` | sharp as you can hold it |
+| `_s2` | slightly soft — the shot you take when rushing |
+| `_s3` | clearly soft, number still readable by eye |
+| `_s4` | too soft to read the number |
+
+A threshold needs points either side of it. The current set is a cloud with no
+ladder, which is why the number is a guess.
+
+## 2. Cards absent from the catalogue — 30 photographs
+
+The adversary with **n = 0** today: a sharp, well-framed photo of a card we do
+not hold, next to a near-identical one we do. Every miss ever measured was a
+ranking failure, so the abstention machinery has never faced the case it exists
+for.
+
+`node scripts/v3-bench/catalogue-gaps.js` checks the catalogue against **live**
+upstream. As of 15 Aug 2026 it reports **zero gaps** — 174 sets, every card
+held. So there is no shopping list to draw from pokemontcg.io, and absent cards
+must come from outside its coverage:
+
+- **Japanese printings** — the easiest source by far; upstream is English-only
+- Korean / simplified & traditional Chinese
+- Other games we do not catalogue to the same depth
+- Jumbo / oversized cards, error cards, proxies
+
+Name these `absent-01.jpg` … `absent-30.jpg`, with one line per card in
+`absent.txt` (name + set as printed).
+
+## 3. Binder pages — 30 photographs
+
+Not in the original spec. Two implementations exist — `pricing/binder.js`
+(model returns bounding boxes) and `pricing/binder-cv.js` (classical projection
+profile) — and neither has ever been scored against a real binder photograph.
+
+| Count | Shot |
+|---:|---|
+| 15 | full 9-pocket page, straight on |
+| 5 | page tilted 20–40° |
+| 5 | page with glare across the plastic |
+| 3 | page with 2–4 **empty pockets** |
+| 2 | 4-pocket page |
+
+The empty-pocket pages matter most. One of the two routes asks the model what
+it sees, and a model told to read a page will supply nine cards whether or not
+nine are there — Haiku 4.5 already fabricated collector numbers at a
+self-reported confidence of 0.92. That is the test.
+
+**Fill the pages with cards already in the main set**, then the labels exist
+already and each page needs only a companion `binder-01.txt` listing the nine
+filenames in reading order.
+
+## 4. Finish the original buckets — ~180 photographs
+
+As specified above, minus what is already shot. Two additions:
+
+- **A second lighting setup for roughly a third of them.** Everything measured
+  so far is one table under one light, so nothing known about the system
+  survives a change of venue.
+- **Near-twins on purpose** — same Pokémon across sets, holo vs reverse vs
+  first edition. Already called for above; restated because it is where the
+  system has actually failed, and where `set-resolve.js` earns or loses its
+  97.2% precision.
+
+## Why the sample size
+
+At ~51 photographs the 95% interval on a 70% accuracy estimate is about
+±13 points, which cannot distinguish a real 5-point regression from noise.
+At ~270 it is roughly ±5. That is the difference between 68.6% meaning
+something and it being a number nobody can defend.
