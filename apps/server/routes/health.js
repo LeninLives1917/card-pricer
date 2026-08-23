@@ -82,6 +82,21 @@ export async function buildHealthPayload(deps = {}) {
   const has_ebay     = !!(env.EBAY_APP_ID && env.EBAY_CERT_ID);
   const has_justtcg  = !!env.JUSTTCG_API_KEY;
   const has_rapidapi = !!env.RAPIDAPI_KEY;
+  const has_brevo    = !!env.BREVO_API_KEY;
+
+  // The FROM address, echoed deliberately. It is not a secret — it appears on
+  // every email the shop sends — and it is the one Brevo setting that fails
+  // silently: Brevo rejects a send from an address that is not verified on the
+  // account, so a perfectly valid API key still delivers nothing. Reporting the
+  // resolved value makes that checkable against the account's verified sender
+  // list without sending a test email to a real customer.
+  //
+  // Same reasoning as raw_value on CARD_RECTIFY below: report what the PROCESS
+  // actually resolved, because "the variable is set" and "the thing works" are
+  // different claims and this repo has been bitten by treating them as one.
+  const brevo_sender = has_brevo
+    ? (env.BREVO_SENDER_EMAIL || env.SHOP_EMAIL || null)
+    : null;
 
   const db = await probeDb();
 
@@ -205,6 +220,8 @@ export async function buildHealthPayload(deps = {}) {
     has_ebay,
     has_justtcg,
     has_rapidapi,
+    has_brevo,
+    brevo_sender,
   };
 }
 
