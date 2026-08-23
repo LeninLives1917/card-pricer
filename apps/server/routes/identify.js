@@ -478,9 +478,13 @@ async function manualIdentifyCore({ game, set_code, card_number, name } = {}) {
       if (resolved.ptcgoCode && !resolved.aliased) {
         queries.push(`set.ptcgoCode:${resolved.ptcgoCode} number:${cleanNum}`);
       }
-      if (set_code && !resolved.aliased && resolved.setId !== String(set_code).toLowerCase()) {
-        queries.push(`set.id:${String(set_code).toLowerCase()} number:${cleanNum}`);
-      }
+      // Removed: a third query guarded by
+      //   set_code && !resolved.aliased && resolved.setId !== set_code.toLowerCase()
+      // which can never be true. When !aliased, resolveSetCode returns
+      // setId = raw.toLowerCase() by definition (set-aliases.js:170), so the
+      // last clause is always false and this rung never fired for any input.
+      // Verified against ZZZ, ex, EX, BS. The first query already covers the
+      // raw-code case it was meant to add.
       if (name) queries.push(`name:"${name}" number:${cleanNum}`);
       if (name) queries.push(`number:${cleanNum} name:"${name}"`);
 

@@ -25,13 +25,23 @@ export const PKM_SET_ALIASES = {
   'MEW':  'sv3pt5',     '151':  'sv3pt5',     'PAR':  'sv4',
   'PAF':  'sv4pt5',     'TEF':  'sv5',        'TWM':  'sv6',
   'SFA':  'sv6pt5',     'SCR':  'sv7',        'SSP':  'sv8',
-  'PRE':  'sv8pt5',     'SVE':  'sv8pt5',     'JTG':  'sv9',
+  'PRE':  'sv8pt5',     'JTG':  'sv9',
   'JT':   'sv9',        'DRI':  'sv10',
-  'BBT':  'bbt',        'BLK':  'bbt',        'ZSV10PT5': 'bbt',
-  'WHT':  'wht',        'RSV10PT5': 'wht',
+  // 'SVE' pointed at sv8pt5 (Prismatic Evolutions), so "SVE 001" priced an
+  // Exeggcute. SVE is Scarlet & Violet Energies, which exists as `sve`.
+  'SVE':  'sve',
+  // These five pointed at `bbt` and `wht`, which are not set ids anywhere —
+  // they were hand-entered before upstream published the sets, and upstream
+  // then named them zsv10pt5 and rsv10pt5. 345 cards were unreachable, and
+  // because the aliases resolved (aliased: true) the ptcgoCode fallback query
+  // at identify.js:478 was skipped, so there was no second chance either.
+  'BBT':  'zsv10pt5',   'BLK':  'zsv10pt5',   'ZSV10PT5': 'zsv10pt5',
+  'WHT':  'rsv10pt5',   'RSV10PT5': 'rsv10pt5',
   'MEG':  'me1',        'ME1':  'me1',        'PFL':  'me2',
-  'ME2':  'me2',        'ASH':  'me2pt5',     'POR':  'me3',
-  'ME3':  'me3',
+  // ASC is the printed code for Ascended Heroes; ASH predates it and is kept
+  // so anything already typed still resolves.
+  'ME2':  'me2',        'ASC':  'me2pt5',     'ASH':  'me2pt5',
+  'POR':  'me3',        'ME3':  'me3',
   'SVP':  'svp',        'MEP':  'mep',
   'SSH':  'swsh1',      'RCL':  'swsh2',      'DAA':  'swsh3',
   'VIV':  'swsh4',      'BST':  'swsh5',      'CRE':  'swsh6',
@@ -44,7 +54,12 @@ export const PKM_SET_ALIASES = {
   'SLG':  'sm35',       'CIN':  'sm4',        'UPR':  'sm5',
   'FLI':  'sm6',        'CES':  'sm7',        'LOT':  'sm8',
   'TEU':  'sm9',        'UNB':  'sm10',       'UNM':  'sm11',
-  'CEC':  'sm12',       'HIF':  'sm35',       'DET':  'det1',
+  // 'HIF' pointed at sm35 — Shining Legends, whose code is SLG and which is
+  // already mapped two lines up. HIF is Hidden Fates. This one survived every
+  // existence check ever run against this table, because sm35 is a real set
+  // full of real cards; only comparing the key against the target's OWN
+  // ptcgoCode catches it. See tests/regression/set-alias-reconcile.spec.js.
+  'CEC':  'sm12',       'HIF':  'sm115',      'DET':  'det1',
   'XY':   'xy1',        'FLF':  'xy2',        'FFI':  'xy3',
   'PHF':  'xy4',        'PRC':  'xy5',        'ROS':  'xy6',
   'AOR':  'xy7',        'BKT':  'xy8',        'BKP':  'xy9',
