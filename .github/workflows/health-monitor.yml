@@ -1,0 +1,142 @@
+# External health monitor for the deployed Card-Pricer service.
+#
+# WHY THIS EXISTS
+#
+# Between 15 and 23 August 2026 the live instance ran for 8.4 days with every
+# Supabase request returning "401 Invalid API key". /api/health reported
+# status: degraded the whole time. Nobody was reading it. 48 scan_events and 6
+# quote_leads writes were rejected in the final 15 minutes alone — and that is
+# only as far back as Supabase log retention reached.
+#
+# infra/deploy/healthcheck.md has specified an external monitor since V2. It
+# was correct and never set up. This is that monitor, as code, so it cannot be
+# specified-and-forgotten again.
+#
+# THE LOAD-BEARING DETAIL
+#
+# /api/health returns HTTP 200 EVEN WHEN DEGRADED, deliberately — see the
+# comment at apps/server/routes/health.js:186. The vision fallback works
+# without Supabase, so a degraded state must not make Render evict the
+# instance. That design is right, and it means a status-code check would have
+# shown green for all 8.4 days. This job checks the BODY.
+#
+# WHAT THIS IS NOT
+#
+# GitHub's scheduled runs are best-effort. They are frequently late and can be
+# skipped entirely at peak, so treat this as "we will hear within the hour",
+# not a minute-accurate SLA. If a tighter guarantee is ever needed, a paid
+# uptime service is the right tool and infra/deploy/healthcheck.md §3.1 has
+# the config.
+#
+# AND THE FAILURE MODE OF THE MONITOR ITSELF, STATED PLAINLY
+#
+# GitHub DISABLES scheduled workflows after 60 days with no repository
+# activity, and it does so quietly. A monitor that stops without saying so is
+# the same defect it exists to catch. Any commit resets the clock; the repo is
+# active enough that this should not bite, but it is a real hole and it is
+# written down rather than assumed away.
+
+name: health monitor
+
+on:
+  schedule:
+    # Every 10 minutes, offset off the hour. Every project that asks for
+    # "every 10 minutes" writes */10, so the whole platform fires at :00, :10,
+    # :20 — which is exactly when GitHub's scheduler is most congested and
+    # most likely to drop the run.
+    - cron: '3,13,23,33,43,53 * * * *'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: health-monitor
+  cancel-in-progress: true
+
+env:
+  BASE_URL: https://card-pricer-60qq.onrender.com
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Probe /api/health
+        run: |
+          set -uo pipefail
+
+          # Three attempts. A single blip should not page anyone, but a
+          # persistent fault must not be retried into invisibility either —
+          # so the retry count is small and the body of the LAST attempt is
+          # always printed, pass or fail.
+          attempt=0
+          body=''
+          code=''
+          while [ "$attempt" -lt 3 ]; do
+            attempt=$((attempt + 1))
+            code=$(curl -s -o /tmp/health.json -w '%{http_code}' --max-time 45 "$BASE_URL/api/health" || echo "000")
+            body=$(cat /tmp/health.json 2>/dev/null || echo '')
+            if printf '%s' "$body" | grep -q '"status":"ok"'; then
+              echo "attempt $attempt: healthy (HTTP $code)"
+              break
+            fi
+            echo "attempt $attempt: NOT healthy (HTTP $code)"
+            [ "$attempt" -lt 3 ] && sleep 20
+          done
+
+          echo '--- /api/health ---'
+          printf '%s\n' "$body" | head -c 4000
+          echo ''
+
+          if ! printf '%s' "$body" | grep -q '"status":"ok"'; then
+            echo ''
+            echo '::error::Card-Pricer is NOT healthy. HTTP status was' "$code" \
+                 '- note that 200 is expected even when degraded, so the body above is what matters.'
+            # Surface the named failing checks first; that is the line worth
+            # reading in the notification email.
+            printf '%s' "$body" | grep -o '"degraded":\[[^]]*\]' || true
+            exit 1
+          fi
+
+          echo 'status: ok'
+
+      - name: Report the deployed build
+        if: always()
+        run: |
+          set -uo pipefail
+          # Informational, never fails the job. Answers "is the build I think
+          # is live actually live?" in the run log, and makes an unannounced
+          # rollback visible without anyone having to check.
+          curl -s --max-time 30 "$BASE_URL/api/version" | head -c 500 || true
+          echo ''
+
+      - name: Surface the counters that read null when nobody is looking
+        if: always()
+        run: |
+          set -uo pipefail
+          # These are the ratios the project's own rules say to watch. Printing
+          # them here means the history is in the Actions log even when nobody
+          # opens /api/health — including the distinction between "never asked"
+          # (null) and "asked and always failed" (0), which is the whole point.
+          python3 - <<'PY' || true
+          import json, urllib.request, os
+          url = os.environ['BASE_URL'] + '/api/health'
+          try:
+              d = json.load(urllib.request.urlopen(url, timeout=30))
+          except Exception as e:
+              print('could not read health:', e)
+              raise SystemExit(0)
+          c = d.get('checks', {})
+          def show(label, block, keys):
+              if not block:
+                  print(f'{label}: absent')
+                  return
+              bits = ', '.join(f'{k}={block.get(k)!r}' for k in keys)
+              print(f'{label}: {bits}')
+          show('price_match', c.get('price_match'), ['match_rate', 'matched', 'rejected_no_number_match'])
+          show('text_entry ', c.get('text_entry'), ['lookups', 'first_hit_rate', 'confirmed_rate', 'set_guess_rate'])
+          show('fast_path  ', c.get('fast_path'), ['mode', 'attempted', 'hit_rate'])
+          show('catalogue  ', c.get('catalogue'), ['cards', 'age_days'])
+          show('price_hist ', c.get('price_history'), ['attempted', 'written', 'write_rate'])
+          PY
