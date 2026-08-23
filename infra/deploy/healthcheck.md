@@ -109,6 +109,34 @@ rolls the deploy back to the previous revision automatically.
 
 ## 3. UptimeRobot (or equivalent external monitor)
 
+> ### ⚠️ This section describes a monitor that has never been set up.
+>
+> **Incident, 15–23 August 2026.** The live instance ran for **8.4 days**
+> with every Supabase request returning `401 Invalid API key`. Confirmed from
+> Supabase's own edge logs: 48 `scan_events` writes and 6 `quote_leads`
+> writes rejected in the final 15 minutes alone, and that is only the window
+> log retention still covered. A redeploy on 23 August cleared it instantly
+> with the same environment variables — the running process had gone bad and
+> stayed bad. Nothing noticed, for over a week.
+>
+> `/api/health` had it right the whole time: `status: "degraded"`,
+> `supabase: {ok: false}`. Nobody was reading it.
+>
+> **A status-code monitor would have shown green for all 8.4 days.** This
+> endpoint returns **HTTP 200 even when degraded**, deliberately — see the
+> comment at `apps/server/routes/health.js:186`: the vision fallback works
+> without Supabase, so a degraded state must not make Render evict the
+> instance. That design is right, and it means **the monitor MUST match on
+> the response body**, never on the status code alone. The keyword row in
+> §3.1 below is the load-bearing line in this document.
+>
+> What was lost: a `quote_leads` insert failure is caught, logged with
+> `console.warn`, and the request continues (`routes/quote-lead.js:182-189`).
+> The customer still receives their Brevo email — but there is no lead row,
+> and `buildQuoteUrl(null)` returns null, so they get no recovery link and the
+> shop keeps no record. It degrades gracefully into losing the commercial
+> record, which is the worst shape a failure can take here.
+
 Card-Pricer ran on Render free tier in V1, which sleeps after 15 minutes
 of inactivity; UptimeRobot was used to ping `/api/health` every 5 minutes
 to keep the dyno warm. **V2 is on Render Starter (Q2) — always-on — so the
@@ -117,18 +145,37 @@ worthwhile for:
 
 - Independent verification that Render's own health check isn't lying.
 - Alerting via SMS / email when Render is itself broken.
+- Catching exactly the failure above: a process that is up, serving, and
+  returning 200 while every database write fails.
 - SLO reporting from a third-party perspective.
 
 ### 3.1 Recommended UptimeRobot setup
 
 | Field | Value |
 |---|---|
-| Monitor type | HTTPS |
+| Monitor type | **Keyword** — not HTTP(s). An HTTP(s) monitor checks the status code, which is always 200 here. |
 | URL | `https://card-pricer-60qq.onrender.com/api/health` |
+| Keyword | `"status":"ok"` — exactly this, including the quotes and no space after the colon |
+| Alert when | **keyword NOT found** |
 | Interval | 5 minutes |
-| Keyword monitoring | `"status":"ok"` (so a 200 with corrupted JSON still alerts) |
 | Alert contacts | operator email + SMS |
 | Alert when down for | 2 consecutive checks (10 minutes) |
+
+Setting it to a plain HTTP(s) monitor is the one configuration mistake that
+reproduces the August incident exactly: green for 8.4 days while every write
+failed. If the service being used has no keyword option, use one that does.
+
+A second monitor worth adding, since it costs nothing on the same free tier:
+
+| Field | Value |
+|---|---|
+| Monitor type | Keyword |
+| URL | `https://card-pricer-60qq.onrender.com/api/version` |
+| Keyword | the current deployed `git_sha` |
+| Alert when | keyword NOT found |
+
+That answers "is the build I think is live actually live?" without asking
+anyone to remember to check. It also catches a rollback nobody announced.
 
 ### 3.2 Alternatives
 
