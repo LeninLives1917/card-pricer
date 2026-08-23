@@ -32,8 +32,18 @@ import {
 } from '../confidence.js';
 import { regMarkMatchesEra } from '../corrections.js';
 import { resolveSetCode } from '../set-aliases.js';
+import { normaliseCardNumber, sameCardNumber } from '../card-number.js';
+import { countPriceMatch } from '../../infra/observability/price-match-counters.js';
 
 const NAME = 'pokemontcg.io';
+
+/** Counter key. Deliberately not NAME — /api/health reads this as a source label. */
+const SOURCE = 'pokemontcg';
+
+// Was 5. The gate rejects a page that does not contain the requested number,
+// so a short page turns a correct card into no price at all. Widening the
+// page is the cheap half of the coverage the gate costs.
+const SEARCH_PAGE_SIZE = 20;
 
 // =============================================================================
 // Suffix helpers (V1 server.js:3164-3174 + 3138-3162)
@@ -573,31 +583,55 @@ export async function fetchPokemonImageByCdnLookup(setId, cardNumber) {
 export async function pricePokemonCard(card) {
   const prices = { cardmarket: null, ebay: null, source: 'pokemontcg' };
 
+  // The card number must agree before anything here sets a price. Until this
+  // gate landed, `bestMatch` was seeded to search hit #1 and returned whatever
+  // it was: with a name-only query there was no number to check at all, and
+  // even with one the comparison was `c.number === targetNum`, which answers
+  // false for "056" against "56". Both routes ended at price.js:255-256 ->
+  // pricing.cardmarket.price -> price.js:374 bestPrice, the first rung after
+  // graded. Same defect as the EUR 561.50 TCGGO incident, in the adapter
+  // nobody had audited, and with no counter it could not be seen.
+  const reqNum = normaliseCardNumber(card.card_number);
+  if (!reqNum) {
+    countPriceMatch(SOURCE, 'rejected_no_number_read');
+    console.log(`[PKM-PRICE] REJECTED: no card number for "${card.name}" — ` +
+      'cannot confirm which printing to price');
+    return prices;
+  }
+
   try {
-    let query;
-    if (card.set_code && card.card_number) {
-      const num = card.card_number.replace(/\/.*/, '');
-      query = `number:${num}`;
-      if (card.set_code) {
-        query += ` set.id:${card.set_code.toLowerCase()}`;
-      }
-    } else {
-      query = `name:"${card.name}"`;
-    }
+    // Use the same resolver the verify path uses at :278. The price path was
+    // lowercasing the raw set_code, so a printed code ("PAF") became a set id
+    // that does not exist and the search quietly returned nothing.
+    const resolved = card.set_code ? resolveSetCode(card.set_code) : null;
+    let query = `number:${reqNum}`;
+    if (resolved?.setId) query += ` set.id:${resolved.setId}`;
+    else if (card.name) query = `name:"${card.name}" number:${reqNum}`;
 
     const resp = await axios.get(`https://api.pokemontcg.io/v2/cards`, {
-      params: { q: query, pageSize: 5 },
+      params: { q: query, pageSize: SEARCH_PAGE_SIZE },
       timeout: 10000,
     });
 
-    if (resp.data.data && resp.data.data.length > 0) {
-      let bestMatch = resp.data.data[0];
-      if (card.card_number) {
-        const targetNum = card.card_number.replace(/\/.*/, '');
-        const exact = resp.data.data.find(c => c.number === targetNum);
-        if (exact) bestMatch = exact;
-      }
+    const data = resp.data?.data;
+    if (!data?.length) {
+      countPriceMatch(SOURCE, 'no_candidates', { requested: reqNum });
+      return prices;
+    }
 
+    const bestMatch = data.find((c) => sameCardNumber(c.number, reqNum));
+    if (!bestMatch) {
+      countPriceMatch(SOURCE, 'rejected_no_number_match', {
+        requested: reqNum,
+        candidates: data.length,
+      });
+      console.log(`[PKM-PRICE] REJECTED: none of ${data.length} candidate(s) is ` +
+        `#${reqNum} for "${card.name}" — not pricing off the first search hit`);
+      return prices;
+    }
+
+    countPriceMatch(SOURCE, 'matched');
+    {
       const d = bestMatch;
 
       if (d.tcgplayer?.prices) {
@@ -642,6 +676,9 @@ export async function pricePokemonCard(card) {
         number: d.number,
         image: d.images?.large || d.images?.small,
         rarity: d.rarity,
+        // What we asked for, beside what we priced, so a disagreement shows
+        // up in the response and not only in a log line nobody reads.
+        requested_number: reqNum,
       };
     }
   } catch (err) {
