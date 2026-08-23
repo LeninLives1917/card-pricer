@@ -79,7 +79,7 @@ const normName = (s) => String(s ?? '').trim().toLowerCase().replace(/[^a-z0-9]/
  * @returns {{ id: string|null, confidence: 'high'|'medium'|'low',
  *             reason: string, candidates: string[], contradiction: boolean }}
  */
-export function resolveIdentity(read, cardDb) {
+export function resolveIdentity(read, cardDb, opts = {}) {
   const name = normName(read?.name);
   const number = normNumber(read?.card_number);
   const printed = printedTotalOf(read?.card_number);
@@ -153,6 +153,28 @@ export function resolveIdentity(read, cardDb) {
     // drop the confidence so the accept gate can treat it as review-worthy.
     const total = byId.get(matches[0])?.printedTotal;
     const totalDisagrees = printed != null && total != null && total !== printed;
+
+    // STRICT MODE — for input a HUMAN typed rather than a model read.
+    //
+    // The default above is right for photographs: a vision model misreads a
+    // denominator often enough that discarding an otherwise-unique match on
+    // that basis would cost more than it saves. A person typing "61/64" is
+    // different evidence. They copied both numbers off the card, and a set
+    // whose size is 146 is not the set they are holding.
+    //
+    // Measured cost of NOT having this: on a 20-card sample, "rhy 61/64",
+    // "mag 39/62", "gal 174/185" and "cha 33/191" each came back as a
+    // question with two candidates, where exactly one matched the typed
+    // total and the other contradicted it. Four unnecessary questions in
+    // twenty, all of which the denominator already answered.
+    //
+    // Note the asymmetry this removes: matches.length > 1 has ALWAYS
+    // abstained on a total that excludes every candidate (:180 below). Only
+    // the unique-match branch answered anyway. That inconsistency is the bug.
+    if (totalDisagrees && opts.strictPrintedTotal) {
+      return none('printed_total_excludes_all', matches, true);
+    }
+
     const out = mk(matches[0], totalDisagrees ? 'medium' : 'high',
       totalDisagrees ? 'unique_name_number_total_mismatch' : 'unique_name_number', matches);
     if (totalDisagrees) out.contradiction = true;

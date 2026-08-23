@@ -100,7 +100,7 @@ describe('the raw-line path', () => {
   });
 
   test('the "ex" trap resolves to the incident card', async () => {
-    const r = await call({ game: 'pokemon', text: 'Charizard ex 056/197' });
+    const r = await call({ game: 'pokemon', text: 'Charizard ex SVP 056' });
     assert.equal(r.body.cards[0].name, 'Charizard ex');
     assert.match(r.body.cards[0].set_name, /Black Star Promos/);
   });
@@ -111,7 +111,7 @@ describe('the raw-line path', () => {
   });
 
   test('quantity, condition and finish reach the caller', async () => {
-    const r = await call({ game: 'pokemon', text: '3x Charizard ex 056/197 nm reverse' });
+    const r = await call({ game: 'pokemon', text: '3x Charizard ex SVP 056 nm reverse' });
     const i = r.body.resolution.interpretation;
     assert.equal(i.qty, 3);
     assert.equal(i.condition, 'NM');

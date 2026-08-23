@@ -125,7 +125,10 @@ export function resolveTypedName(index, typed, opts = {}) {
   const n = normName(typed);
   if (!n) return { names: [], how: 'none', ambiguous: false };
 
-  if (index.byNorm.has(n)) {
+  // forcePrefix lets a caller re-ask AFTER an exact hit led nowhere. See the
+  // "Eri" case in text-entry/resolve-line.js: a three-letter prefix that is
+  // also a whole card name must not be worse off than one that is not.
+  if (!opts.forcePrefix && index.byNorm.has(n)) {
     return { names: [n], how: 'exact', ambiguous: false };
   }
 

@@ -31,7 +31,7 @@
 // Returning one of them would be the first-hit-wins defect this project has
 // spent its history removing. Candidates go back; a human picks.
 
-import { resolveIdentity } from '../set-resolve.js';
+import { resolveIdentity, printedTotalOf, loadSets } from '../set-resolve.js';
 import { resolveTypedName, normName } from '../name-index.js';
 import { resolveSetCode } from '../set-aliases.js';
 
@@ -81,6 +81,13 @@ function realKeyFor(id, nameNumberIndex, normalisedName, num) {
   return bucket.find((k) => k.slice(0, k.lastIndexOf('-')).toLowerCase() === wantSet) ?? id;
 }
 
+/** printedTotal for a set id, from the same reference file set-resolve.js uses. */
+let _totals = null;
+function printedTotalFor(setId) {
+  if (!_totals) _totals = new Map(loadSets().map((x) => [x.id, x.printedTotal]));
+  return _totals.get(setId) ?? null;
+}
+
 const cleanNum = (n) => String(n ?? '').trim().replace(/\/.*$/, '').replace(/^0+(?=.)/, '').toLowerCase();
 
 /**
@@ -122,6 +129,29 @@ export function resolveLine(line, { cardDb, nameIndex, nameNumberIndex }) {
     const id = `${setId}-${num}`;
     const has = cardDb instanceof Map ? cardDb.has(id) : Object.prototype.hasOwnProperty.call(cardDb || {}, id);
     if (has) {
+      // THE DENOMINATOR REFUTES THE SET CODE, exactly as it refutes a model's
+      // set-code guess in set-resolve.js §18.
+      //
+      // This path is a bare key lookup and used to skip that check entirely,
+      // which made it the most dangerous rung in the whole resolver: it
+      // carries the highest evidence rank (set id + number is unique BY
+      // CONSTRUCTION) so it outranks every name reading, and it was the one
+      // rung not checking anything.
+      //
+      // Measured: "gri 75/127" returned Mudbray from Guardians Rising. GRI is
+      // a real alias for sm2, sm2-75 is a real card — and Guardians Rising
+      // has 145 cards, not 127. The line said 127, which is Platinum, where
+      // 75 is Grimer. The correct reading was right there and was outranked.
+      // "por 104/147" did the same thing: POR aliases to Perfect Order (88
+      // cards) and returned Mega Zygarde ex instead of Porygon2.
+      //
+      // A three-letter prefix and a three-letter set code look identical. The
+      // typed total is what tells them apart.
+      const printed = printedTotalOf(line?.total ? `${num}/${line.total}` : line?.card_number);
+      const actual = printedTotalFor(setId);
+      if (printed != null && actual != null && printed !== actual) {
+        return none('set_code_contradicts_printed_total');
+      }
       return {
         status: 'resolved', card_id: id, confidence: 'high', reason: 'set_code_and_number',
         contradiction: false, candidates: [hydrateEarly(id)], matched_name: null,
@@ -146,7 +176,27 @@ export function resolveLine(line, { cardDb, nameIndex, nameNumberIndex }) {
   }
 
   // Prune to names that actually have a card at this number.
-  const plausible = nameHit.names.filter((n) => nameNumberIndex.has(n + '|' + num));
+  let plausible = nameHit.names.filter((n) => nameNumberIndex.has(n + '|' + num));
+  let nameMatch = nameHit.how;
+
+  // AN EXACT HIT THAT GOES NOWHERE MUST STILL WIDEN.
+  //
+  // "exact does not widen" is about PREFERENCE, not exclusivity: somebody
+  // typing "Charizard" means Charizard rather than Charizard ex, so offering
+  // both would invent an ambiguity they did not have. But if the exact name
+  // has no card at the typed number, preferring it means preferring nothing.
+  //
+  // Measured: "eri 103/132" came back not_found. There is a card literally
+  // named "Eri", so "eri" matched EXACTLY, had no card at 103, and stopped —
+  // while "Erika's Kindness" sat at Gym Challenge 103 with a printed total of
+  // 132, which is exactly what was typed. A three-letter prefix that happens
+  // to also be a whole card name should not be worse off than one that isn't.
+  if (!plausible.length && nameHit.how === 'exact') {
+    const widened = resolveTypedName(nameIndex, line?.name, { forcePrefix: true });
+    const retry = widened.names.filter((n) => nameNumberIndex.has(n + '|' + num));
+    if (retry.length) { plausible = retry; nameMatch = widened.how; }
+  }
+
   if (!plausible.length) {
     return none('not_found', nameHit.how === 'exact'
       ? 'name_known_but_not_at_that_number'
@@ -164,7 +214,15 @@ export function resolveLine(line, { cardDb, nameIndex, nameNumberIndex }) {
   const abstained = [];
   for (const n of plausible) {
     const printed = (nameIndex.byNorm.get(n) || [n])[0];
-    const r = resolveIdentity({ name: printed, card_number: withTotal, set_code: line?.set_code }, cardDb);
+    // strictPrintedTotal: a HUMAN typed this denominator, so a set whose size
+    // disagrees with it is not the set they are holding. The photo path keeps
+    // the lenient default, where a model misreads totals often enough that
+    // discarding an otherwise-unique match would cost more than it saves.
+    const r = resolveIdentity(
+      { name: printed, card_number: withTotal, set_code: line?.set_code },
+      cardDb,
+      { strictPrintedTotal: true },
+    );
     if (r.id) resolved.push({ r: { ...r, id: realKeyFor(r.id, nameNumberIndex, n, num) }, n });
     else abstained.push(...(r.candidates || []).map((setId) => realKeyFor(setId + '-' + num, nameNumberIndex, n, num)));
   }
@@ -179,7 +237,7 @@ export function resolveLine(line, { cardDb, nameIndex, nameNumberIndex }) {
       contradiction: r.contradiction,
       candidates: [hydrate(r.id)],
       matched_name: n,
-      name_match: nameHit.how,
+      name_match: nameMatch,
     };
   }
 
@@ -193,7 +251,7 @@ export function resolveLine(line, { cardDb, nameIndex, nameNumberIndex }) {
       reason: 'prefix_matches_several_cards',
       candidates: resolved.map(({ r }) => hydrate(r.id)),
       matched_name: null,
-      name_match: nameHit.how,
+      name_match: nameMatch,
     };
   }
 
@@ -208,7 +266,7 @@ export function resolveLine(line, { cardDb, nameIndex, nameNumberIndex }) {
     reason: uniq.length ? 'resolver_could_not_choose' : 'no_identity',
     candidates: uniq.map(hydrate),
     matched_name: null,
-    name_match: nameHit.how,
+    name_match: nameMatch,
   };
 }
 

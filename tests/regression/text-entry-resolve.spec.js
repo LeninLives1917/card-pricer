@@ -172,14 +172,80 @@ describe('honest refusals', () => {
   });
 });
 
-describe('the resolver keeps its measured behaviour', () => {
-  test('a printed total that contradicts the set is surfaced, not hidden', () => {
-    // set-resolve.js downgrades confidence and sets contradiction rather than
-    // failing outright. That behaviour is measured (§18) and must survive.
+describe('a typed denominator is stronger evidence than a read one', () => {
+  test('the TYPED path abstains when the printed total excludes the card', () => {
+    // Superseded assertion, kept visible because the change was deliberate.
+    // This used to assert `resolved` at medium confidence with
+    // contradiction: true — set-resolve.js's lenient default, which is right
+    // for PHOTOGRAPHS because a vision model misreads denominators often
+    // enough that discarding an otherwise-unique match costs more than it
+    // saves.
+    //
+    // A person typing "100/100" is different evidence: they copied both
+    // numbers off the card in front of them. Measured cost of treating the
+    // two the same — on a 20-card sample, four lines came back as questions
+    // with two candidates each, where exactly one matched the typed total and
+    // the other contradicted it. Four unnecessary questions in twenty, all
+    // already answered by the denominator.
     const r = line('sud', '100', '100');
+    assert.equal(r.status, 'ambiguous');
+    assert.equal(r.card_id, null);
+  });
+
+  test('the PHOTO path keeps the lenient behaviour, unchanged', async () => {
+    // The measured 68.6% identity / 97.2% precision in §18 was obtained with
+    // the lenient rule. Nothing here may move it.
+    const { resolveIdentity } = await import('../../pricing/set-resolve.js');
+    const read = { name: 'Rhydon', card_number: '61/64' };
+    const lenient = resolveIdentity(read, deps.cardDb);
+    assert.equal(lenient.id, 'xy1-61', 'the photo path must still answer');
+    assert.equal(lenient.confidence, 'medium');
+    assert.equal(lenient.contradiction, true);
+
+    const strict = resolveIdentity(read, deps.cardDb, { strictPrintedTotal: true });
+    assert.equal(strict.id, null, 'and the typed path must abstain on the same input');
+    assert.equal(strict.reason, 'printed_total_excludes_all');
+  });
+
+  test('THE MEASURED FIX: four sampled lines that used to ask now resolve', () => {
+    // Each had exactly one candidate matching the typed total and one
+    // contradicting it. Real cards, read out of the catalogue rather than
+    // remembered.
+    for (const [text, expected] of [
+      ['rhy 61/64', 'Rhyhorn'],
+      ['mag 39/62', 'Magmar'],
+      ['gal 174/185', "Galarian Sirfetch'd V"],
+      ['cha 33/191', 'Charcadet'],
+    ]) {
+      const r = resolveTypedLine(text, deps);
+      assert.equal(r.status, 'resolved', `${text}: ${r.reason}`);
+      assert.equal(r.candidates[0].name, expected, text);
+    }
+  });
+
+  test('THE SET-CODE HOLE: a code whose set size contradicts the total is refused', () => {
+    // "gri 75/127" returned Mudbray from Guardians Rising. GRI is a real
+    // alias for sm2 and sm2-75 is a real card — but Guardians Rising has 145
+    // cards, not 127. 127 is Platinum, where 75 is Grimer.
+    //
+    // That rung carried the HIGHEST evidence rank, because set id + number is
+    // unique by construction, and it was the one rung checking nothing.
+    for (const [text, expected] of [['gri 75/127', 'Grimer'], ['por 104/147', 'Porygon2']]) {
+      const r = resolveTypedLine(text, deps);
+      assert.equal(r.status, 'resolved', `${text}: ${r.reason}`);
+      assert.equal(r.candidates[0].name, expected, text);
+    }
+  });
+
+  test('an exact name with no card at that number still widens to prefix', () => {
+    // There is a card literally named "Eri", so "eri 103/132" matched
+    // EXACTLY, found no card at 103, and stopped — while Erika's Kindness sat
+    // at Gym Challenge 103 with a printed total of 132. "Exact does not
+    // widen" is about preference, not exclusivity.
+    const r = resolveTypedLine('eri 103/132', deps);
     assert.equal(r.status, 'resolved');
-    assert.ok(['high', 'medium'].includes(r.confidence));
-    if (r.reason.includes('mismatch')) assert.equal(r.contradiction, true);
+    assert.equal(r.candidates[0].name, "Erika's Kindness");
+    assert.equal(r.name_match, 'prefix');
   });
 });
 
@@ -198,8 +264,14 @@ describe('resolveTypedLine — evidence decides, not order', () => {
     assert.equal(r.status, 'resolved');
     assert.equal(r.card_id, 'me1-172');
     assert.equal(r.candidates[0].name, 'Mystery Garden');
-    assert.ok(r.outranked.some((o) => o.includes('me2pt5-172')),
-      `the name reading should have been outranked, got ${JSON.stringify(r.outranked)}`);
+    // The MECHANISM changed after strictPrintedTotal landed, and the change
+    // is an improvement worth naming. This used to assert the name reading
+    // was OUTRANKED — resolved, then beaten on evidence. Now the printed
+    // total eliminates it before it ever resolves: me2pt5 has 295 cards, the
+    // line said 132. Refuted beats outranked, because it needs no ranking
+    // rule to be trusted.
+    assert.equal(r.reason, 'set_code_and_number');
+    assert.deepEqual(r.outranked ?? [], [], 'the wrong reading should now be refuted by the total, not merely outranked');
   });
 
   test('a name-prefix reading still wins when no set code is plausible', () => {
@@ -219,7 +291,7 @@ describe('resolveTypedLine — evidence decides, not order', () => {
 
   test('the "ex" trap resolves to the right card end to end', () => {
     // The €561.50 incident card. Old parser: name "Charizard", set "EX".
-    const r = resolveTypedLine('Charizard ex 056/197', deps);
+    const r = resolveTypedLine('Charizard ex SVP 056', deps);
     assert.equal(r.status, 'resolved');
     assert.equal(r.card_id, 'svp-56');
     assert.equal(r.candidates[0].name, 'Charizard ex');
@@ -233,7 +305,7 @@ describe('resolveTypedLine — evidence decides, not order', () => {
   });
 
   test('quantity, condition and finish survive to the interpretation', () => {
-    const r = resolveTypedLine('3x Charizard ex 056/197 nm reverse', deps);
+    const r = resolveTypedLine('3x Charizard ex SVP 056 nm reverse', deps);
     assert.equal(r.card_id, 'svp-56');
     assert.equal(r.interpretation.qty, 3);
     assert.equal(r.interpretation.condition, 'NM');
