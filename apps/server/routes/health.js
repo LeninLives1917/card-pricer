@@ -21,6 +21,7 @@ import { getSnapshotCounts } from '../../../infra/observability/price-snapshot-c
 import { getPriceMatchCounts } from '../../../infra/observability/price-match-counters.js';
 import { getTextEntryCounts } from '../../../infra/observability/text-entry-counters.js';
 import { reconcileEnv } from '../../../infra/observability/env-reconcile.js';
+import { setResolutionState } from '../../../pricing/set-resolve.js';
 import { isEnabled as rectifyEnabled } from '../../../pricing/card-rectify.js';
 import { getFastPathMode } from '../../../pricing/fast-path-mode.js';
 
@@ -155,6 +156,7 @@ export async function buildHealthPayload(deps = {}) {
     price_match: priceMatchCheck(readPriceMatch()),
     text_entry: textEntryCheck(readTextEntry()),
     env_drift: reconcileEnv({ blueprint: readBlueprint(), env }),
+    set_resolution: setResolutionCheck((deps.setResolution ?? setResolutionState)()),
     // Reported because it was previously unverifiable from outside the box:
     // the only way to know whether rectification was on in production was to
     // trust that someone had set it. Informational, not a failure — health
@@ -346,6 +348,30 @@ function textEntryCheck(c) {
       'carried no set code at all, which is not counted as a failure' +
       (perSource ? ` [${perSource}]` : ''),
   };
+}
+
+/**
+ * The reference file behind printed-total disambiguation.
+ *
+ * It lived in data/ and render.yaml mounts the persistent disk over exactly
+ * that directory, so the git-tracked copy was shadowed by a disk that never
+ * had one. resolveIdentity degraded to name+number and said so in a single
+ * console.warn at boot. That is how it survived: the degraded path worked and
+ * returned plausible answers.
+ *
+ * ok:false here IS worth degrading the service for — unlike env_drift, this
+ * one silently costs about 20 points of identity accuracy (V3_BENCHMARK §18).
+ */
+function setResolutionCheck(s) {
+  if (!s.ok) {
+    return { ...s, ok: false,
+      detail: 'pokemon-sets.json NOT LOADED — printed-total disambiguation is OFF. '
+        + 'Set resolution falls back to name+number, which measured 49.0% identity '
+        + 'against 68.6% with it (V3_BENCHMARK §18).' };
+  }
+  return { ...s, ok: true,
+    detail: `${s.sets_loaded} sets loaded from ${s.loaded_from}, `
+      + `${s.with_printed_total} with a printed total` };
 }
 
 function priceHistoryCheck(c) {

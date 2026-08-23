@@ -32,29 +32,90 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
-const SETS_FILE = join(REPO_ROOT, 'data', 'pokemon-sets.json');
+
+/**
+ * Where the set list lives, in priority order.
+ *
+ * IT USED TO LIVE IN data/, AND THAT MADE IT INVISIBLE IN PRODUCTION.
+ *
+ * render.yaml mounts the 1 GB persistent disk at
+ * /opt/render/project/src/data — exactly the directory this file was read
+ * from. A mount replaces the directory, so the git-tracked
+ * data/pokemon-sets.json was shadowed by a disk that never had a copy. The
+ * file was in the repo, present in every checkout, and unreadable by the
+ * running process.
+ *
+ * The cost was not small. printedTotal disambiguation is the entire mechanism
+ * behind docs/V3_BENCHMARK.md §18 — identity 49.0% -> 68.6%, precision 61% ->
+ * 97.2% — and without this file resolveIdentity degrades to name+number only.
+ * Measured against production on 24 Aug 2026: "cha 4/102" returned SIX
+ * candidates where it resolves to Base Set Charizard locally, and "exe 1/191"
+ * and "exe 1/131" returned identical results, which is only possible if the
+ * denominator is being ignored entirely.
+ *
+ * So the reference file now lives beside the code that reads it, in a
+ * directory nothing mounts over. data/ is kept as a fallback so an existing
+ * disk copy still works, and so this change cannot break a deploy that has
+ * one.
+ */
+const SETS_CANDIDATES = [
+  join(REPO_ROOT, 'pricing', 'reference', 'pokemon-sets.json'),
+  join(REPO_ROOT, 'data', 'pokemon-sets.json'),
+];
 
 let _sets = null;
 let _warned = false;
 let _emptyWarned = false;
+let _loadedFrom = null;
 
 /** [{id, name, ptcgoCode, printedTotal, total}] — refresh via scripts/fetch-sets.js */
 export function loadSets() {
   if (_sets) return _sets;
-  try {
-    _sets = JSON.parse(fs.readFileSync(SETS_FILE, 'utf8'));
-  } catch {
-    // Degrade to name+number resolution rather than throwing — but say so, once.
-    // A missing reference file that silently weakens matching is the exact
-    // shape of defect this project keeps re-learning.
-    if (!_warned) {
-      console.warn('[SET-RESOLVE] data/pokemon-sets.json missing — printed-total ' +
-        'disambiguation is OFF, falling back to name+number only');
-      _warned = true;
-    }
-    _sets = [];
+  for (const path of SETS_CANDIDATES) {
+    try {
+      const parsed = JSON.parse(fs.readFileSync(path, 'utf8'));
+      if (Array.isArray(parsed) && parsed.length) {
+        _sets = parsed;
+        _loadedFrom = path;
+        return _sets;
+      }
+    } catch { /* try the next candidate */ }
   }
+  // Degrade to name+number resolution rather than throwing — but say so, once.
+  // A missing reference file that silently weakens matching is the exact
+  // shape of defect this project keeps re-learning, and this one did it for
+  // months behind a single console.warn nobody read. It is surfaced in
+  // /api/health now; see setResolutionState().
+  if (!_warned) {
+    console.warn('[SET-RESOLVE] pokemon-sets.json NOT FOUND in any of: '
+      + SETS_CANDIDATES.join(', ')
+      + ' — printed-total disambiguation is OFF and set resolution falls back '
+      + 'to name+number only. This silently costs ~20 points of identity '
+      + 'accuracy (V3_BENCHMARK §18).');
+    _warned = true;
+  }
+  _sets = [];
   return _sets;
+}
+
+/**
+ * For /api/health. A one-shot console.warn is how this hid for months: the
+ * degraded path worked, returned plausible answers, and counted nothing.
+ */
+export function setResolutionState() {
+  const sets = loadSets();
+  return {
+    ok: sets.length > 0,
+    sets_loaded: sets.length,
+    loaded_from: _loadedFrom ? _loadedFrom.slice(_loadedFrom.lastIndexOf('pricing') >= 0
+      ? _loadedFrom.lastIndexOf('pricing') : _loadedFrom.lastIndexOf('data')) : null,
+    with_printed_total: sets.filter((s) => s?.printedTotal != null).length,
+  };
+}
+
+/** Test seam. */
+export function resetSetsCache() {
+  _sets = null; _warned = false; _emptyWarned = false; _loadedFrom = null;
 }
 
 export const normNumber = (n) => String(n ?? '')

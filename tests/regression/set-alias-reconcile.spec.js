@@ -1,5 +1,5 @@
 // Reconciles pricing/set-aliases.js against the two things it claims to map
-// between: the set list (data/pokemon-sets.json) and the catalogue
+// between: the set list (pricing/reference/pokemon-sets.json) and the catalogue
 // (data/card-db.json).
 //
 // WHY THIS EXISTS
@@ -33,13 +33,15 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import { execSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
 import { PKM_SET_ALIASES, resolveSetCode } from '../../pricing/set-aliases.js';
+import { loadSets, setResolutionState } from '../../pricing/set-resolve.js';
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
-const SETS = JSON.parse(fs.readFileSync(join(REPO, 'data', 'pokemon-sets.json'), 'utf8'));
+const SETS = JSON.parse(fs.readFileSync(join(REPO, 'pricing', 'reference', 'pokemon-sets.json'), 'utf8'));
 const BY_ID = new Map(SETS.map((s) => [s.id, s]));
 
 /**
@@ -171,5 +173,56 @@ describe('set alias reconciliation', () => {
     // this number is a target.
     console.log(`[ALIAS] ${reachable}/${held.size} set ids reachable (${(ratio * 100).toFixed(1)}%)`);
     assert.ok(ratio >= 0.95, `only ${(ratio * 100).toFixed(1)}% of set ids are reachable`);
+  });
+});
+
+describe('the set list must not live where a disk mounts over it', () => {
+  test('THE INCIDENT: pokemon-sets.json is NOT under data/', () => {
+    // render.yaml mounts the 1 GB persistent disk at
+    // /opt/render/project/src/data. A mount replaces the directory, so a
+    // git-tracked file under data/ is shadowed by a disk that never had a
+    // copy. The file was in every checkout and unreadable by the running
+    // process.
+    //
+    // What it cost: printedTotal disambiguation is the entire mechanism
+    // behind V3_BENCHMARK §18 — identity 49.0% -> 68.6%, precision 61% ->
+    // 97.2%. Without the file, resolveIdentity silently degrades to
+    // name+number. Measured against production on 24 Aug 2026: "cha 4/102"
+    // returned SIX candidates where it resolves to Base Set Charizard
+    // locally, and "exe 1/191" and "exe 1/131" returned identical results,
+    // which is only possible if the denominator is ignored entirely.
+    assert.equal(
+      fs.existsSync(join(REPO, 'data', 'pokemon-sets.json')), false,
+      'pokemon-sets.json is back under data/, where the Render disk mount hides it',
+    );
+    assert.ok(
+      fs.existsSync(join(REPO, 'pricing', 'reference', 'pokemon-sets.json')),
+      'the set list must live beside the code that reads it, not on a mount point',
+    );
+  });
+
+  test('it is git-tracked, so a fresh deploy has it', () => {
+    // Untracked would put us back where we started by a different route.
+    const tracked = execSync('git ls-files pricing/reference/pokemon-sets.json',
+      { cwd: REPO, encoding: 'utf8' }).trim();
+    assert.equal(tracked, 'pricing/reference/pokemon-sets.json');
+  });
+
+  test('loadSets actually returns the sets, with printed totals', () => {
+    // The property that matters is not "a file exists" but "the numbers the
+    // resolver needs are in memory".
+    const sets = loadSets();
+    assert.ok(sets.length >= 170, `expected the full set list, got ${sets.length}`);
+    const withTotal = sets.filter((s) => s.printedTotal != null).length;
+    assert.equal(withTotal, sets.length, 'every set must carry a printedTotal');
+  });
+
+  test('and the health check reports it, rather than a one-shot console.warn', () => {
+    // This hid for months behind a single warning at boot. A degraded path
+    // that works and returns plausible answers is invisible by construction.
+    const s = setResolutionState();
+    assert.equal(s.ok, true);
+    assert.ok(s.sets_loaded >= 170);
+    assert.ok(s.loaded_from, 'the health payload must say WHERE it loaded from');
   });
 });

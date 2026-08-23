@@ -18,7 +18,7 @@
 // nastier — a set that looks present is not one anybody thinks to check.
 //
 // It compares against LIVE upstream (api.pokemontcg.io/v2/sets), not against
-// data/pokemon-sets.json. That distinction is the whole value of the script:
+// pricing/reference/pokemon-sets.json. That distinction is the whole value of the script:
 // pokemon-sets.json was generated alongside the catalogue, so checking one
 // against the other reports zero gaps by construction — which is exactly how
 // both crawlers came to be structurally unable to see a newly released set.
@@ -73,11 +73,11 @@ const db = JSON.parse(fs.readFileSync(join(REPO, 'data', 'card-db.json'), 'utf8'
 
 let sets;
 if (OFFLINE) {
-  console.error('WARNING: --offline compares the catalogue against data/pokemon-sets.json,');
+  console.error('WARNING: --offline compares the catalogue against pricing/reference/pokemon-sets.json,');
   console.error('which was generated FROM the same crawl. It cannot see a set that neither');
   console.error('knows about, which is the failure mode this script exists to catch.');
   console.error('');
-  sets = JSON.parse(fs.readFileSync(join(REPO, 'data', 'pokemon-sets.json'), 'utf8'));
+  sets = JSON.parse(fs.readFileSync(join(REPO, 'pricing', 'reference', 'pokemon-sets.json'), 'utf8'));
 } else {
   try {
     sets = await fetchUpstreamSets();

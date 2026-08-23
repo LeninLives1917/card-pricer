@@ -1,0 +1,17 @@
+{
+  "built_at": "2026-08-06T15:29:25.902Z",
+  "tool": "build-phash-db",
+  "card_count": 20546,
+  "set_count": 175,
+  "upstream_total": 20482,
+  "upstream_set_count": 174,
+  "coverage": 1.0031,
+  "missing_sets": [],
+  "short_sets": [
+    "swshp:304/307",
+    "svp:200/215"
+  ],
+  "hashed_this_run": 1959,
+  "skipped_this_run": 140,
+  "ok": true
+}

@@ -1,0 +1,42 @@
+﻿WATCHLIST_ROWS: 1326
+MATCHED: 1319
+LIST=condition-48 N=42 MEDIAN=0 PCTUP=10% BEST=Celebi [Crystal Type | Empathic Healing | Mind Bend]|43.6% WORST=Kyogre Gold Star [Critical Collection | Sheer Cold]|-73%
+LIST=growth-50 N=50 MEDIAN=0 PCTUP=4% BEST=Yokohama's Pikachu [Renewal Open! | Triple Smash]|19.8% WORST=Charmander [Tail Rap | Flare]|-59.0%
+LIST=next-wave-A N=9 MEDIAN=0 PCTUP=44% BEST=Charizard [Battle Sense | Royal Blaze]|67.5% WORST=Charizard [G] Lv.65 [Flame Jet | Heat Blast]|-45.5%
+LIST=next-wave-B N=25 MEDIAN=0 PCTUP=0% BEST=Charizard VMAX [Claw Slash | G-Max Wildfire]|8.9% WORST=Ancient Mew [Psyche]|-42.4%
+LIST=screen-cond-spread N=300 MEDIAN=0 PCTUP=7% BEST=Blastoise & Piplup GX [Splash Maker | Bubble Launcher GX]|88.4% WORST=Kyogre EX [Smash Turn | Dual Splash]|-90.6%
+LIST=screen-flip N=298 MEDIAN=0 PCTUP=15% BEST=Primal Kyogre EX [Tidal Storm]|149.3% WORST=Charizard [Energy Burn | Fire Spin]|-73.3%
+LIST=screen-sealed N=299 MEDIAN=0 PCTUP=8% BEST=Eevee Heroes Booster Box|60.7% WORST=Emerging Powers Booster|-74.5%
+LIST=screen-shelf N=296 MEDIAN=0 PCTUP=15% BEST=Steven's Resolve|155.6% WORST=Reuniclus [Damage Swap | Psywave]|-54.8%
+---TOP15---
+Steven's Resolve [screen-shelf] 45 -> 115 (155.6%)
+Primal Kyogre EX [Tidal Storm] [screen-flip] 95.25 -> 237.5 (149.3%)
+Mega Sableye & Tyranitar GX [Greedy Crush | Gigafall GX] [screen-flip] 122.93 -> 270.69 (120.2%)
+Blastoise & Piplup GX [Splash Maker | Bubble Launcher GX] [screen-cond-spread] 200.1 -> 376.97 (88.4%)
+Mew V [Energy Mix | Psychic Leap] [screen-cond-spread] 160 -> 299.99 (87.5%)
+Pikachu [Nuzzle | Volt Tackle] [screen-flip] 53.27 -> 92.83 (74.3%)
+Umbreon [Dark Gaze | Sharp Claws] [screen-flip] 1040 -> 1810.63 (74.1%)
+Rocket's Moltres ex [Dark Lift | Fire Dance | Combustion] [screen-flip] 187.5 -> 325 (73.3%)
+Rocket's Moltres ex [Dark Lift | Fire Dance | Combustion] [screen-cond-spread] 187.5 -> 325 (73.3%)
+Latias ex [Hypnoblast | Mist Ball] [screen-cond-spread] 130.56 -> 224 (71.6%)
+Charizard [Battle Sense | Royal Blaze] [next-wave-A] 103.27 -> 172.97 (67.5%)
+Pikachu [Growl | Thundershock] [screen-shelf] 57.99 -> 94.99 (63.8%)
+Eevee Heroes Booster Box [screen-sealed] 226.08 -> 363.22 (60.7%)
+Rocket's Hitmonchan [Crosscounter | Magnum Punch] [screen-flip] 87.75 -> 135 (53.8%)
+Kingdra [Crystal Type | Aquabomb | Dual Burn] [screen-flip] 171.65 -> 262.21 (52.8%)
+---BOTTOM15---
+Kyogre EX [Smash Turn | Dual Splash] [screen-cond-spread] 320 -> 30 (-90.6%)
+Gyarados [Dragon Rage | Bubblebeam] [screen-cond-spread] 239.22 -> 26.99 (-88.7%)
+Volcanion EX [Steam Up | Volcanic Heat] [screen-cond-spread] 350 -> 48.98 (-86.0%)
+Pikachu [Growl | Thundershock] [screen-cond-spread] 974.95 -> 139.99 (-85.6%)
+Champions Festival [Duckboat] [screen-cond-spread] 233.39 -> 41.67 (-82.1%)
+Magcargo [Streaming Mantle | Crushing Lava] [screen-cond-spread] 280 -> 64.99 (-76.8%)
+Emerging Powers Booster [screen-sealed] 142.5 -> 36.33 (-74.5%)
+Charizard [Energy Burn | Fire Spin] [screen-flip] 430 -> 115 (-73.3%)
+Charizard [Energy Burn | Fire Spin] [screen-cond-spread] 430 -> 115 (-73.3%)
+Kyogre Gold Star [Critical Collection | Sheer Cold] [screen-cond-spread] 3700 -> 1000 (-73%)
+Kyogre Gold Star [Critical Collection | Sheer Cold] [condition-48] 3700 -> 1000 (-73%)
+Poliwrath [Plunge | Water Punch] [screen-cond-spread] 185.5 -> 52.5 (-71.7%)
+Poliwrath [Plunge | Water Punch] [screen-flip] 185.5 -> 52.5 (-71.7%)
+Tyranitar ex [Shatter | Derail | Mix-Up | Losing Control] [condition-48] 754.55 -> 219.15 (-71.0%)
+Tyranitar ex [Shatter | Derail | Mix-Up | Losing Control] [screen-cond-spread] 754.55 -> 219.15 (-71.0%)
