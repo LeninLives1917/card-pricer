@@ -98,8 +98,12 @@ jobs:
           done
 
           echo '--- /api/health ---'
-          printf '%s\n' "$body" | head -c 4000
-          echo ''
+          # Bash substring rather than `| head -c`. Piping a large body into
+          # head makes head close the pipe first, and printf then reports
+          # "write error: Broken pipe" into the alert output. Cosmetic, but
+          # the failure email is the one thing somebody reads under pressure
+          # and it should not contain a spurious error of its own.
+          printf '%s\n' "${body:0:4000}"
 
           if ! printf '%s' "$body" | grep -q '"status":"ok"'; then
             echo ''
