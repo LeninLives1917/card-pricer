@@ -15,7 +15,7 @@
 
 import { postJson, uploadMultipart } from '../api-client.js';
 import { state, currentSession, saveAllSessions, getSetting } from '../state.js';
-import { parseTextEntryLines } from '../text-parse.js';
+import { parseTextEntryLines, isUnsupportedLang } from '../text-parse.js';
 import {
   initBulk, handleBulkFiles, removeBulkItem, clearBulkQueue,
   retryBulkFailed, startBulkProcess, bulkStatus,
@@ -193,11 +193,30 @@ async function startTextEntry() {
       continue;
     }
 
+    // The catalogue is English-only (174 sets from pokemontcg.io, zero
+    // Japanese/Korean/Chinese). A JP card shares neither set, numbering nor
+    // set size with its English counterpart — but for a commonly-reprinted
+    // Pokemon there is a measured 22.7% chance its (name, number) ALSO exists
+    // in English, and the lookup's last-resort query is set-agnostic. So
+    // roughly one in four would come back as a confident English card at
+    // English prices. Say so instead.
+    if (isUnsupportedLang(row.lang)) {
+      state.currentResults.push(makeErrorRow(row,
+        `${String(row.lang).toUpperCase()} cards aren't supported — the catalogue is English-only`));
+      continue;
+    }
+
     const payload = {
       game,
       set_code: row.set_code,
       card_number: row.card_number,
       name: row.name,
+      // Parsed since the first version of this panel and never sent. The
+      // denominator is the single strongest disambiguator available: name +
+      // number resolves 88.5% of the catalogue uniquely, name + number +
+      // printed total resolves 99.6%.
+      total: row.total,
+      lang: row.lang,
     };
     const r = await postJson('/api/identify-manual', payload);
     if (!r.ok || !r.body?.cards?.length) {

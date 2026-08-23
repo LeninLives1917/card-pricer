@@ -36,6 +36,11 @@
 const LANG_TOKENS = ['en','de','fr','es','it','pt','jp','ja','ko','zh','ru','nl'];
 const LANG_GROUP = LANG_TOKENS.join('|');
 
+// Language policy lives in pricing/languages.js so the server routes and
+// this module share one answer. Re-exported here because the parser is what
+// extracts the token, so this is where a caller looks for it.
+export { SUPPORTED_LANGS, isUnsupportedLang } from '../../../pricing/languages.js';
+
 // Set-code: 2-5 chars, must start with a letter (so "ex" qualifies but
 // "172" doesn't). Allow digits in the tail to support sets like "GG31"
 // edge cases, though the primary case is alpha (MEG, PAF, SCR, ...).

@@ -74,6 +74,7 @@ import { lookupViaJustTCG } from '../../../pricing/adapters/justtcg.js';
 import { detectBinderCards } from '../../../pricing/binder.js';
 import { detectBinderCardsCV } from '../../../pricing/binder-cv.js';
 import { countTextEntry } from '../../../infra/observability/text-entry-counters.js';
+import { isUnsupportedLang } from '../../../pricing/languages.js';
 import {
   CARD_DB,
   lookupLocalDb,
@@ -453,9 +454,34 @@ router.post('/api/identify-binder',
  *   - card_number REQUIRED; "/total" suffix stripped, leading zeros trimmed
  *   - name        optional name hint (helps disambiguate)
  */
-async function manualIdentifyCore({ game, set_code, card_number, name } = {}, source = 'vendor_text') {
+async function manualIdentifyCore({ game, set_code, card_number, name, lang } = {}, source = 'vendor_text') {
   if (!game) return { error: 'game is required', status: 400 };
   if (!card_number) return { error: 'card_number is required', status: 400 };
+
+  // The catalogue is English-only: 174 sets from pokemontcg.io, not one
+  // Japanese, Korean or Chinese set among them. Those are different cards —
+  // different sets, different numbering, different set sizes — but the
+  // last-resort query below is `name:"N" number:X`, which is set-agnostic, and
+  // :530 then takes hit #1. Measured: across the 40 most-reprinted Pokemon at
+  // numbers 1-100 (the Japanese numbering range), 22.7% of (name, number)
+  // pairs also exist in English. So roughly one in four would come back as a
+  // confident English card at English prices.
+  //
+  // Guarded here and not only in the browser: apps/quote reaches this same
+  // core through /api/v2/quote/identify-manual, and a client-side check
+  // protects exactly one of the two callers.
+  //
+  // European languages are NOT blocked — they are the same cards with the same
+  // set codes and collector numbers, so they resolve correctly. Their PRICES
+  // differ and no adapter accounts for that, which is a separate gap.
+  if (isUnsupportedLang(lang)) {
+    countTextEntry(source, 'rejected_unsupported_lang');
+    return {
+      error: `${String(lang).toUpperCase()} cards are not supported — the catalogue is English-only, `
+        + 'and matching one against it returns an English card at English prices roughly a quarter of the time.',
+      status: 422,
+    };
+  }
 
   const cleanNum = String(card_number).replace(/\/.*/, '').replace(/^0+/, '') || String(card_number);
   let card = null;

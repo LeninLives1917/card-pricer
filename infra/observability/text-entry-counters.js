@@ -61,6 +61,8 @@ const LOOKUP_OUTCOMES = [
   'not_found',
   /** Set is in POKEMONTCG_UNRELIABLE, so upstream was deliberately skipped. */
   'skipped_unreliable',
+  /** A non-English language was stated and the catalogue cannot answer for it. */
+  'rejected_unsupported_lang',
 ];
 
 /** Outcomes for resolving the typed set code, if one was typed at all. */
