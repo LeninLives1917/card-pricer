@@ -45,7 +45,19 @@ on:
     # :20 — which is exactly when GitHub's scheduler is most congested and
     # most likely to drop the run.
     - cron: '3,13,23,33,43,53 * * * *'
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      base_url:
+        description: >-
+          Target to probe. Defaults to production. Override it to prove the
+          ALARM still fires — a monitor only ever seen passing is half tested,
+          and the same discipline applies here as to a regression spec: verify
+          it goes red against the thing it is supposed to catch. Pointing this
+          at .../api/version returns valid JSON with no "status":"ok" in it,
+          which is exactly the shape of a degraded response, and the job must
+          fail.
+        required: false
+        default: https://card-pricer-60qq.onrender.com
 
 permissions:
   contents: read
@@ -55,7 +67,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  BASE_URL: https://card-pricer-60qq.onrender.com
+  BASE_URL: ${{ github.event.inputs.base_url || 'https://card-pricer-60qq.onrender.com' }}
 
 jobs:
   check:
