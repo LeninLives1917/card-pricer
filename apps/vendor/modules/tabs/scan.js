@@ -185,11 +185,15 @@ async function startTextEntry() {
     if (bar) bar.style.width = ((i + 1) / lines.length * 100) + '%';
     const row = lines[i];
 
-    // Bare-name lines (parser pattern 5) can't hit /api/identify-manual —
-    // it requires card_number. Surface as an error row rather than dropping
-    // silently, so the user knows that line couldn't be priced.
-    if (!row.card_number) {
-      state.currentResults.push(makeErrorRow(row, 'Need set + number'));
+    // The old cascade drops a lot of perfectly good lines to pattern 5 with no
+    // card_number — "charizard 4/102" and "cha 4/102" among them — and this
+    // guard then turned them into error rows before they were ever sent. The
+    // server now tokenises the raw line itself, so the only lines worth
+    // refusing here are the ones with no digits at all: without a collector
+    // number there is nothing to resolve against, and the catalogue is just
+    // 6.9% unique on a name alone.
+    if (!/\d/.test(row.raw || '')) {
+      state.currentResults.push(makeErrorRow(row, 'Need a card number'));
       continue;
     }
 
@@ -211,6 +215,12 @@ async function startTextEntry() {
       set_code: row.set_code,
       card_number: row.card_number,
       name: row.name,
+      // What the operator actually typed. The tokeniser runs SERVER-SIDE,
+      // next to the catalogue, because that is the only place the ambiguity
+      // can be settled: "cha 4/102" and "MEG 172/132" are the same shape and
+      // only the catalogue knows which token is a set code. The parsed fields
+      // above are still sent, and are used if the raw line resolves nothing.
+      text: row.raw,
       // Parsed since the first version of this panel and never sent. The
       // denominator is the single strongest disambiguator available: name +
       // number resolves 88.5% of the catalogue uniquely, name + number +
@@ -219,6 +229,23 @@ async function startTextEntry() {
       lang: row.lang,
     };
     const r = await postJson('/api/identify-manual', payload);
+
+    // AMBIGUOUS — more than one real card fits the line. HTTP 200 with an
+    // empty `cards` and the candidates beside it, so this branch is reached
+    // before the generic no-match one below and the row becomes a question
+    // rather than an error. Any caller that has NOT been updated still lands
+    // in the no-match branch and shows an error row: a question degrades to
+    // "couldn't price it", never to a wrong price.
+    if (r.ok && r.body?.resolution?.status === 'ambiguous' && r.body.resolution.candidates?.length) {
+      state.currentResults.push({
+        card: { name: row.name || row.raw, set_code: row.set_code || '', card_number: row.card_number || '' },
+        candidates: r.body.resolution.candidates,
+        _parsed_line: row.raw,
+        _payload: payload,
+      });
+      continue;
+    }
+
     if (!r.ok || !r.body?.cards?.length) {
       const msg = r.body?.error || (r.status ? `HTTP ${r.status}` : 'no match');
       state.currentResults.push(makeErrorRow(row, msg));
@@ -669,3 +696,54 @@ function escapeHtml(s) {
 function escapeAttr(s) {
   return String(s == null ? '' : s).replace(/"/g, '&quot;').replace(/</g, '&lt;');
 }
+
+// ============================================================
+// Ambiguity picker — the operator answers the question
+// ============================================================
+//
+// results.js renders an amber row with one chip per candidate and fires
+// cp:candidate-chosen when one is tapped. Re-running the lookup with the
+// chosen SET pinned turns the ambiguous line into an exact set-code + number
+// lookup, which is unique by construction — so the answer cannot be
+// ambiguous a second time.
+
+window.addEventListener('cp:candidate-chosen', async (ev) => {
+  const { resultIndex, candidate, rank, of } = ev.detail || {};
+  const entry = state.currentResults?.[resultIndex];
+  if (!entry || !candidate) return;
+
+  console.log(`[TEXT] operator picked candidate ${rank + 1} of ${of}: `
+    + `${candidate.name} (${candidate.set_name})`);
+
+  const payload = {
+    ...(entry._payload || {}),
+    // set_id + number is the catalogue key. Pinning it removes every degree
+    // of freedom the ambiguity came from.
+    set_code: candidate.set_id,
+    card_number: candidate.card_number,
+    name: candidate.name,
+  };
+
+  const r = await postJson('/api/identify-manual', payload);
+  const card = r.ok ? r.body?.cards?.[0] : null;
+  if (!card) {
+    state.currentResults[resultIndex] = makeErrorRow(
+      { raw: entry._parsed_line, name: candidate.name },
+      r.body?.error || 'lookup failed after picking',
+    );
+    window.dispatchEvent(new CustomEvent('cp:results-changed'));
+    return;
+  }
+
+  const priced = await postJson('/api/price', { card, buyPercentage: state.buyPercentage });
+  const result = priced.ok ? priced.body : { card, cardmarket: null, ebay: null, buy_price: null };
+  state.currentResults[resultIndex] = result;
+
+  const sess = currentSession();
+  if (sess) {
+    sess.log.unshift({ ...result, ts: Date.now() });
+    saveAllSessions();
+    window.dispatchEvent(new CustomEvent('cp:log-changed'));
+  }
+  window.dispatchEvent(new CustomEvent('cp:results-changed'));
+});

@@ -33,6 +33,7 @@
 
 import { resolveIdentity } from '../set-resolve.js';
 import { resolveTypedName, normName } from '../name-index.js';
+import { resolveSetCode } from '../set-aliases.js';
 
 /**
  * Index of (normalised name, collector number) -> set ids.
@@ -85,6 +86,30 @@ export function resolveLine(line, { cardDb, nameIndex, nameNumberIndex }) {
   });
 
   if (!num) return none('need_more', 'no_card_number');
+
+  const hydrateEarly = (id) => {
+    const v = (cardDb instanceof Map ? cardDb.get(id) : cardDb?.[id]) || {};
+    return { id, set_id: id.slice(0, id.lastIndexOf('-')), name: v.name ?? null,
+      set_name: v.setName ?? null, card_number: id.slice(id.lastIndexOf('-') + 1) };
+  };
+
+  // SET CODE + NUMBER, no name. The legacy shape the UI still asks for
+  // ("MEG 172", "PFL 94") and the catalogue's own key form. Measured 100%
+  // unique — the key IS set id plus number — so when it hits, it hits
+  // exactly, and there is nothing for the name machinery to add.
+  if (!normName(line?.name) && line?.set_code) {
+    const setId = resolveSetCode(String(line.set_code)).setId;
+    const id = `${setId}-${num}`;
+    const has = cardDb instanceof Map ? cardDb.has(id) : Object.prototype.hasOwnProperty.call(cardDb || {}, id);
+    if (has) {
+      return {
+        status: 'resolved', card_id: id, confidence: 'high', reason: 'set_code_and_number',
+        contradiction: false, candidates: [hydrateEarly(id)], matched_name: null,
+        name_match: 'none',
+      };
+    }
+    return none('not_found', 'set_code_and_number_not_in_catalogue');
+  }
 
   const nameHit = resolveTypedName(nameIndex, line?.name);
   if (nameHit.how === 'too_short') {
@@ -166,3 +191,105 @@ export function resolveLine(line, { cardDb, nameIndex, nameNumberIndex }) {
     name_match: nameHit.how,
   };
 }
+
+/**
+ * Resolve a RAW typed line by trying every reading the tokeniser produced.
+ *
+ * This is where "the parser does not decide" becomes true in practice.
+ * `cha 4/102` and `MEG 172/132` are the same shape, so the tokeniser emits
+ * both readings of each and this walks them in prior order until the
+ * catalogue accepts one. "cha" as a set code resolves to nothing; "cha" as a
+ * name prefix resolves to Charizard. The line never had the answer — the
+ * catalogue did.
+ *
+ * Ambiguity is preserved rather than resolved by ordering. If a reading comes
+ * back ambiguous it is remembered, but the remaining readings are still tried:
+ * a later one may resolve cleanly, and a clean resolution beats a question.
+ * Only if nothing resolves does the ambiguity become the answer.
+ *
+ * @param {string} raw
+ * @param {{cardDb, nameIndex, nameNumberIndex, tokenise?}} deps
+ * @returns {object} a resolveLine result, plus {shape, interpretation, tried}
+ */
+export function resolveTypedLine(raw, deps) {
+  const tokenise = deps.tokenise ?? _tokeniseLine;
+  const { interpretations } = tokenise(raw);
+
+  if (!interpretations.length) {
+    return {
+      status: 'need_more', card_id: null, confidence: 'low',
+      reason: 'no_interpretation', candidates: [], matched_name: null,
+      name_match: 'none', shape: null, interpretation: null, tried: 0,
+    };
+  }
+
+  // EVIDENCE DECIDES, NOT ORDER.
+  //
+  // Taking the first reading that resolves is not good enough, and the case
+  // that proved it is "MEG 172/132". "meg" is a legitimate three-letter
+  // prefix of "Mega Audino ex", which has a card at 172 — so the name reading
+  // resolved first and returned an Ascended Heroes card. MEG is also a real
+  // set code for Mega Evolution, where 172 is Mystery Garden. Both readings
+  // resolve; one is far better founded.
+  //
+  // So every reading is resolved and then ranked by how strong the evidence
+  // that resolved it actually is. Set id plus number is unique BY
+  // CONSTRUCTION (it is the catalogue key) and measured 100%; an exact name
+  // with a printed total measured 99.6%; a three-letter prefix 99.0%; a typo
+  // correction is weaker still. That ordering is a property of the data, not
+  // a preference.
+  const EVIDENCE = { none: 4, exact: 3, prefix: 2, fuzzy: 1 };
+  const rankOf = (r) => (r.reason === 'set_code_and_number' || r.shape === 'catalogue_key')
+    ? 5 : (EVIDENCE[r.name_match] ?? 0);
+
+  const resolvedAll = [];
+  let firstAmbiguous = null;
+  let firstNotFound = null;
+  let tried = 0;
+
+  for (const interp of interpretations) {
+    tried += 1;
+    const r = resolveLine(interp, deps);
+    if (r.status === 'resolved') {
+      resolvedAll.push({ ...r, shape: interp.shape, interpretation: interp });
+      continue;
+    }
+    if (r.status === 'ambiguous' && !firstAmbiguous) {
+      firstAmbiguous = { ...r, shape: interp.shape, interpretation: interp };
+    }
+    if (!firstNotFound) firstNotFound = { ...r, shape: interp.shape, interpretation: interp };
+  }
+
+  if (resolvedAll.length) {
+    resolvedAll.sort((a, b) => (rankOf(b) - rankOf(a))
+      || ((b.interpretation?.prior ?? 0) - (a.interpretation?.prior ?? 0)));
+    const best = resolvedAll[0];
+    const rivals = resolvedAll.filter((r) => r.card_id !== best.card_id);
+
+    // Two readings of the same line pointing at DIFFERENT cards on evidence of
+    // the same strength is a genuine question, not something to break with a
+    // tiebreak nobody can defend.
+    if (rivals.length && rankOf(rivals[0]) === rankOf(best)) {
+      const seen = new Set();
+      const candidates = [];
+      for (const r of resolvedAll) {
+        for (const c of r.candidates) if (!seen.has(c.id)) { seen.add(c.id); candidates.push(c); }
+      }
+      return {
+        ...best, status: 'ambiguous', card_id: null, confidence: 'low',
+        reason: 'readings_disagree', candidates, tried,
+        rival_shapes: resolvedAll.map((r) => r.shape),
+      };
+    }
+    return { ...best, tried, outranked: rivals.map((r) => r.shape + ':' + r.card_id) };
+  }
+
+  // A question beats a bare miss: candidates tell the operator what the system
+  // was looking at, a "not found" tells them nothing.
+  const out = firstAmbiguous ?? firstNotFound;
+  return { ...out, tried };
+}
+
+// Imported lazily-by-default so this module stays usable with an injected
+// tokeniser in tests (mock.module is banned; injection is the seam).
+import { tokeniseLine as _tokeniseLine } from './tokenise.js';

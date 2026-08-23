@@ -38,6 +38,34 @@ export function render() {
     const userImg = entry.image || '';
     const refImg = entry.reference_image || card.image_url || card.reference_image || '';
     const thumbHtml = renderRowThumbs(userImg, refImg);
+    // AMBIGUOUS — the line resolved to more than one real card, so the answer
+    // is a question. Measured: 102 of the catalogue's name+number groups stay
+    // ambiguous under a three-letter prefix, and 63 of those are DIFFERENT
+    // POKEMON (bla|2|132 is Blastoise or Blaine's Charizard, and the price gap
+    // is large). Picking one for the operator would be the first-hit-wins
+    // defect wearing a nicer coat.
+    //
+    // Amber, not red: nothing failed. The row is one tap from done.
+    if (entry.candidates?.length) {
+      const chips = entry.candidates.map((c, ci) => `
+        <button class="btn ghost" data-pick="${idx}:${ci}"
+          style="text-align:left; padding:6px 10px; font-size:12px; line-height:1.35; flex:0 1 auto;">
+          <strong>${escapeHtml(c.name || '?')}</strong><br>
+          <span style="opacity:0.7;">${escapeHtml(c.set_name || '')} · #${escapeHtml(c.card_number || '')}</span>
+        </button>`).join('');
+      return `
+        <div class="session-log-row" style="border-left:3px solid #d99a2b; display:block; cursor:default;">
+          <div style="display:flex; justify-content:space-between; align-items:baseline; gap:8px;">
+            <div class="name">${escapeHtml(entry._parsed_line || card.name || 'Which one?')}</div>
+            <span class="data-badge" style="font-size:10px; color:#d99a2b; white-space:nowrap;">
+              ${entry.candidates.length} matches — tap one
+            </span>
+          </div>
+          <div style="display:flex; flex-wrap:wrap; gap:6px; margin-top:8px;">${chips}</div>
+        </div>
+      `;
+    }
+
     if (entry.error) {
       return `
         <div class="session-log-row" data-result-idx="${idx}" style="cursor:pointer; border-left:3px solid #c14a3a;">
@@ -61,6 +89,25 @@ export function render() {
       </div>
     `;
   }).join('');
+  root.querySelectorAll('[data-pick]').forEach((btn) => {
+    btn.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      const [i, ci] = btn.dataset.pick.split(':').map((n) => parseInt(n, 10));
+      const entry = state.currentResults?.[i];
+      const chosen = entry?.candidates?.[ci];
+      if (!chosen) return;
+      btn.textContent = 'Pricing…';
+      btn.disabled = true;
+      // The operator has answered the question. Report which candidate they
+      // picked, not just that they picked one: if they overwhelmingly choose
+      // the first, the resolver is being too cautious and the data says so —
+      // the same recalibration signal as the amber confirm lane.
+      window.dispatchEvent(new CustomEvent('cp:candidate-chosen', {
+        detail: { resultIndex: i, candidate: chosen, rank: ci, of: entry.candidates.length },
+      }));
+    });
+  });
+
   root.querySelectorAll('[data-result-idx]').forEach((row) => {
     row.addEventListener('click', () => {
       const i = parseInt(row.dataset.resultIdx, 10);

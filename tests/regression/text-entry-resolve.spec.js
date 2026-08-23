@@ -28,7 +28,7 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
 import { buildNameIndex } from '../../pricing/name-index.js';
-import { buildNameNumberIndex, resolveLine } from '../../pricing/text-entry/resolve-line.js';
+import { buildNameNumberIndex, resolveLine, resolveTypedLine } from '../../pricing/text-entry/resolve-line.js';
 import { parseTextEntryLine } from '../../apps/vendor/modules/text-parse.js';
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -180,5 +180,90 @@ describe('the resolver keeps its measured behaviour', () => {
     assert.equal(r.status, 'resolved');
     assert.ok(['high', 'medium'].includes(r.confidence));
     if (r.reason.includes('mismatch')) assert.equal(r.contradiction, true);
+  });
+});
+
+describe('resolveTypedLine — evidence decides, not order', () => {
+  test('THE DEFECT: "MEG 172/132" must be Mystery Garden, not Mega Audino ex', () => {
+    // Found while wiring the tokeniser. "meg" is a legitimate three-letter
+    // prefix of "Mega Audino ex", which has a card at 172, so the NAME reading
+    // resolved first and returned an Ascended Heroes card. MEG is also a real
+    // set code for Mega Evolution, where 172 is Mystery Garden.
+    //
+    // Both readings resolve. Taking the first was the bug. Set id + number is
+    // unique by construction — it IS the catalogue key, measured 100% — while
+    // a three-letter prefix measured 99.0%, so the set reading is better
+    // founded and must win on evidence rather than on ordering.
+    const r = resolveTypedLine('MEG 172/132', deps);
+    assert.equal(r.status, 'resolved');
+    assert.equal(r.card_id, 'me1-172');
+    assert.equal(r.candidates[0].name, 'Mystery Garden');
+    assert.ok(r.outranked.some((o) => o.includes('me2pt5-172')),
+      `the name reading should have been outranked, got ${JSON.stringify(r.outranked)}`);
+  });
+
+  test('a name-prefix reading still wins when no set code is plausible', () => {
+    // "cha" is not a set code, so the set reading resolves to nothing and the
+    // name reading carries the line.
+    const r = resolveTypedLine('cha 4/102', deps);
+    assert.equal(r.card_id, 'base1-4');
+    assert.equal(r.shape, 'name_only');
+    assert.equal(r.name_match, 'prefix');
+  });
+
+  test('an exact name outranks a prefix reading of the same line', () => {
+    const r = resolveTypedLine('charizard 4/102', deps);
+    assert.equal(r.name_match, 'exact');
+    assert.equal(r.card_id, 'base1-4');
+  });
+
+  test('the "ex" trap resolves to the right card end to end', () => {
+    // The €561.50 incident card. Old parser: name "Charizard", set "EX".
+    const r = resolveTypedLine('Charizard ex 056/197', deps);
+    assert.equal(r.status, 'resolved');
+    assert.equal(r.card_id, 'svp-56');
+    assert.equal(r.candidates[0].name, 'Charizard ex');
+  });
+
+  test('the legacy "PFL 94" shape still resolves by set code', () => {
+    const r = resolveTypedLine('PFL 94', deps);
+    assert.equal(r.status, 'resolved');
+    assert.equal(r.card_id, 'me2-94');
+    assert.equal(r.reason, 'set_code_and_number');
+  });
+
+  test('quantity, condition and finish survive to the interpretation', () => {
+    const r = resolveTypedLine('3x Charizard ex 056/197 nm reverse', deps);
+    assert.equal(r.card_id, 'svp-56');
+    assert.equal(r.interpretation.qty, 3);
+    assert.equal(r.interpretation.condition, 'NM');
+    assert.equal(r.interpretation.finish, 'reverse_holo');
+  });
+
+  test('ambiguity survives the whole pipeline', () => {
+    const r = resolveTypedLine('bla 2/132', deps);
+    assert.equal(r.status, 'ambiguous');
+    assert.equal(r.card_id, null);
+    assert.ok(r.candidates.length > 1);
+  });
+
+  test('the operator\'s whole paste resolves through the raw-line path', () => {
+    const BLOCK = [
+      'Mystery Garden meg en 172/132', 'Wugtrio paf en 224/091', 'Dewgong pfl en 097/094',
+      'Garganacle ex scr en 089/142', 'Rotom ex pfl en 029/094', 'Durant ex ssp en 004/191',
+      "Team Rockets Crobat ex dri en 122/182 League Promo Stamp", 'Mismagius ex pfl en 036/094',
+      'Megaton Blower ssp en 182/191', 'Slaking ex ssp en 147/191', 'Tapu Koko ex jtg en 051/159',
+      'Mega Sharpedo ex pfl en 061/094',
+    ];
+    const missed = BLOCK.map((l) => [l, resolveTypedLine(l, deps)])
+      .filter(([, r]) => r.status !== 'resolved')
+      .map(([l, r]) => `${l}: ${r.reason}`);
+    assert.deepEqual(missed, []);
+  });
+
+  test('a line with no number is refused rather than guessed at', () => {
+    const r = resolveTypedLine('Charizard', deps);
+    assert.equal(r.status, 'need_more');
+    assert.equal(r.reason, 'no_interpretation');
   });
 });

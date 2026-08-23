@@ -75,6 +75,8 @@ import { detectBinderCards } from '../../../pricing/binder.js';
 import { detectBinderCardsCV } from '../../../pricing/binder-cv.js';
 import { countTextEntry } from '../../../infra/observability/text-entry-counters.js';
 import { isUnsupportedLang } from '../../../pricing/languages.js';
+import { resolveLine, resolveTypedLine } from '../../../pricing/text-entry/resolve-line.js';
+import { getTypedEntryIndexes } from '../../../pricing/text-entry/index-cache.js';
 import {
   CARD_DB,
   lookupLocalDb,
@@ -454,8 +456,130 @@ router.post('/api/identify-binder',
  *   - card_number REQUIRED; "/total" suffix stripped, leading zeros trimmed
  *   - name        optional name hint (helps disambiguate)
  */
-async function manualIdentifyCore({ game, set_code, card_number, name, lang } = {}, source = 'vendor_text') {
+/**
+ * Off switch, and the DEFAULT IS ON deliberately.
+ *
+ * The usual pattern — new behaviour behind a flag defaulting to false —
+ * assumes the flag arrives. Measured on this service today: five of the ten
+ * values render.yaml declares never reach the process at all (see
+ * infra/observability/env-reconcile.js). A flag defaulting to the SAFE
+ * behaviour survives that; one defaulting to the old behaviour would keep the
+ * old behaviour forever and nobody would know.
+ */
+function typedResolveEnabled(env = process.env) {
+  return String(env.TYPED_RESOLVE ?? '').trim().toLowerCase() !== 'off';
+}
+
+function unsupportedLang(lang, source) {
+  countTextEntry(source, 'rejected_unsupported_lang');
+  return {
+    error: `${String(lang).toUpperCase()} cards are not supported — the catalogue is English-only, `
+      + 'and matching one against it returns an English card at English prices roughly a quarter of the time.',
+    status: 422,
+  };
+}
+
+/**
+ * Catalogue entry -> the card shape /api/price and the clients expect. Same
+ * keys the local-DB path has always returned, so nothing downstream changes.
+ */
+function toManualCard(id, v) {
+  return {
+    game: 'pokemon',
+    name: v.name,
+    set_name: v.setName ?? null,
+    set_code: v.setCode ?? null,
+    card_number: id.slice(id.lastIndexOf('-') + 1),
+    rarity: v.rarity ?? null,
+    hp: v.hp ?? null,
+    reference_image: v.image ?? null,
+    cardmarket_url: v.cardmarketUrl ?? null,
+    tcgplayer_url: v.tcgplayerUrl ?? null,
+    verified: true,
+    db_source: 'local catalogue (typed)',
+    _manual: true,
+  };
+}
+
+/**
+ * The additive half of the envelope. `cards` keeps its exact meaning — the
+ * resolved card, if there is one — and everything new lives beside it, so a
+ * caller reading cards[0] is unaffected.
+ */
+function envelopeFor(r) {
+  return {
+    status: r.status,
+    confidence: r.confidence,
+    reason: r.reason,
+    contradiction: r.contradiction ?? false,
+    name_match: r.name_match,
+    candidates: r.candidates,
+  };
+}
+
+async function manualIdentifyCore(
+  { game, set_code, card_number, name, lang, total, text } = {},
+  source = 'vendor_text',
+) {
   if (!game) return { error: 'game is required', status: 400 };
+
+  // RAW LINE PATH.
+  //
+  // The client sends what the operator actually typed and the tokeniser runs
+  // HERE, next to the catalogue. That is not an implementation detail — it is
+  // the only place the ambiguity can be settled. "cha 4/102" and "MEG 172/132"
+  // are the same shape, and only the catalogue knows that "cha" is the start
+  // of Charizard while "MEG" is Mega Evolution. A browser-side parser has to
+  // guess, and the shipped one guesses "set code" every time.
+  //
+  // Falls through to the structured path below on anything it cannot resolve,
+  // so this can only add answers.
+  if (text && game === 'pokemon' && typedResolveEnabled()) {
+    const idx = getTypedEntryIndexes(CARD_DB);
+    const r = resolveTypedLine(String(text), {
+      cardDb: CARD_DB, nameIndex: idx.nameIndex, nameNumberIndex: idx.nameNumberIndex,
+    });
+    const readLang = r.interpretation?.lang ?? lang;
+
+    if (isUnsupportedLang(readLang)) return unsupportedLang(readLang, source);
+
+    if (r.status === 'resolved') {
+      const hit = CARD_DB.get(r.card_id);
+      if (hit) {
+        console.log(`[MANUAL-PKM] Raw line "${text}" -> ${hit.name} (${r.card_id}) `
+          + `via ${r.shape}/${r.name_match}/${r.reason}`);
+        countTextEntry(source, 'local_hit');
+        return {
+          cards: [toManualCard(r.card_id, hit)],
+          resolution: { ...envelopeFor(r), shape: r.shape, interpretation: r.interpretation },
+        };
+      }
+    }
+
+    if (r.status === 'ambiguous' && r.candidates.length) {
+      console.log(`[MANUAL-PKM] Raw line "${text}" is ambiguous: `
+        + `${r.candidates.length} candidates (${r.reason})`);
+      countTextEntry(source, 'ambiguous');
+      return {
+        cards: [],
+        resolution: { ...envelopeFor(r), shape: r.shape, interpretation: r.interpretation },
+      };
+    }
+
+    // Not resolved. Adopt the best reading's fields so the existing ladder
+    // gets the benefit of the better parse even when the catalogue could not
+    // finish the job — the remote APIs know about cards this catalogue does
+    // not.
+    const best = r.interpretation;
+    if (best) {
+      name = name ?? best.name ?? undefined;
+      set_code = set_code ?? best.set_code ?? undefined;
+      card_number = card_number ?? best.card_number ?? undefined;
+      total = total ?? best.total ?? undefined;
+      lang = lang ?? best.lang ?? undefined;
+    }
+  }
+
   if (!card_number) return { error: 'card_number is required', status: 400 };
 
   // The catalogue is English-only: 174 sets from pokemontcg.io, not one
@@ -474,14 +598,7 @@ async function manualIdentifyCore({ game, set_code, card_number, name, lang } = 
   // European languages are NOT blocked — they are the same cards with the same
   // set codes and collector numbers, so they resolve correctly. Their PRICES
   // differ and no adapter accounts for that, which is a separate gap.
-  if (isUnsupportedLang(lang)) {
-    countTextEntry(source, 'rejected_unsupported_lang');
-    return {
-      error: `${String(lang).toUpperCase()} cards are not supported — the catalogue is English-only, `
-        + 'and matching one against it returns an English card at English prices roughly a quarter of the time.',
-      status: 422,
-    };
-  }
+  if (isUnsupportedLang(lang)) return unsupportedLang(lang, source);
 
   const cleanNum = String(card_number).replace(/\/.*/, '').replace(/^0+/, '') || String(card_number);
   let card = null;
@@ -496,6 +613,54 @@ async function manualIdentifyCore({ game, set_code, card_number, name, lang } = 
       // rung below), so it is counted rather than removed on a hunch.
       countTextEntry(source,
         !set_code ? 'set_absent' : resolved.aliased ? 'set_aliased' : 'set_guessed');
+
+      // LOCAL RESOLUTION FIRST.
+      //
+      // This runs before the existing ladder and can only improve on it. It
+      // either resolves against the local catalogue with stated evidence, or
+      // asks; if it does neither, everything below is untouched. Ordering it
+      // first is what lets it replace a first-hit-wins guess further down
+      // rather than merely adding to it.
+      //
+      // Off switch is TYPED_RESOLVE=off, and the default is ON deliberately.
+      // The usual pattern — new behaviour behind a flag defaulting to false —
+      // assumes the flag arrives. Measured today: five of the ten values
+      // render.yaml declares never reach this process (see
+      // infra/observability/env-reconcile.js). A flag that defaults to the
+      // SAFE behaviour survives that; a flag that defaults to the old
+      // behaviour would silently keep the old behaviour forever.
+      if (typedResolveEnabled()) {
+        const idx = getTypedEntryIndexes(CARD_DB);
+        const local = resolveLine(
+          { name, card_number, total, set_code },
+          { cardDb: CARD_DB, nameIndex: idx.nameIndex, nameNumberIndex: idx.nameNumberIndex },
+        );
+
+        if (local.status === 'resolved') {
+          const hit = CARD_DB.get(local.card_id);
+          if (hit) {
+            console.log(`[MANUAL-PKM] Local resolve: ${hit.name} (${local.card_id}) `
+              + `via ${local.name_match}/${local.reason}`);
+            countTextEntry(source, 'local_hit');
+            return {
+              cards: [toManualCard(local.card_id, hit)],
+              resolution: envelopeFor(local),
+            };
+          }
+        }
+
+        // Ambiguous is an ANSWER. Returning cards: [] with the candidates
+        // beside it means every existing caller — scan.js:203,
+        // quote/lookup.js:78 — falls into its "no match" branch and renders an
+        // error row. They degrade to a question, never to a wrong price, with
+        // no change required in either of them.
+        if (local.status === 'ambiguous' && local.candidates.length) {
+          console.log(`[MANUAL-PKM] Ambiguous: ${local.candidates.length} candidates for `
+            + `"${name ?? ''}" #${cleanNum} (${local.reason})`);
+          countTextEntry(source, 'ambiguous');
+          return { cards: [], resolution: envelopeFor(local) };
+        }
+      }
 
       if (resolved.setId) {
         card = lookupLocalDb(resolved.setId, cleanNum);
@@ -718,7 +883,13 @@ async function handleManualIdentify(req, res, source = 'vendor_text') {
   if (result && result.error) {
     return res.status(result.status || 500).json({ error: result.error });
   }
-  return res.json({ cards: result.cards });
+  // `cards` keeps its exact meaning and position, so every existing caller is
+  // unaffected. `resolution` is additive and only present when the local
+  // resolver had something to say — including the case that matters, where
+  // cards is EMPTY and the candidates are the answer.
+  const body = { cards: result.cards };
+  if (result.resolution) body.resolution = result.resolution;
+  return res.json(body);
 }
 
 // V1 auth'd manual-identify (vendor-side). Logs scan event against the
