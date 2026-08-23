@@ -15,6 +15,7 @@ import { getCardDbState, getCatalogueBuiltAt } from '../_card-db-boot.js';
 import { getFastPathCounts } from '../../../infra/observability/fast-path-counters.js';
 import { getSnapshotCounts } from '../../../infra/observability/price-snapshot-counters.js';
 import { getPriceMatchCounts } from '../../../infra/observability/price-match-counters.js';
+import { getTextEntryCounts } from '../../../infra/observability/text-entry-counters.js';
 import { isEnabled as rectifyEnabled } from '../../../pricing/card-rectify.js';
 import { getFastPathMode } from '../../../pricing/fast-path-mode.js';
 
@@ -65,6 +66,7 @@ export async function buildHealthPayload(deps = {}) {
   const readFastPath = deps.fastPath ?? getFastPathCounts;
   const readSnapshots = deps.snapshots ?? getSnapshotCounts;
   const readPriceMatch = deps.priceMatch ?? getPriceMatchCounts;
+  const readTextEntry = deps.textEntry ?? getTextEntryCounts;
 
   // Flat boolean keys consumed by the V2 admin tab (apps/vendor/modules/tabs/admin.js).
   // V1 nested `apis.*` shape is preserved alongside for backward compat with any
@@ -130,6 +132,7 @@ export async function buildHealthPayload(deps = {}) {
     fast_path: fastPathCheck(readFastPath(), env),
     price_history: priceHistoryCheck(readSnapshots()),
     price_match: priceMatchCheck(readPriceMatch()),
+    text_entry: textEntryCheck(readTextEntry()),
     // Reported because it was previously unverifiable from outside the box:
     // the only way to know whether rectification was on in production was to
     // trust that someone had set it. Informational, not a failure — health
@@ -248,6 +251,37 @@ function priceMatchCheck(c) {
     detail: `${(rate * 100).toFixed(0)}% of price lookups matched on card number ` +
       `(${c.matched} priced, ${c.rejected_no_number_match} rejected on mismatch, ` +
       `${c.rejected_no_number_read} with no number read)` +
+      (perSource ? ` [${perSource}]` : ''),
+  };
+}
+
+/**
+ * The typed-entry path, which has never been measured.
+ *
+ * Never ok:false. Nothing here is broken in the sense that would justify
+ * marking the service degraded — a high first-hit rate is a defect we are
+ * MEASURING, deliberately, before changing the behaviour that produces it
+ * (apps/server/routes/identify.js:530). Marking it degraded would only train
+ * someone to ignore the degraded flag.
+ */
+function textEntryCheck(c) {
+  const looked = c?.lookups ?? 0;
+  if (looked === 0) {
+    return { ...c, ok: true, detail: 'nobody has typed a card since boot' };
+  }
+  const pct = (r) => (r == null ? 'n/a' : `${(r * 100).toFixed(0)}%`);
+  const perSource = Object.entries(c.by_source || {})
+    .map(([n, s]) => `${n} ${s.lookups} lookups, ${pct(s.first_hit_rate)} unconfirmed`)
+    .join('; ');
+  return {
+    ...c,
+    ok: true,
+    detail:
+      `${looked} typed lookup(s): ${pct(c.confirmed_rate)} resolved to a confirmed ` +
+      `identity, ${pct(c.first_hit_rate)} returned the first search hit with nothing ` +
+      `checking it (${c.remote_first_hit}). Set codes: ${pct(c.set_guess_rate)} of ` +
+      `those typed fell through to resolveSetCode's guess; ${c.set_absent} line(s) ` +
+      'carried no set code at all, which is not counted as a failure' +
       (perSource ? ` [${perSource}]` : ''),
   };
 }

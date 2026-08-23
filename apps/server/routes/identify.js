@@ -73,6 +73,7 @@ import { lookupViaTCGGO } from '../../../pricing/adapters/tcggo-rapidapi.js';
 import { lookupViaJustTCG } from '../../../pricing/adapters/justtcg.js';
 import { detectBinderCards } from '../../../pricing/binder.js';
 import { detectBinderCardsCV } from '../../../pricing/binder-cv.js';
+import { countTextEntry } from '../../../infra/observability/text-entry-counters.js';
 import {
   CARD_DB,
   lookupLocalDb,
@@ -452,7 +453,7 @@ router.post('/api/identify-binder',
  *   - card_number REQUIRED; "/total" suffix stripped, leading zeros trimmed
  *   - name        optional name hint (helps disambiguate)
  */
-async function manualIdentifyCore({ game, set_code, card_number, name } = {}) {
+async function manualIdentifyCore({ game, set_code, card_number, name } = {}, source = 'vendor_text') {
   if (!game) return { error: 'game is required', status: 400 };
   if (!card_number) return { error: 'card_number is required', status: 400 };
 
@@ -463,10 +464,18 @@ async function manualIdentifyCore({ game, set_code, card_number, name } = {}) {
     if (game === 'pokemon') {
       const resolved = set_code ? resolveSetCode(set_code) : { setId: null, ptcgoCode: null };
 
+      // resolveSetCode cannot report failure — on a miss it returns the raw
+      // code lowercased as a set id and carries on (set-aliases.js:170). That
+      // guess is load-bearing (aliased:false is what enables the ptcgoCode
+      // rung below), so it is counted rather than removed on a hunch.
+      countTextEntry(source,
+        !set_code ? 'set_absent' : resolved.aliased ? 'set_aliased' : 'set_guessed');
+
       if (resolved.setId) {
         card = lookupLocalDb(resolved.setId, cleanNum);
         if (card) {
           console.log(`[MANUAL-PKM] Local DB hit: ${card.name} (${resolved.setId}-${cleanNum})`);
+          countTextEntry(source, 'local_hit');
           return { cards: [card] };
         }
       }
@@ -490,6 +499,7 @@ async function manualIdentifyCore({ game, set_code, card_number, name } = {}) {
 
       const skipPokemonTCG = resolved.setId && POKEMONTCG_UNRELIABLE.has(resolved.setId);
       if (skipPokemonTCG) {
+        countTextEntry(source, 'skipped_unreliable');
         console.log(`[MANUAL-PKM] Skipping pokemontcg.io for unreliable set "${resolved.setId}" — going to fallbacks`);
       }
 
@@ -516,6 +526,7 @@ async function manualIdentifyCore({ game, set_code, card_number, name } = {}) {
               _manual: true
             };
             console.log(`[MANUAL-PKM] Direct hit: ${best.name} (${directId})`);
+            countTextEntry(source, 'remote_direct');
           }
         } catch (e) {
           console.log(`[MANUAL-PKM] Direct lookup ${directId} failed: ${e.message}`);
@@ -531,11 +542,29 @@ async function manualIdentifyCore({ game, set_code, card_number, name } = {}) {
             });
             const results = resp.data?.data;
             if (!results?.length) continue;
+            // COUNTED, NOT YET CHANGED. `best` is seeded to search hit #1 and
+            // is only refined when a name was typed AND one result matches it
+            // exactly. Otherwise an unconfirmed identity is returned as
+            // `verified: true`. This is the same first-hit-wins shape just
+            // removed from the price adapters, one layer up — but here it is
+            // measured first, so the fix can be judged against a real
+            // denominator rather than an argument. See
+            // infra/observability/text-entry-counters.js.
             let best = results[0];
+            let confirmed = false;
             if (name) {
               const exact = results.find(d => d.name?.toLowerCase() === String(name).toLowerCase());
-              if (exact) best = exact;
+              if (exact) { best = exact; confirmed = true; }
             }
+            countTextEntry(source, confirmed ? 'remote_confirmed' : 'remote_first_hit',
+              confirmed ? null : {
+                name: name ?? null,
+                set_code: set_code ?? null,
+                card_number: cleanNum,
+                returned_name: best.name ?? null,
+                returned_set: best.set?.id ?? null,
+                query: q,
+              });
             card = {
               game: 'pokemon',
               name: best.name,
@@ -637,6 +666,7 @@ async function manualIdentifyCore({ game, set_code, card_number, name } = {}) {
     }
 
     if (!card) {
+      countTextEntry(source, 'not_found');
       return { error: 'No card found for that set/number combination. Double-check the set code and number.', status: 404 };
     }
 
@@ -657,8 +687,8 @@ async function manualIdentifyCore({ game, set_code, card_number, name } = {}) {
 // Thin route-shaped wrapper. Translates the manualIdentifyCore envelope
 // back to res.status/res.json. Existing tests (S8.5
 // quote-public-paths.spec.js) call this with (req, res) — preserved.
-async function handleManualIdentify(req, res) {
-  const result = await manualIdentifyCore(req.body || {});
+async function handleManualIdentify(req, res, source = 'vendor_text') {
+  const result = await manualIdentifyCore(req.body || {}, source);
   if (result && result.error) {
     return res.status(result.status || 500).json({ error: result.error });
   }
@@ -683,7 +713,11 @@ router.post('/api/identify-manual', requireAuth, enforceQuota, async (req, res) 
 // falsy), so we skip calling it here — there's no user to attribute
 // to and scan_events.user_id is NOT NULL.
 router.post('/api/v2/quote/identify-manual', quoteLeadLimiter, async (req, res) => {
-  return handleManualIdentify(req, res);
+  // Counted separately from the vendor route on purpose. The operator pastes
+  // set+number; customers paste whatever they have. A blended rate would
+  // describe neither, and would let one path's failures hide inside the
+  // other's volume.
+  return handleManualIdentify(req, res, 'quote_text');
 });
 
 // =============================================================================
