@@ -15,3 +15,22 @@ test-tcggo.js
 .vscode/
 .idea/
 data/.card-db-crawled
+
+# Catalogue and price artifacts. These live on the Render persistent disk
+# (render.yaml mounts it at /opt/render/project/src/data) and are rebuilt by
+# scripts/build-phash-db.js. They were previously excluded by nobody ever
+# running `git add` on them, which held until 24 Aug 2026 when `git add -A
+# data/` swept 33 MB into a commit — including a card-prices.json that had
+# been stale since May.
+#
+# Intent stated as a rule rather than as a habit.
+data/card-db.json
+data/card-prices.json
+data/card-phashes.json
+data/card-index-manifest.json
+data/weekly-market/
+
+# NOT ignored, and deliberately so: pricing/reference/pokemon-sets.json.
+# It used to live in data/, where the disk mount shadowed it — see
+# pricing/set-resolve.js. Reference data the code needs at runtime belongs
+# beside the code, tracked, and outside any mount point.
