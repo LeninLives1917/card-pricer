@@ -92,3 +92,69 @@ describe('the parser feeds the guard', () => {
     assert.equal(isUnsupportedLang(got.lang), false);
   });
 });
+
+describe('the browser copy and the server copy agree', () => {
+  test('the two SUPPORTED_LANGS sets are identical', async () => {
+    // apps/vendor/modules/text-parse.js duplicates this list rather than
+    // importing it. That is deliberate: vendor modules are served from
+    // /modules/, so `../../../pricing/languages.js` resolves to a path
+    // express.static does not serve, falls through to the SPA handler, and
+    // comes back as index.html with HTTP 200 and Content-Type text/html. The
+    // browser parses `<!DOCTYPE html>` as JavaScript, the module graph dies,
+    // and the whole dashboard stops responding to clicks — silently, because
+    // a 200 with the wrong content type is not a 404 anyone notices.
+    //
+    // So the single source of truth is enforced HERE instead of by an import.
+    // If this fails, the two lists have drifted and the browser is applying a
+    // different policy from the server.
+    const server = await import('../../pricing/languages.js');
+    const browser = await import('../../apps/vendor/modules/text-parse.js');
+    assert.deepEqual(
+      [...browser.SUPPORTED_LANGS].sort(),
+      [...server.SUPPORTED_LANGS].sort(),
+      'the browser and server language lists have drifted',
+    );
+  });
+
+  test('both agree on the languages that are different cards', async () => {
+    const server = await import('../../pricing/languages.js');
+    const browser = await import('../../apps/vendor/modules/text-parse.js');
+    for (const l of ['jp', 'ja', 'ko', 'zh', 'en', 'de', 'xx', '', null]) {
+      assert.equal(
+        browser.isUnsupportedLang(l), server.isUnsupportedLang(l),
+        `browser and server disagree on ${JSON.stringify(l)}`,
+      );
+    }
+  });
+
+  test('NO vendor module reaches outside its served root', async () => {
+    // The general form of the bug. Anything importing ../../../ from
+    // apps/vendor/modules or apps/quote/modules resolves, in a browser, to a
+    // path the static mounts do not cover.
+    const fsMod = await import('node:fs');
+    const pathMod = await import('node:path');
+    const urlMod = await import('node:url');
+    const repo = pathMod.join(pathMod.dirname(urlMod.fileURLToPath(import.meta.url)), '..', '..');
+
+    const offenders = [];
+    const walk = (dir) => {
+      for (const e of fsMod.readdirSync(dir, { withFileTypes: true })) {
+        const p = pathMod.join(dir, e.name);
+        if (e.isDirectory()) { walk(p); continue; }
+        if (!e.name.endsWith('.js')) continue;
+        const src = fsMod.readFileSync(p, 'utf8');
+        // Ignore the explanatory comment in text-parse.js by requiring the
+        // specifier to sit in a real import/export statement.
+        const rx = /^\s*(?:import|export)[^\n]*from\s+['"]\.\.\/\.\.\/\.\.\//gm;
+        if (rx.test(src)) offenders.push(pathMod.relative(repo, p));
+      }
+    };
+    for (const root of ['apps/vendor/modules', 'apps/quote/modules']) {
+      const full = pathMod.join(repo, root);
+      if (fsMod.existsSync(full)) walk(full);
+    }
+    assert.deepEqual(offenders, [],
+      'these browser modules import a path the server does not serve; in a browser '
+      + 'they receive index.html with HTTP 200 and the whole app stops working');
+  });
+});

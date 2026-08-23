@@ -36,10 +36,35 @@
 const LANG_TOKENS = ['en','de','fr','es','it','pt','jp','ja','ko','zh','ru','nl'];
 const LANG_GROUP = LANG_TOKENS.join('|');
 
-// Language policy lives in pricing/languages.js so the server routes and
-// this module share one answer. Re-exported here because the parser is what
-// extracts the token, so this is where a caller looks for it.
-export { SUPPORTED_LANGS, isUnsupportedLang } from '../../../pricing/languages.js';
+// LANGUAGE POLICY — duplicated from pricing/languages.js, DELIBERATELY.
+//
+// This file previously re-exported it:
+//
+//   export { SUPPORTED_LANGS, isUnsupportedLang } from '../../../pricing/languages.js';
+//
+// That works in Node and takes the whole app down in a browser. Vendor
+// modules are served from `/modules/`, so the browser resolves that specifier
+// to `/pricing/languages.js` — a path express.static does not serve. It falls
+// through to the SPA handler, which returns index.html with HTTP 200 and
+// Content-Type text/html. The browser then tries to parse `<!DOCTYPE html>`
+// as JavaScript, the module graph fails to load, and nothing on the dashboard
+// responds to a click. It is silent: a 200 with the wrong content type, not a
+// 404 anyone would spot in a log.
+//
+// So the shared-module instinct is right for the server and wrong here. The
+// list is eight strings; a copy is cheaper than a served path, and
+// tests/regression/language-guard.spec.js asserts the two agree, so the single
+// source of truth is enforced by a test rather than by an import the browser
+// cannot follow.
+//
+// pricing/languages.js carries the reasoning and the measurement.
+export const SUPPORTED_LANGS = new Set(['en', 'de', 'fr', 'es', 'it', 'pt', 'ru', 'nl']);
+
+/** @param {string|null|undefined} lang @returns {boolean} */
+export function isUnsupportedLang(lang) {
+  if (!lang) return false;
+  return !SUPPORTED_LANGS.has(String(lang).trim().toLowerCase());
+}
 
 // Set-code: 2-5 chars, must start with a letter (so "ex" qualifies but
 // "172" doesn't). Allow digits in the tail to support sets like "GG31"
