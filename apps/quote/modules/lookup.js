@@ -66,6 +66,15 @@ export async function runLookup({ lines, game, cashPct, creditPct, request, onPr
           set_code: entry.set_code,
           card_number: entry.card_number,
           name: entry.name || undefined,
+          // The line exactly as the customer typed it. The server tokenises
+          // it against the catalogue, which is the only place the ambiguity
+          // can be settled — parse-lines.js below splits on whitespace and
+          // calls parts[0] a set code, so "Charizard 4/102" reaches this
+          // route as set_code "Charizard", card_number "4".
+          //
+          // The naive fields are still sent and are used if the raw line
+          // resolves nothing, so this can only add answers.
+          text: entry.raw,
         },
       });
 
@@ -75,7 +84,21 @@ export async function runLookup({ lines, game, cashPct, creditPct, request, onPr
       }
 
       const cards = idResp.body?.cards || [];
-      if (!cards.length) throw new Error('Card not found');
+      if (!cards.length) {
+        // AMBIGUOUS is a different answer from NOT FOUND, and a customer who
+        // is told "not found" will retype the same thing. Name what the line
+        // could have been so they can add one word and be done.
+        const res = idResp.body?.resolution;
+        if (res?.status === 'ambiguous' && res.candidates?.length) {
+          const shown = res.candidates.slice(0, 3)
+            .map((c) => `${c.name} (${c.set_name})`).join(', ');
+          throw new Error(
+            `Could be ${shown}${res.candidates.length > 3 ? ', or others' : ''} — `
+            + 'add the set code or type more of the name',
+          );
+        }
+        throw new Error('Card not found');
+      }
 
       const card = cards[0];
 

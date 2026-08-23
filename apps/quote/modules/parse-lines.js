@@ -30,11 +30,32 @@ export const MAX_CARDS = 20;
  * @param {string} raw
  * @returns {ParsedLine[]}
  */
+/**
+ * How many lines the last parseLines() call refused to return.
+ *
+ * The cap itself is inherited from V1 and stays — a public, rate-limited
+ * endpoint should not accept an unbounded paste. What changes is that it is
+ * no longer SILENT. A customer who pastes 40 cards, is quoted for 20, and is
+ * told nothing has been given a wrong total and no way to know it. That is
+ * the same defect shape as every other one in this repo: it did something
+ * plausible and counted nothing.
+ */
+let _lastDropped = 0;
+
+/** @returns {number} lines dropped by the cap on the most recent parse. */
+export function droppedByCap() {
+  return _lastDropped;
+}
+
 export function parseLines(raw) {
-  return String(raw || '')
+  const usable = String(raw || '')
     .split('\n')
     .map((l) => l.trim())
-    .filter((l) => l && !l.startsWith('#') && !l.startsWith('//'))
+    .filter((l) => l && !l.startsWith('#') && !l.startsWith('//'));
+
+  _lastDropped = Math.max(0, usable.length - MAX_CARDS);
+
+  return usable
     .slice(0, MAX_CARDS)
     .map((line) => {
       const parts = line.split(/\s+/);

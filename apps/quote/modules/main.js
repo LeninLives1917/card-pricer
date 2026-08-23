@@ -12,7 +12,7 @@
 // (/api/identify-manual, /api/price) WILL return 401 for anonymous callers;
 // that's a real V1 quirk, see "open question" in the slice handoff notes.
 
-import { parseLines } from './parse-lines.js';
+import { parseLines, droppedByCap, MAX_CARDS } from './parse-lines.js';
 import { runLookup } from './lookup.js';
 import { sumTotals, formatEur } from './totals.js';
 import {
@@ -160,8 +160,20 @@ async function startProcessing() {
   if (state.running) return;
   const lines = parseLines($('cardInput').value);
   if (!lines.length) {
-    alert('Enter at least one card — e.g. MEG 133');
+    alert('Enter at least one card — e.g. cha 4/102, or MEG 133');
     return;
+  }
+
+  // The cap has always been here; the silence has not. Quoting 20 of somebody's
+  // 40 cards and saying nothing gives them a wrong total with no way to notice.
+  const dropped = droppedByCap();
+  if (dropped > 0) {
+    const ok = confirm(
+      `Only the first ${MAX_CARDS} cards can be quoted at once — `
+      + `${dropped} more ${dropped === 1 ? 'line was' : 'lines were'} left out.\n\n`
+      + 'Continue with the first ' + MAX_CARDS + ', or cancel and split the list?',
+    );
+    if (!ok) return;
   }
   const game = $('gameSelect').value;
 
