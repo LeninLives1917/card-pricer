@@ -1,0 +1,1179 @@
+{
+  "provider": "gemini",
+  "model": "gemini-3-flash-preview",
+  "rows": [
+    {
+      "rel": "Pokmeon test photos/20260805_125549.jpg",
+      "truth": "me5-72",
+      "source": "gemini",
+      "said": "sv8a-72",
+      "said_all": [
+        "sv8a-72"
+      ],
+      "resolved_via": "code_as_id",
+      "ambiguous": null,
+      "name": "Antique Armor Fossil",
+      "set_code": "SV8a",
+      "card_number": "072/084",
+      "verified": false,
+      "model_confidence": 0.95,
+      "confidence": null,
+      "candidates": 0
+    },
+    {
+      "rel": "Pokmeon test photos/20260805_125554.jpg",
+      "truth": "me5-60",
+      "source": "gemini",
+      "said": "me5-60",
+      "said_all": [
+        "me5-60"
+      ],
+      "resolved_via": "code_as_id",
+      "ambiguous": null,
+      "name": "Skarmory",
+      "set_code": "ME5",
+      "card_number": "60",
+      "verified": true,
+      "model_confidence": 0.95,
+      "confidence": 235,
+      "candidates": 0
+    },
+    {
+      "rel": "Pokmeon test photos/20260805_125558.jpg",
+      "truth": "me5-73",
+      "source": "gemini",
+      "said": "me5-73",
+      "said_all": [
+        "me5-73"
+      ],
+      "resolved_via": "code_as_id",
+      "ambiguous": null,
+      "name": "Antique Skull Fossil",
+      "set_code": "ME5",
+      "card_number": "73",
+      "verified": true,
+      "model_confidence": 0.98,
+      "confidence": 220,
+      "candidates": 0
+    },
+    {
+      "rel": "Pokmeon test photos/20260805_125550.jpg",
+      "truth": "me5-72",
+      "source": "gemini",
+      "said": "sfa-60",
+      "said_all": [
+        "sfa-60",
+        "sv6pt5-60"
+      ],
+      "resolved_via": "code_as_id",
+      "ambiguous": null,
+      "name": "Antique Armor Fossil",
+      "set_code": "SFA",
+      "card_number": "060/064",
+      "verified": false,
+      "model_confidence": 0.98,
+      "confidence": null,
+      "candidates": 0
+    },
+    {
+      "rel": "Pokmeon test photos/20260805_125613.jpg",
+      "truth": "me5-36",
+      "source": "gemini",
+      "said": "me5-36",
+      "said_all": [
+        "me5-36"
+      ],
+      "resolved_via": "code_as_id",
+      "ambiguous": null,
+      "name": "Litwick",
+      "set_code": "ME5",
+      "card_number": "36",
+      "verified": true,
+      "model_confidence": 0.99,
+      "confidence": 235,
+      "candidates": 0
+    },
+    {
+      "rel": "Pokmeon test photos/20260805_125614.jpg",
+      "truth": "me5-36",
+      "source": "gemini",
+      "said": "sfa-36",
+      "said_all": [
+        "sfa-36",
+        "sv6pt5-36"
+      ],
+      "resolved_via": "code_as_id",
+      "ambiguous": null,
+      "name": "Litwick",
+      "set_code": "SFA",
+      "card_number": "036/064",
+      "verified": false,
+      "model_confidence": 0.98,
+      "confidence": null,
+      "candidates": 0
+    },
+    {
+      "rel": "Pokmeon test photos/20260805_125615.jpg",
+      "truth": "me5-36",
+      "source": "gemini",
+      "said": "me5-36",
+      "said_all": [
+        "me5-36"
+      ],
+      "resolved_via": "code_as_id",
+      "ambiguous": null,
+      "name": "Litwick",
+      "set_code": "ME5",
+      "card_number": "36",
+      "verified": true,
+      "model_confidence": 0.99,
+      "confidence": 235,
+      "candidates": 3
+    },
+    {
+      "rel": "Pokmeon test photos/20260805_125619.jpg",
+      "truth": "me5-13",
+      "source": "gemini",
+      "said": "me5-13",
+      "said_all": [
+        "me5-13"
+      ],
+      "resolved_via": "code_as_id",
+      "ambiguous": null,
+      "name": "Goldeen",
+      "set_code": "ME5",
+      "card_number": "13",
+      "verified": true,
+      "model_confidence": 0.95,
+      "confidence": 235,
+      "candidates": 1
+    },
+    {
+      "rel": "Pokmeon test photos/20260805_125621.jpg",
+      "truth": "__none__",
+      "source": "gemini",
+      "said": "me5-13",
+      "said_all": [
+        "me5-13"
+      ],
+      "resolved_via": "code_as_id",
+      "ambiguous": null,
+      "name": "Goldeen",
+      "set_code": "ME5",
+      "card_number": "13",
+      "verified": true,
+      "model_confidence": 1,
+      "confidence": 235,
+      "candidates": 0
+    },
+    {
+      "rel": "Pokmeon test photos/20260805_125622.jpg",
+      "truth": "me5-13",
+      "source": "gemini",
+      "said": "mew-44",
+      "said_all": [
+        "mew-44"
+      ],
+      "resolved_via": "code_as_id",
+      "ambiguous": null,
+      "name": "Goldeen",
+      "set_code": "MEW",
+      "card_number": "044/165",
+      "verified": false,
+      "model_confidence": 0.95,
+      "confidence": null,
+      "candidates": 0
+    },
+    {
+      "rel": "Pokmeon test photos/20260805_125620.jpg",
+      "truth": "me5-13",
+      "source": "gemini",
+      "said": "me5-13",
+      "said_all": [
+        "me5-13"
+      ],
+      "resolved_via": "code_as_id",
+      "ambiguous": null,
+      "name": "Goldeen",
+      "set_code": "ME5",
+      "card_number": "13",
+      "verified": true,
+      "model_confidence": 0.98,
+      "confidence": 235,
+      "candidates": 1
+    },
+    {
+      "rel": "Pokmeon test photos/20260805_125625.jpg",
+      "truth": "me5-5",
+      "source": "gemini",
+      "said": "me5-5",
+      "said_all": [
+        "me5-5"
+      ],
+      "resolved_via": "code_as_id",
+      "ambiguous": null,
+      "name": "Poltchageist",
+      "set_code": "ME5",
+      "card_number": "5",
+      "verified": true,
+      "model_confidence": 1,
+      "confidence": 235,
+      "candidates": 0
+    },
+    {
+      "rel": "Pokmeon test photos/20260805_125625(0).jpg",
+      "truth": "me5-5",
+      "source": "gemini",
+      "said": "me5-5",
+      "said_all": [
+        "me5-5"
+      ],
+      "resolved_via": "code_as_id",
+      "ambiguous": null,
+      "name": "Poltchageist",
+      "set_code": "ME5",
+      "card_number": "5",
+      "verified": true,
+      "model_confidence": 0.98,
+      "confidence": 235,
+      "candidates": 0
+    },
+    {
+      "rel": "Pokmeon test photos/20260805_125629.jpg",
+      "truth": "me5-57",
+      "source": "gemini",
+      "said": "sv2-142",
+      "said_all": [
+        "sv2-142"
+      ],
+      "resolved_via": "catalogue",
+      "ambiguous": null,
+      "name": "Maschiff",
+      "set_code": "SV2",
+      "card_number": "142",
+      "verified": true,
+      "model_confidence": 0.98,
+      "confidence": 155,
+      "candidates": 1
+    },
+    {
+      "rel": "Pokmeon test photos/20260805_125630.jpg",
+      "truth": "me5-57",
+      "source": "gemini",
+      "said": "me5-57",
+      "said_all": [
+        "me5-57"
+      ],
+      "resolved_via": "code_as_id",
+      "ambiguous": null,
+      "name": "Maschiff",
+      "set_code": "ME5",
+      "card_number": "57",
+      "verified": true,
+      "model_confidence": 0.98,
+      "confidence": 235,
+      "candidates": 0
+    },
+    {
+      "rel": "Pokmeon test photos/20260805_125628.jpg",
+      "truth": "me5-57",
+      "source": "gemini",
+      "said": "pal-136",
+      "said_all": [
+        "pal-136"
+      ],
+      "resolved_via": "code_as_id",
+      "ambiguous": null,
+      "name": "Maschiff",
+      "set_code": "PAL",
+      "card_number": "136/193",
+      "verified": false,
+      "model_confidence": 0.98,
+      "confidence": null,
+      "candidates": 0
+    },
+    {
+      "rel": "Pokmeon test photos/20260805_125632.jpg",
+      "truth": "me5-17",
+      "source": "gemini",
+      "said": "pblen-17",
+      "said_all": [
+        "pblen-17"
+      ],
+      "resolved_via": "code_as_id",
+      "ambiguous": null,
+      "name": "Relicanth",
+      "set_code": "PBLEN",
+      "card_number": "017/084",
+      "verified": false,
+      "model_confidence": 1,
+      "confidence": null,
+      "candidates": 0
+    },
+    {
+      "rel": "Pokmeon test photos/20260805_125638.jpg",
+      "truth": "me5-74",
+      "source": "gemini",
+      "said": "pbl-74",
+      "said_all": [
+        "pbl-74",
+        "me5-74"
+      ],
+      "resolved_via": "code_as_id",
+      "ambiguous": null,
+      "name": "Backtrack Badge",
+      "set_code": "PBL",
+      "card_number": "074/084",
+      "verified": false,
+      "model_confidence": 0.98,
+      "confidence": null,
+      "candidates": 0
+    },
+    {
+      "rel": "Pokmeon test photos/20260805_125640(0).jpg",
+      "truth": "me5-74",
+      "source": "gemini",
+      "said": "scr-186",
+      "said_all": [
+        "scr-186"
+      ],
+      "resolved_via": "code_as_id",
+      "ambiguous": null,
+      "name": "Backtrack Badge",
+      "set_code": "SCR",
+      "card_number": "186/182",
+      "verified": false,
+      "model_confidence": 0.98,
+      "confidence": null,
+      "candidates": 0
+    },
+    {
+      "rel": "Pokmeon test photos/20260805_125640.jpg",
+      "truth": "me5-74",
+      "source": "gemini",
+      "said": "scr-166",
+      "said_all": [
+        "scr-166",
+        "sv7-166"
+      ],
+      "resolved_via": "code_as_id",
+      "ambiguous": null,
+      "name": "Backtrack Badge",
+      "set_code": "SCR",
+      "card_number": "166/191",
+      "verified": false,
+      "model_confidence": 0.98,
+      "confidence": null,
+      "candidates": 0
+    },
+    {
+      "rel": "Pokmeon test photos/20260805_125639.jpg",
+      "truth": "__none__",
+      "source": "gemini",
+      "said": "pre-74",
+      "said_all": [
+        "pre-74",
+        "sv8pt5-74"
+      ],
+      "resolved_via": "code_as_id",
+      "ambiguous": null,
+      "name": "Backtrack Badge",
+      "set_code": "PRE",
+      "card_number": "074/084",
+      "verified": false,
+      "model_confidence": 0.99,
+      "confidence": null,
+      "candidates": 0
+    },
+    {
+      "rel": "Pokmeon test photos/20260805_125643.jpg",
+      "truth": "me5-39",
+      "source": "gemini",
+      "said": "me5-39",
+      "said_all": [
+        "me5-39"
+      ],
+      "resolved_via": "code_as_id",
+      "ambiguous": null,
+      "name": "Dhelmise",
+      "set_code": "ME5",
+      "card_number": "39",
+      "verified": true,
+      "model_confidence": 0.95,
+      "confidence": 235,
+      "candidates": 0
+    },
+    {
+      "rel": "Pokmeon test photos/20260805_125644.jpg",
+      "truth": "me5-39",
+      "source": "gemini",
+      "said": "me5-39",
+      "said_all": [
+        "me5-39"
+      ],
+      "resolved_via": "code_as_id",
+      "ambiguous": null,
+      "name": "Dhelmise",
+      "set_code": "ME5",
+      "card_number": "39",
+      "verified": true,
+      "model_confidence": 0.98,
+      "confidence": 235,
+      "candidates": 1
+    },
+    {
+      "rel": "Pokmeon test photos/20260805_125645(0).jpg",
+      "truth": "__none__",
+      "source": "gemini",
+      "said": "sfa-33",
+      "said_all": [
+        "sfa-33",
+        "sv6pt5-33"
+      ],
+      "resolved_via": "code_as_id",
+      "ambiguous": null,
+      "name": "Dhelmise",
+      "set_code": "SFA",
+      "card_number": "033/064",
+      "verified": false,
+      "model_confidence": 0.98,
+      "confidence": null,
+      "candidates": 0
+    },
+    {
+      "rel": "Pokmeon test photos/20260805_125645.jpg",
+      "truth": "__none__",
+      "source": "gemini",
+      "said": "sfa-39",
+      "said_all": [
+        "sfa-39",
+        "sv6pt5-39"
+      ],
+      "resolved_via": "code_as_id",
+      "ambiguous": null,
+      "name": "Dhelmise",
+      "set_code": "SFA",
+      "card_number": "039/064",
+      "verified": false,
+      "model_confidence": 0.98,
+      "confidence": null,
+      "candidates": 0
+    },
+    {
+      "rel": "Pokmeon test photos/20260805_125646.jpg",
+      "truth": "me5-39",
+      "source": "gemini",
+      "said": "twm-80",
+      "said_all": [
+        "twm-80",
+        "sv6-80"
+      ],
+      "resolved_via": "code_as_id",
+      "ambiguous": null,
+      "name": "Dhelmise",
+      "set_code": "TWM",
+      "card_number": "080/167",
+      "verified": false,
+      "model_confidence": 0.98,
+      "confidence": null,
+      "candidates": 0
+    },
+    {
+      "rel": "Pokmeon test photos/20260805_125650.jpg",
+      "truth": "sv10-133",
+      "source": "gemini",
+      "said": "sv10-133",
+      "said_all": [
+        "sv10-133"
+      ],
+      "resolved_via": "code_as_id",
+      "ambiguous": null,
+      "name": "Marnie's Scrafty",
+      "set_code": "SV10",
+      "card_number": "133",
+      "verified": true,
+      "model_confidence": 0.98,
+      "confidence": 175,
+      "candidates": 0
+    },
+    {
+      "rel": "Pokmeon test photos/20260805_125651.jpg",
+      "truth": "sv10-133",
+      "source": "gemini",
+      "said": "sv10-133",
+      "said_all": [
+        "sv10-133"
+      ],
+      "resolved_via": "code_as_id",
+      "ambiguous": null,
+      "name": "Marnie's Scrafty",
+      "set_code": "SV10",
+      "card_number": "133",
+      "verified": true,
+      "model_confidence": 1,
+      "confidence": 275,
+      "candidates": 0
+    },
+    {
+      "rel": "Pokmeon test photos/20260805_125651(0).jpg",
+      "truth": "__none__",
+      "source": "gemini",
+      "said": "pre-30",
+      "said_all": [
+        "pre-30",
+        "sv8pt5-30"
+      ],
+      "resolved_via": "code_as_id",
+      "ambiguous": null,
+      "name": "Marnie's Scrafty",
+      "set_code": "PRE",
+      "card_number": "030/181",
+      "verified": false,
+      "model_confidence": 0.98,
+      "confidence": null,
+      "candidates": 0
+    },
+    {
+      "rel": "Pokmeon test photos/20260805_125654.jpg",
+      "truth": "sv10-55",
+      "source": "gemini",
+      "said": "sv10-55",
+      "said_all": [
+        "sv10-55"
+      ],
+      "resolved_via": "code_as_id",
+      "ambiguous": null,
+      "name": "Huntail",
+      "set_code": "SV10",
+      "card_number": "55",
+      "verified": true,
+      "model_confidence": 1,
+      "confidence": 235,
+      "candidates": 0
+    },
+    {
+      "rel": "Pokmeon test photos/20260805_125655.jpg",
+      "truth": "__none__",
+      "source": "gemini",
+      "said": "sv2-204",
+      "said_all": [
+        "sv2-204",
+        "xsv2-204"
+      ],
+      "resolved_via": "image_url",
+      "ambiguous": null,
+      "name": "Marill",
+      "set_code": "XSV2",
+      "card_number": "204",
+      "verified": true,
+      "model_confidence": 0.9,
+      "confidence": 240,
+      "candidates": 1
+    },
+    {
+      "rel": "Pokmeon test photos/20260805_125656(0).jpg",
+      "truth": "sv10-55",
+      "source": "gemini",
+      "said": "scr-55",
+      "said_all": [
+        "scr-55",
+        "sv7-55"
+      ],
+      "resolved_via": "code_as_id",
+      "ambiguous": null,
+      "name": "Huntail",
+      "set_code": "SCR",
+      "card_number": "055/142",
+      "verified": false,
+      "model_confidence": 0.99,
+      "confidence": null,
+      "candidates": 0
+    },
+    {
+      "rel": "Pokmeon test photos/20260805_125656.jpg",
+      "truth": "__none__",
+      "source": "gemini",
+      "said": "tef-44",
+      "said_all": [
+        "tef-44",
+        "sv5-44"
+      ],
+      "resolved_via": "code_as_id",
+      "ambiguous": null,
+      "name": "Huntail",
+      "set_code": "TEF",
+      "card_number": "044/162",
+      "verified": false,
+      "model_confidence": 0.98,
+      "confidence": null,
+      "candidates": 0
+    },
+    {
+      "rel": "Pokmeon test photos/20260805_125700(0).jpg",
+      "truth": "sv10-168",
+      "source": "gemini",
+      "said": "par-168",
+      "said_all": [
+        "par-168"
+      ],
+      "resolved_via": "code_as_id",
+      "ambiguous": null,
+      "name": "Sacred Ash",
+      "set_code": "PAR",
+      "card_number": "168/182",
+      "verified": false,
+      "model_confidence": 0.99,
+      "confidence": null,
+      "candidates": 0
+    },
+    {
+      "rel": "Pokmeon test photos/20260805_125700.jpg",
+      "truth": "sv10-168",
+      "source": "gemini",
+      "said": "dri-168",
+      "said_all": [
+        "dri-168",
+        "sv10-168"
+      ],
+      "resolved_via": "code_as_id",
+      "ambiguous": null,
+      "name": "Sacred Ash",
+      "set_code": "DRI",
+      "card_number": "168/182",
+      "verified": false,
+      "model_confidence": 1,
+      "confidence": null,
+      "candidates": 0
+    },
+    {
+      "rel": "Pokmeon test photos/20260805_125704.jpg",
+      "truth": "sv10-163",
+      "source": "gemini",
+      "said": "ssp-163",
+      "said_all": [
+        "ssp-163",
+        "sv8-163"
+      ],
+      "resolved_via": "code_as_id",
+      "ambiguous": null,
+      "name": "Emcee's Hype",
+      "set_code": "SSP",
+      "card_number": "163/191",
+      "verified": false,
+      "model_confidence": 0.98,
+      "confidence": null,
+      "candidates": 0
+    },
+    {
+      "rel": "Pokmeon test photos/20260805_125704(0).jpg",
+      "truth": "sv10-163",
+      "source": "gemini",
+      "said": "ces-151",
+      "said_all": [
+        "ces-151",
+        "sm7-151"
+      ],
+      "resolved_via": "code_as_id",
+      "ambiguous": null,
+      "name": "Emcee's Hype",
+      "set_code": "CES",
+      "card_number": "151/168",
+      "verified": false,
+      "model_confidence": 0.98,
+      "confidence": null,
+      "candidates": 0
+    },
+    {
+      "rel": "Pokmeon test photos/20260805_125706.jpg",
+      "truth": "sv10-163",
+      "source": "gemini",
+      "said": "scr-163",
+      "said_all": [
+        "scr-163",
+        "sv7-163"
+      ],
+      "resolved_via": "code_as_id",
+      "ambiguous": null,
+      "name": "Emcee's Hype",
+      "set_code": "SCR",
+      "card_number": "163/182",
+      "verified": false,
+      "model_confidence": 0.99,
+      "confidence": null,
+      "candidates": 0
+    },
+    {
+      "rel": "Pokmeon test photos/20260805_125705.jpg",
+      "truth": "__none__",
+      "source": "gemini",
+      "said": "fst-147",
+      "said_all": [
+        "fst-147",
+        "swsh8-147"
+      ],
+      "resolved_via": "code_as_id",
+      "ambiguous": null,
+      "name": "Elesa's Sparkle",
+      "set_code": "FST",
+      "card_number": "147/264",
+      "verified": false,
+      "model_confidence": 0.92,
+      "confidence": null,
+      "candidates": 0
+    },
+    {
+      "rel": "Pokmeon test photos/20260805_125711.jpg",
+      "truth": "sv10-61",
+      "source": "gemini",
+      "said": "sv10-61",
+      "said_all": [
+        "sv10-61"
+      ],
+      "resolved_via": "code_as_id",
+      "ambiguous": null,
+      "name": "Wash Rotom",
+      "set_code": "SV10",
+      "card_number": "61",
+      "verified": true,
+      "model_confidence": 0.98,
+      "confidence": 250,
+      "candidates": 0
+    },
+    {
+      "rel": "Pokmeon test photos/20260805_125710(0).jpg",
+      "truth": "sv10-61",
+      "source": "gemini",
+      "said": "sv10-61",
+      "said_all": [
+        "sv10-61"
+      ],
+      "resolved_via": "code_as_id",
+      "ambiguous": null,
+      "name": "Wash Rotom",
+      "set_code": "SV10",
+      "card_number": "61",
+      "verified": true,
+      "model_confidence": 0.98,
+      "confidence": 170,
+      "candidates": 0
+    },
+    {
+      "rel": "Pokmeon test photos/20260805_125710.jpg",
+      "truth": "sv10-61",
+      "source": "gemini",
+      "said": "sv10-61",
+      "said_all": [
+        "sv10-61"
+      ],
+      "resolved_via": "code_as_id",
+      "ambiguous": null,
+      "name": "Wash Rotom",
+      "set_code": "SV10",
+      "card_number": "61",
+      "verified": true,
+      "model_confidence": 0.95,
+      "confidence": 250,
+      "candidates": 0
+    },
+    {
+      "rel": "Pokmeon test photos/20260805_125715.jpg",
+      "truth": "sv10-99",
+      "source": "gemini",
+      "said": "svi-98",
+      "said_all": [
+        "svi-98"
+      ],
+      "resolved_via": "code_as_id",
+      "ambiguous": null,
+      "name": "Meditite",
+      "set_code": "SVI",
+      "card_number": "098/198",
+      "verified": false,
+      "model_confidence": 0.98,
+      "confidence": null,
+      "candidates": 0
+    },
+    {
+      "rel": "Pokmeon test photos/20260805_125716.jpg",
+      "truth": "sv10-99",
+      "source": "gemini",
+      "said": "scr-86",
+      "said_all": [
+        "scr-86",
+        "sv7-86"
+      ],
+      "resolved_via": "code_as_id",
+      "ambiguous": null,
+      "name": "Meditite",
+      "set_code": "SCR",
+      "card_number": "086/142",
+      "verified": false,
+      "model_confidence": 0.98,
+      "confidence": null,
+      "candidates": 0
+    },
+    {
+      "rel": "Pokmeon test photos/20260805_125719.jpg",
+      "truth": "__none__",
+      "source": "gemini",
+      "said": "par-25",
+      "said_all": [
+        "par-25"
+      ],
+      "resolved_via": "code_as_id",
+      "ambiguous": null,
+      "name": "Slugma",
+      "set_code": "PAR",
+      "card_number": "025/182",
+      "verified": false,
+      "model_confidence": 0.98,
+      "confidence": null,
+      "candidates": 0
+    },
+    {
+      "rel": "Pokmeon test photos/20260805_125721.jpg",
+      "truth": "sv10-35",
+      "source": "gemini",
+      "said": "sv10-35",
+      "said_all": [
+        "sv10-35"
+      ],
+      "resolved_via": "code_as_id",
+      "ambiguous": null,
+      "name": "Ethan's Slugma",
+      "set_code": "SV10",
+      "card_number": "35",
+      "verified": true,
+      "model_confidence": 0.99,
+      "confidence": 260,
+      "candidates": 0
+    },
+    {
+      "rel": "Pokmeon test photos/20260805_125721(0).jpg",
+      "truth": "sv10-35",
+      "source": "gemini",
+      "said": "sv10-35",
+      "said_all": [
+        "sv10-35"
+      ],
+      "resolved_via": "code_as_id",
+      "ambiguous": null,
+      "name": "Ethan's Slugma",
+      "set_code": "SV10",
+      "card_number": "35",
+      "verified": true,
+      "model_confidence": 0.9,
+      "confidence": 235,
+      "candidates": 0
+    },
+    {
+      "rel": "Pokmeon test photos/20260805_125722.jpg",
+      "truth": "sv10-35",
+      "source": "gemini",
+      "said": null,
+      "said_all": [],
+      "resolved_via": "no_code_or_number",
+      "ambiguous": null,
+      "name": "Entei's Slugma",
+      "set_code": null,
+      "card_number": "003/020",
+      "verified": false,
+      "model_confidence": 0.95,
+      "confidence": null,
+      "candidates": 0
+    },
+    {
+      "rel": "Pokmeon test photos/20260805_125725.jpg",
+      "truth": "sv10-133",
+      "source": "gemini",
+      "said": "sv10-133",
+      "said_all": [
+        "sv10-133"
+      ],
+      "resolved_via": "code_as_id",
+      "ambiguous": null,
+      "name": "Marnie's Scrafty",
+      "set_code": "SV10",
+      "card_number": "133",
+      "verified": true,
+      "model_confidence": 0.95,
+      "confidence": 170,
+      "candidates": 0
+    },
+    {
+      "rel": "Pokmeon test photos/20260805_125727.jpg",
+      "truth": "sv10-133",
+      "source": "gemini",
+      "said": "sv10-133",
+      "said_all": [
+        "sv10-133"
+      ],
+      "resolved_via": "code_as_id",
+      "ambiguous": null,
+      "name": "Marnie's Scrafty",
+      "set_code": "SV10",
+      "card_number": "133",
+      "verified": true,
+      "model_confidence": 1,
+      "confidence": 275,
+      "candidates": 0
+    },
+    {
+      "rel": "Pokmeon test photos/20260805_125726.jpg",
+      "truth": "__none__",
+      "source": "gemini",
+      "said": "sv10-133",
+      "said_all": [
+        "sv10-133"
+      ],
+      "resolved_via": "code_as_id",
+      "ambiguous": null,
+      "name": "Marnie's Scrafty",
+      "set_code": "SV10",
+      "card_number": "133",
+      "verified": true,
+      "model_confidence": 0.98,
+      "confidence": 230,
+      "candidates": 0
+    },
+    {
+      "rel": "Pokmeon test photos/20260805_125726(0).jpg",
+      "truth": "sv10-133",
+      "source": "gemini",
+      "said": "drm-132",
+      "said_all": [
+        "drm-132"
+      ],
+      "resolved_via": "code_as_id",
+      "ambiguous": null,
+      "name": "Marnie's Scrafty",
+      "set_code": "DRM",
+      "card_number": "132/182",
+      "verified": false,
+      "model_confidence": 0.95,
+      "confidence": null,
+      "candidates": 0
+    },
+    {
+      "rel": "Pokmeon test photos/20260805_125729(0).jpg",
+      "truth": "sv10-55",
+      "source": "gemini",
+      "said": "scr-55",
+      "said_all": [
+        "scr-55",
+        "sv7-55"
+      ],
+      "resolved_via": "code_as_id",
+      "ambiguous": null,
+      "name": "Huntail",
+      "set_code": "SCR",
+      "card_number": "055/142",
+      "verified": false,
+      "model_confidence": 0.98,
+      "confidence": null,
+      "candidates": 0
+    },
+    {
+      "rel": "Pokmeon test photos/20260805_125729.jpg",
+      "truth": "sv10-55",
+      "source": "gemini",
+      "said": "sv10-55",
+      "said_all": [
+        "sv10-55"
+      ],
+      "resolved_via": "code_as_id",
+      "ambiguous": null,
+      "name": "Huntail",
+      "set_code": "SV10",
+      "card_number": "55",
+      "verified": true,
+      "model_confidence": 0.99,
+      "confidence": 235,
+      "candidates": 0
+    },
+    {
+      "rel": "Pokmeon test photos/20260805_125731(0).jpg",
+      "truth": "__none__",
+      "source": "gemini",
+      "said": "sv10-55",
+      "said_all": [
+        "sv10-55"
+      ],
+      "resolved_via": "code_as_id",
+      "ambiguous": null,
+      "name": "Huntail",
+      "set_code": "SV10",
+      "card_number": "55",
+      "verified": true,
+      "model_confidence": 1,
+      "confidence": 235,
+      "candidates": 0
+    },
+    {
+      "rel": "Pokmeon test photos/20260805_125731.jpg",
+      "truth": "__none__",
+      "source": "gemini",
+      "said": "sv10-55",
+      "said_all": [
+        "sv10-55"
+      ],
+      "resolved_via": "code_as_id",
+      "ambiguous": null,
+      "name": "Huntail",
+      "set_code": "SV10",
+      "card_number": "55",
+      "verified": true,
+      "model_confidence": 0.98,
+      "confidence": 145,
+      "candidates": 0
+    },
+    {
+      "rel": "Pokmeon test photos/20260805_125735(0).jpg",
+      "truth": "sv10-168",
+      "source": "gemini",
+      "said": "xy2-96",
+      "said_all": [
+        "xy2-96"
+      ],
+      "resolved_via": "code_as_id",
+      "ambiguous": null,
+      "name": "Sacred Ash",
+      "set_code": "XY2",
+      "card_number": "96",
+      "verified": true,
+      "model_confidence": 0.99,
+      "confidence": 205,
+      "candidates": 0
+    },
+    {
+      "rel": "Pokmeon test photos/20260805_125736.jpg",
+      "truth": "sv10-168",
+      "source": "gemini",
+      "said": "xy2-96",
+      "said_all": [
+        "xy2-96"
+      ],
+      "resolved_via": "code_as_id",
+      "ambiguous": null,
+      "name": "Sacred Ash",
+      "set_code": "XY2",
+      "card_number": "96",
+      "verified": true,
+      "model_confidence": 0.95,
+      "confidence": 205,
+      "candidates": 0
+    },
+    {
+      "rel": "Pokmeon test photos/20260805_125738.jpg",
+      "truth": "sv10-93",
+      "source": "gemini",
+      "said": "sv10-93",
+      "said_all": [
+        "sv10-93"
+      ],
+      "resolved_via": "code_as_id",
+      "ambiguous": null,
+      "name": "Ethan's Sudowoodo",
+      "set_code": "SV10",
+      "card_number": "93",
+      "verified": true,
+      "model_confidence": 0.99,
+      "confidence": 250,
+      "candidates": 0
+    },
+    {
+      "rel": "Pokmeon test photos/20260805_125735.jpg",
+      "truth": "sv10-168",
+      "source": "gemini",
+      "said": "ssp-168",
+      "said_all": [
+        "ssp-168",
+        "sv8-168"
+      ],
+      "resolved_via": "code_as_id",
+      "ambiguous": null,
+      "name": "Sacred Ash",
+      "set_code": "SSP",
+      "card_number": "168/191",
+      "verified": false,
+      "model_confidence": 0.98,
+      "confidence": null,
+      "candidates": 0
+    },
+    {
+      "rel": "Pokmeon test photos/20260805_125739(0).jpg",
+      "truth": "sv10-93",
+      "source": "gemini",
+      "said": "asr-tg05",
+      "said_all": [
+        "asr-tg05",
+        "swsh10tg-tg05"
+      ],
+      "resolved_via": "code_as_id",
+      "ambiguous": null,
+      "name": "Sudowoodo",
+      "set_code": "ASR",
+      "card_number": "TG05/TG30",
+      "verified": false,
+      "model_confidence": 0.98,
+      "confidence": null,
+      "candidates": 0
+    },
+    {
+      "rel": "Pokmeon test photos/20260805_125744.jpg",
+      "truth": "sv10-93",
+      "source": "gemini",
+      "said": "sv10-93",
+      "said_all": [
+        "sv10-93"
+      ],
+      "resolved_via": "code_as_id",
+      "ambiguous": null,
+      "name": "Ethan's Sudowoodo",
+      "set_code": "SV10",
+      "card_number": "93",
+      "verified": true,
+      "model_confidence": 1,
+      "confidence": 275,
+      "candidates": 0
+    },
+    {
+      "rel": "Pokmeon test photos/20260805_125740.jpg",
+      "truth": "sv10-93",
+      "source": "gemini",
+      "said": "jtg-80",
+      "said_all": [
+        "jtg-80",
+        "sv9-80"
+      ],
+      "resolved_via": "code_as_id",
+      "ambiguous": null,
+      "name": "Bruno's Sudowoodo",
+      "set_code": "JTG",
+      "card_number": "080/182",
+      "verified": false,
+      "model_confidence": 0.98,
+      "confidence": null,
+      "candidates": 0
+    },
+    {
+      "rel": "Pokmeon test photos/20260805_125739.jpg",
+      "truth": "__none__",
+      "source": "gemini",
+      "said": "sfa-67",
+      "said_all": [
+        "sfa-67",
+        "sv6pt5-67"
+      ],
+      "resolved_via": "code_as_id",
+      "ambiguous": null,
+      "name": "Sudowoodo",
+      "set_code": "SFA",
+      "card_number": "067/064",
+      "verified": false,
+      "model_confidence": 0.99,
+      "confidence": null,
+      "candidates": 0
+    }
+  ]
+}

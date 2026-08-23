@@ -1,0 +1,357 @@
+{
+  "generated_for": "phash salvageability",
+  "margin": 4,
+  "rows": [
+    {
+      "threshold": 0,
+      "A": {
+        "fired": 0,
+        "correct": 0,
+        "wrong": 0,
+        "wrong_on_absent": 0,
+        "precision": null,
+        "coverage": 0
+      },
+      "B": {
+        "fired": 0,
+        "correct": 0,
+        "wrong": 0,
+        "wrong_on_absent": 0,
+        "precision": null,
+        "coverage": 0
+      },
+      "C": {
+        "fired": 0,
+        "correct": 0,
+        "wrong": 0,
+        "wrong_on_absent": 0,
+        "precision": null,
+        "coverage": 0
+      }
+    },
+    {
+      "threshold": 1,
+      "A": {
+        "fired": 0,
+        "correct": 0,
+        "wrong": 0,
+        "wrong_on_absent": 0,
+        "precision": null,
+        "coverage": 0
+      },
+      "B": {
+        "fired": 0,
+        "correct": 0,
+        "wrong": 0,
+        "wrong_on_absent": 0,
+        "precision": null,
+        "coverage": 0
+      },
+      "C": {
+        "fired": 0,
+        "correct": 0,
+        "wrong": 0,
+        "wrong_on_absent": 0,
+        "precision": null,
+        "coverage": 0
+      }
+    },
+    {
+      "threshold": 2,
+      "A": {
+        "fired": 3,
+        "correct": 0,
+        "wrong": 3,
+        "wrong_on_absent": 3,
+        "precision": 0,
+        "coverage": 0.046875
+      },
+      "B": {
+        "fired": 0,
+        "correct": 0,
+        "wrong": 0,
+        "wrong_on_absent": 0,
+        "precision": null,
+        "coverage": 0
+      },
+      "C": {
+        "fired": 0,
+        "correct": 0,
+        "wrong": 0,
+        "wrong_on_absent": 0,
+        "precision": null,
+        "coverage": 0
+      }
+    },
+    {
+      "threshold": 3,
+      "A": {
+        "fired": 3,
+        "correct": 0,
+        "wrong": 3,
+        "wrong_on_absent": 3,
+        "precision": 0,
+        "coverage": 0.046875
+      },
+      "B": {
+        "fired": 0,
+        "correct": 0,
+        "wrong": 0,
+        "wrong_on_absent": 0,
+        "precision": null,
+        "coverage": 0
+      },
+      "C": {
+        "fired": 0,
+        "correct": 0,
+        "wrong": 0,
+        "wrong_on_absent": 0,
+        "precision": null,
+        "coverage": 0
+      }
+    },
+    {
+      "threshold": 4,
+      "A": {
+        "fired": 9,
+        "correct": 0,
+        "wrong": 9,
+        "wrong_on_absent": 6,
+        "precision": 0,
+        "coverage": 0.140625
+      },
+      "B": {
+        "fired": 0,
+        "correct": 0,
+        "wrong": 0,
+        "wrong_on_absent": 0,
+        "precision": null,
+        "coverage": 0
+      },
+      "C": {
+        "fired": 0,
+        "correct": 0,
+        "wrong": 0,
+        "wrong_on_absent": 0,
+        "precision": null,
+        "coverage": 0
+      }
+    },
+    {
+      "threshold": 5,
+      "A": {
+        "fired": 13,
+        "correct": 0,
+        "wrong": 13,
+        "wrong_on_absent": 7,
+        "precision": 0,
+        "coverage": 0.203125
+      },
+      "B": {
+        "fired": 0,
+        "correct": 0,
+        "wrong": 0,
+        "wrong_on_absent": 0,
+        "precision": null,
+        "coverage": 0
+      },
+      "C": {
+        "fired": 0,
+        "correct": 0,
+        "wrong": 0,
+        "wrong_on_absent": 0,
+        "precision": null,
+        "coverage": 0
+      }
+    },
+    {
+      "threshold": 6,
+      "A": {
+        "fired": 32,
+        "correct": 0,
+        "wrong": 32,
+        "wrong_on_absent": 7,
+        "precision": 0,
+        "coverage": 0.5
+      },
+      "B": {
+        "fired": 0,
+        "correct": 0,
+        "wrong": 0,
+        "wrong_on_absent": 0,
+        "precision": null,
+        "coverage": 0
+      },
+      "C": {
+        "fired": 0,
+        "correct": 0,
+        "wrong": 0,
+        "wrong_on_absent": 0,
+        "precision": null,
+        "coverage": 0
+      }
+    },
+    {
+      "threshold": 7,
+      "A": {
+        "fired": 36,
+        "correct": 0,
+        "wrong": 36,
+        "wrong_on_absent": 9,
+        "precision": 0,
+        "coverage": 0.5625
+      },
+      "B": {
+        "fired": 0,
+        "correct": 0,
+        "wrong": 0,
+        "wrong_on_absent": 0,
+        "precision": null,
+        "coverage": 0
+      },
+      "C": {
+        "fired": 0,
+        "correct": 0,
+        "wrong": 0,
+        "wrong_on_absent": 0,
+        "precision": null,
+        "coverage": 0
+      }
+    },
+    {
+      "threshold": 8,
+      "A": {
+        "fired": 45,
+        "correct": 0,
+        "wrong": 45,
+        "wrong_on_absent": 9,
+        "precision": 0,
+        "coverage": 0.703125
+      },
+      "B": {
+        "fired": 0,
+        "correct": 0,
+        "wrong": 0,
+        "wrong_on_absent": 0,
+        "precision": null,
+        "coverage": 0
+      },
+      "C": {
+        "fired": 0,
+        "correct": 0,
+        "wrong": 0,
+        "wrong_on_absent": 0,
+        "precision": null,
+        "coverage": 0
+      }
+    },
+    {
+      "threshold": 9,
+      "A": {
+        "fired": 50,
+        "correct": 0,
+        "wrong": 50,
+        "wrong_on_absent": 9,
+        "precision": 0,
+        "coverage": 0.78125
+      },
+      "B": {
+        "fired": 0,
+        "correct": 0,
+        "wrong": 0,
+        "wrong_on_absent": 0,
+        "precision": null,
+        "coverage": 0
+      },
+      "C": {
+        "fired": 0,
+        "correct": 0,
+        "wrong": 0,
+        "wrong_on_absent": 0,
+        "precision": null,
+        "coverage": 0
+      }
+    },
+    {
+      "threshold": 10,
+      "A": {
+        "fired": 60,
+        "correct": 0,
+        "wrong": 60,
+        "wrong_on_absent": 11,
+        "precision": 0,
+        "coverage": 0.9375
+      },
+      "B": {
+        "fired": 0,
+        "correct": 0,
+        "wrong": 0,
+        "wrong_on_absent": 0,
+        "precision": null,
+        "coverage": 0
+      },
+      "C": {
+        "fired": 0,
+        "correct": 0,
+        "wrong": 0,
+        "wrong_on_absent": 0,
+        "precision": null,
+        "coverage": 0
+      }
+    },
+    {
+      "threshold": 11,
+      "A": {
+        "fired": 61,
+        "correct": 0,
+        "wrong": 61,
+        "wrong_on_absent": 11,
+        "precision": 0,
+        "coverage": 0.953125
+      },
+      "B": {
+        "fired": 0,
+        "correct": 0,
+        "wrong": 0,
+        "wrong_on_absent": 0,
+        "precision": null,
+        "coverage": 0
+      },
+      "C": {
+        "fired": 0,
+        "correct": 0,
+        "wrong": 0,
+        "wrong_on_absent": 0,
+        "precision": null,
+        "coverage": 0
+      }
+    },
+    {
+      "threshold": 12,
+      "A": {
+        "fired": 63,
+        "correct": 0,
+        "wrong": 63,
+        "wrong_on_absent": 12,
+        "precision": 0,
+        "coverage": 0.984375
+      },
+      "B": {
+        "fired": 0,
+        "correct": 0,
+        "wrong": 0,
+        "wrong_on_absent": 0,
+        "precision": null,
+        "coverage": 0
+      },
+      "C": {
+        "fired": 0,
+        "correct": 0,
+        "wrong": 0,
+        "wrong_on_absent": 0,
+        "precision": null,
+        "coverage": 0
+      }
+    }
+  ]
+}

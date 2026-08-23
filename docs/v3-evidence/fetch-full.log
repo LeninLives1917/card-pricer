@@ -1,0 +1,51 @@
+[fetch-refs] cache=C:\Users\daith\.card-pricer-v3
+[fetch-refs] 172 sets | imgConcurrency=16 | unauthenticated
+[fetch-refs] 18514 cards listed in 392.7s
+[fetch-refs] 500 fetched (208.1/s) | 228 cached | 0 failed
+[fetch-refs] 1000 fetched (197.8/s) | 228 cached | 0 failed
+[fetch-refs] 1500 fetched (180.9/s) | 228 cached | 0 failed
+[fetch-refs] 2000 fetched (181.6/s) | 228 cached | 0 failed
+[fetch-refs] 2500 fetched (173.4/s) | 228 cached | 0 failed
+[fetch-refs] 3000 fetched (175.0/s) | 228 cached | 0 failed
+[fetch-refs] 3500 fetched (176.3/s) | 228 cached | 1 failed
+[fetch-refs] 4000 fetched (174.4/s) | 228 cached | 1 failed
+[fetch-refs] 4500 fetched (169.3/s) | 228 cached | 1 failed
+[fetch-refs] 5000 fetched (170.1/s) | 228 cached | 2 failed
+[fetch-refs] 5500 fetched (172.7/s) | 228 cached | 2 failed
+[fetch-refs] 6000 fetched (169.9/s) | 228 cached | 51 failed
+[fetch-refs] 6500 fetched (169.0/s) | 228 cached | 51 failed
+[fetch-refs] 7000 fetched (164.5/s) | 228 cached | 51 failed
+[fetch-refs] 7500 fetched (162.4/s) | 228 cached | 51 failed
+[fetch-refs] 8000 fetched (162.4/s) | 228 cached | 51 failed
+[fetch-refs] 8500 fetched (163.1/s) | 228 cached | 51 failed
+[fetch-refs] 9000 fetched (164.0/s) | 228 cached | 51 failed
+[fetch-refs] 9500 fetched (165.1/s) | 228 cached | 51 failed
+[fetch-refs] 10000 fetched (166.1/s) | 228 cached | 51 failed
+[fetch-refs] 10500 fetched (167.8/s) | 228 cached | 51 failed
+[fetch-refs] 11000 fetched (169.1/s) | 228 cached | 51 failed
+[fetch-refs] 11500 fetched (169.4/s) | 228 cached | 51 failed
+[fetch-refs] 12000 fetched (167.0/s) | 228 cached | 51 failed
+[fetch-refs] 12500 fetched (166.1/s) | 228 cached | 51 failed
+[fetch-refs] 13000 fetched (166.4/s) | 228 cached | 51 failed
+[fetch-refs] 13500 fetched (167.1/s) | 228 cached | 51 failed
+[fetch-refs] 14000 fetched (167.8/s) | 228 cached | 51 failed
+[fetch-refs] 14500 fetched (168.0/s) | 228 cached | 51 failed
+[fetch-refs] 15000 fetched (168.4/s) | 228 cached | 51 failed
+[fetch-refs] 15500 fetched (168.8/s) | 228 cached | 51 failed
+[fetch-refs] 16000 fetched (169.5/s) | 228 cached | 51 failed
+[fetch-refs] 16500 fetched (168.9/s) | 228 cached | 51 failed
+[fetch-refs] 17000 fetched (169.7/s) | 228 cached | 51 failed
+[fetch-refs] 17500 fetched (170.5/s) | 228 cached | 51 failed
+[fetch-refs] 18000 fetched (170.0/s) | 228 cached | 51 failed
+
+[fetch-refs] ---------------- summary ----------------
+[fetch-refs] fetched      : 18235
+[fetch-refs] already cached: 228
+[fetch-refs] failed       : 51
+[fetch-refs] retried      : 97 requests needed 208 extra attempts
+[fetch-refs] manifest size: 18463 cards
+[fetch-refs] downloaded   : 2880.3 MB source → 489.3 MB cached
+[fetch-refs] rate         : 167.5 cards/s  (26.5 MB/s)
+[fetch-refs] per-card     : 161.7 KB source, 27.5 KB cached
+[fetch-refs] projection   : 51 remaining ≈ 0.0 min, 8.1 MB
+[fetch-refs] elapsed      : 501.6s

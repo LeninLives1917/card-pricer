@@ -1,0 +1,63 @@
+{
+  "provider": "claude",
+  "model": "claude-sonnet-4-6 (production identifyCore)",
+  "rows": [
+    {
+      "rel": "Pokmeon test photos/20260805_125549.jpg",
+      "truth": "me5-72",
+      "source": "claude",
+      "said": "pbl-72",
+      "said_all": [
+        "pbl-72",
+        "me5-72"
+      ],
+      "resolved_via": "code_as_id",
+      "ambiguous": null,
+      "name": "Antique Armor Fossil",
+      "set_code": "PBL",
+      "card_number": "72",
+      "verified": true,
+      "model_confidence": 0.92,
+      "confidence": 220,
+      "candidates": 0
+    },
+    {
+      "rel": "Pokmeon test photos/20260805_125550.jpg",
+      "truth": "me5-72",
+      "source": "claude",
+      "said": "twm-127",
+      "said_all": [
+        "twm-127",
+        "sv6-127"
+      ],
+      "resolved_via": "code_as_id",
+      "ambiguous": null,
+      "name": "Antique Armor Fossil",
+      "set_code": "TWM",
+      "card_number": "127/167",
+      "verified": false,
+      "model_confidence": 0.72,
+      "confidence": null,
+      "candidates": 0
+    },
+    {
+      "rel": "Pokmeon test photos/20260805_125554.jpg",
+      "truth": "me5-60",
+      "source": "claude",
+      "said": "pbl-60",
+      "said_all": [
+        "pbl-60",
+        "me5-60"
+      ],
+      "resolved_via": "code_as_id",
+      "ambiguous": null,
+      "name": "Skarmory",
+      "set_code": "PBL",
+      "card_number": "60",
+      "verified": true,
+      "model_confidence": 0.92,
+      "confidence": 235,
+      "candidates": 0
+    }
+  ]
+}
