@@ -12,10 +12,15 @@ import express from 'express';
 import { widget_loaded_total } from '../../../infra/observability/metrics.js';
 import { supabase } from '../_clients.js';
 import { getCardDbState, getCatalogueBuiltAt } from '../_card-db-boot.js';
+import fs from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { dirname, join } from 'node:path';
+
 import { getFastPathCounts } from '../../../infra/observability/fast-path-counters.js';
 import { getSnapshotCounts } from '../../../infra/observability/price-snapshot-counters.js';
 import { getPriceMatchCounts } from '../../../infra/observability/price-match-counters.js';
 import { getTextEntryCounts } from '../../../infra/observability/text-entry-counters.js';
+import { reconcileEnv } from '../../../infra/observability/env-reconcile.js';
 import { isEnabled as rectifyEnabled } from '../../../pricing/card-rectify.js';
 import { getFastPathMode } from '../../../pricing/fast-path-mode.js';
 
@@ -67,6 +72,7 @@ export async function buildHealthPayload(deps = {}) {
   const readSnapshots = deps.snapshots ?? getSnapshotCounts;
   const readPriceMatch = deps.priceMatch ?? getPriceMatchCounts;
   const readTextEntry = deps.textEntry ?? getTextEntryCounts;
+  const readBlueprint = deps.blueprint ?? defaultBlueprint;
 
   // Flat boolean keys consumed by the V2 admin tab (apps/vendor/modules/tabs/admin.js).
   // V1 nested `apis.*` shape is preserved alongside for backward compat with any
@@ -133,6 +139,7 @@ export async function buildHealthPayload(deps = {}) {
     price_history: priceHistoryCheck(readSnapshots()),
     price_match: priceMatchCheck(readPriceMatch()),
     text_entry: textEntryCheck(readTextEntry()),
+    env_drift: reconcileEnv({ blueprint: readBlueprint(), env }),
     // Reported because it was previously unverifiable from outside the box:
     // the only way to know whether rectification was on in production was to
     // trust that someone had set it. Informational, not a failure — health
@@ -161,7 +168,23 @@ export async function buildHealthPayload(deps = {}) {
   // Degraded, not down: the scanner still answers via the vision fallback, so
   // this must not return a non-2xx and take the service out of the load
   // balancer. It reports the problem; it does not perform surgery.
-  const failing = Object.entries(checks).filter(([, c]) => !c.ok).map(([k]) => k);
+  //
+  // ADVISORY checks are reported truthfully but never set `degraded`.
+  // env_drift is one: a blueprint value that did not reach the process is a
+  // real finding and worth fixing, but it is operational hygiene, not an
+  // outage. Letting it degrade the service would make the external monitor
+  // (.github/workflows/health-monitor.yml) fire every ten minutes until
+  // someone edits a dashboard — and an alarm that is always on is an alarm
+  // nobody reads, which is the same failure as no alarm at all. That is not
+  // hypothetical here: the preflight CARD_RECTIFY check cried wolf for
+  // exactly this reason and was ignored.
+  //
+  // The finding is still impossible to miss: env_drift.ok is false in the
+  // payload, and the monitor prints it into the Actions log on every run.
+  const ADVISORY = new Set(['env_drift']);
+  const failing = Object.entries(checks)
+    .filter(([k, c]) => !c.ok && !ADVISORY.has(k))
+    .map(([k]) => k);
 
   return {
     status: failing.length ? 'degraded' : 'ok',
@@ -253,6 +276,28 @@ function priceMatchCheck(c) {
       `${c.rejected_no_number_read} with no number read)` +
       (perSource ? ` [${perSource}]` : ''),
   };
+}
+
+/**
+ * render.yaml ships inside the deploy, so the process can read what it was
+ * promised and compare it against what it got. Read once and cached: the
+ * blueprint cannot change without a redeploy, and a health check should not
+ * hit the disk on every request.
+ *
+ * Returns null when unreadable, and reconcileEnv reports that as UNCHECKED
+ * rather than clean — a reconciliation that silently degrades into "no drift"
+ * is worse than none, because it still prints a reassuring line.
+ */
+let _blueprintCache;
+function defaultBlueprint() {
+  if (_blueprintCache !== undefined) return _blueprintCache;
+  try {
+    const here = dirname(fileURLToPath(import.meta.url));
+    _blueprintCache = fs.readFileSync(join(here, '..', '..', '..', 'render.yaml'), 'utf8');
+  } catch {
+    _blueprintCache = null;
+  }
+  return _blueprintCache;
 }
 
 /**

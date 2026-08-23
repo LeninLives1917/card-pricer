@@ -160,4 +160,20 @@ jobs:
           show('fast_path  ', c.get('fast_path'), ['mode', 'attempted', 'hit_rate'])
           show('catalogue  ', c.get('catalogue'), ['cards', 'age_days'])
           show('price_hist ', c.get('price_history'), ['attempted', 'written', 'write_rate'])
+
+          # Environment drift is ADVISORY — it deliberately does not set
+          # `degraded`, because an alarm that is always on is an alarm nobody
+          # reads. Printing it here is how it stays impossible to miss without
+          # being impossible to ignore.
+          ed = c.get('env_drift') or {}
+          if not ed.get('readable', False):
+              print('env_drift  : UNCHECKED —', ed.get('detail', 'no block'))
+          elif ed.get('drift'):
+              print(f"env_drift  : {len(ed['drift'])} blueprint value(s) did not reach the process")
+              for d in ed['drift']:
+                  print(f"             {d['key']}: declared {d['declared']!r}, actual {d['actual']!r}")
+          else:
+              print(f"env_drift  : clean ({ed.get('declared')} declared)")
+          if ed.get('missing'):
+              print(f"             {len(ed['missing'])} dashboard secret(s) unset: {', '.join(ed['missing'])}")
           PY
