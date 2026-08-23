@@ -7,11 +7,18 @@
 // flags the duplication with server.js — F23 hoists this to one source of
 // truth in pricing/set-aliases.js).
 //
-// TODO(S6): pricing/set-aliases.js is empty as of S8 commit 6af2e32.
-// When A2 ships S6, replace the inline CM_SET_SLUGS / CM_PTCGO_CODES tables
-// below with `import { CM_SET_SLUGS, CM_PTCGO_CODES } from '../../../pricing/set-aliases.js'`.
-// The widget (A6 / S9) and any future surface that builds Cardmarket URLs
-// must use the same source.
+// The old TODO here said "pricing/set-aliases.js is empty as of S8 commit
+// 6af2e32". It is not — it is 171 lines and exports CM_SET_SLUGS and
+// CM_PTCGO_CODES. Both tables were compared against the inline ones below:
+// 33 keys each, same keys, same values, no drift.
+//
+// So this is a duplicate that happens to agree, not a duplicate that has
+// diverged — which is the good case, and the reason to leave it alone for
+// now rather than reach across from apps/quote into pricing/ in a commit
+// about something else. It gets unified with the shared typed-entry core,
+// where both surfaces move onto one module together and a single reconcile
+// test can hold them there. Until then, a change to one table must be made
+// to the other; the drift is not currently caught by anything.
 //
 // URL pattern:
 //   /en/Pokemon/Products/Singles/{Set-Slug}/{Card-Slug}-{PtcgoCode}{PaddedNum}

@@ -5,7 +5,7 @@ Node/Express + Supabase, deployed on Render. Serves a real shop.
 ## Commands
 
 ```bash
-npm test                      # node --test, 636 specs. Must stay green.
+npm test                      # node --test, 760 specs. Must stay green.
 node scripts/preflight.js     # run the night before a trade show
 node scripts/build-phash-db.js  # catalogue crawl (fetches only what is missing)
 ```

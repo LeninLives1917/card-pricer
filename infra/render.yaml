@@ -1,14 +1,30 @@
+# ############################################################################
+# SUPERSEDED — DO NOT DEPLOY FROM THIS FILE.
+#
+# The cutover this file was written for has happened. `/render.yaml` at the
+# repo root is the live spec, and this one has since drifted from it in three
+# ways that would each cause a silent regression:
+#
+#   1. `startCommand: node server.js` targets the DEAD 5,729-line root
+#      server.js. The live entrypoint is `node apps/server/server.js`.
+#   2. `CARD_RECTIFY` is absent, so perspective rectification would switch
+#      OFF. Measured cost: 40.5% top-1 -> 1.0% on realistic scenes.
+#   3. `PHASH_FAST_PATH` is absent, so the fast path would revert to its code
+#      default of `shadow` (pricing/fast-path-mode.js:63) — a path formally
+#      declared dead in docs/V3_BENCHMARK.md §15.
+#
+# Kept rather than deleted only because six docs link to it for the disk and
+# env-var blocks. Treat it as reference material for those, never as a
+# deploy target. Reconcile against /render.yaml before believing anything
+# here.
+# ############################################################################
+#
 # Card-Pricer V2 — Render service definition
 # Owner: A8 | Slice: S4
 #
 # Per docs/V2_ARCHITECTURE.md §1 + Q2 (Render Starter $7/mo + persistent disk).
 # Per V2_AUDIT.md §4 — V1 render.yaml only declared 6 of 19+ env vars; this
 # file lists every var the code references plus V2-new flags (Q3, Q5).
-#
-# IMPORTANT: This file lives at infra/render.yaml. The V1 render.yaml at the
-# repo root is the LIVE production deploy spec — DO NOT MODIFY IT until
-# phase-5 cutover (per Q6 in-place deploy runbook). At cutover the orchestrator
-# replaces /render.yaml with this file's contents in a single commit.
 #
 # Region rationale: Supabase project is eu-west-1 (Ireland). Render's nearest
 # region is `frankfurt`; that keeps round-trip from Express to Postgres in

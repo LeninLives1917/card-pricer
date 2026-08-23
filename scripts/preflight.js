@@ -29,6 +29,8 @@ import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 
+import { isEnabled as isRectifyEnabled } from '../pricing/card-rectify.js';
+
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = join(__dirname, '..');
 const DATA = join(REPO_ROOT, 'data');
@@ -163,8 +165,13 @@ function checkPrices() {
 }
 
 function checkRectify() {
-  if (process.env.CARD_RECTIFY === '1') {
-    ok('card rectification', 'CARD_RECTIFY=1');
+  // Was `process.env.CARD_RECTIFY === '1'`. pricing/card-rectify.js:63-67
+  // documents that literal comparison as a trap and exports isEnabled() with
+  // a truthy set, so preflight was reporting "not set" for CARD_RECTIFY=true —
+  // a value the app itself accepts. A pre-show check that cries wolf is a
+  // pre-show check nobody reads.
+  if (isRectifyEnabled(process.env)) {
+    ok('card rectification', `CARD_RECTIFY=${process.env.CARD_RECTIFY}`);
   } else {
     warn('card rectification', 'CARD_RECTIFY not set',
       'cropToCard falls back to the .trim() heuristic, which measured 1.0% top-1 ' +
