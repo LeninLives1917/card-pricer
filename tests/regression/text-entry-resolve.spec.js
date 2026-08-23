@@ -267,3 +267,37 @@ describe('resolveTypedLine — evidence decides, not order', () => {
     assert.equal(r.reason, 'no_interpretation');
   });
 });
+
+describe('alphanumeric collector numbers keep the catalogue\'s own casing', () => {
+  test('THE DEFECT: "Froakie XY03" resolved to an id the catalogue does not hold', () => {
+    // set-resolve.js composes its answer as `${setId}-${normalisedNumber}`
+    // and that normalisation lowercases. Numeric numbers round-trip; an
+    // alphanumeric one does not — the catalogue key is `xyp-XY03` and the
+    // rebuilt id was `xyp-xy03`. It reported RESOLVED and then the lookup
+    // missed, so the card came back with a null name. Resolved and unusable
+    // is worse than not found, because only one of those is visible.
+    const r = resolveTypedLine('Froakie XY03', deps);
+    assert.equal(r.status, 'resolved');
+    assert.equal(r.card_id, 'xyp-XY03', 'must be the real catalogue key, not a lowercased rebuild');
+    assert.equal(r.candidates[0].name, 'Froakie', 'a null name here means the id did not resolve');
+    assert.ok(deps.cardDb[r.card_id], 'the returned id must exist in the catalogue');
+  });
+
+  test('the same card via a separated badge and via a prefix', () => {
+    for (const line of ['Froakie XY 03', 'fro XY 03', 'fro XY03']) {
+      const r = resolveTypedLine(line, deps);
+      assert.equal(r.card_id, 'xyp-XY03', line);
+      assert.equal(r.candidates[0].name, 'Froakie', line);
+    }
+  });
+
+  test('every resolved id exists in the catalogue, across shapes', () => {
+    const lines = ['cha 4/102', 'Charizard ex 056/197', 'MEG 172/132', 'PFL 94',
+      "N's Zekrom MEP 031", 'Froakie XY03', 'wug 224/091', 'sv3pt5-4'];
+    const broken = lines
+      .map((l) => [l, resolveTypedLine(l, deps)])
+      .filter(([, r]) => r.status === 'resolved' && !deps.cardDb[r.card_id])
+      .map(([l, r]) => `${l} -> ${r.card_id}`);
+    assert.deepEqual(broken, [], 'these resolved to ids the catalogue does not hold');
+  });
+});

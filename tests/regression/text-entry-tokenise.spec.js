@@ -179,3 +179,63 @@ describe('refusals', () => {
     assert.deepEqual(priors, [...priors].sort((a, b) => b - a));
   });
 });
+
+describe('spacing is a keyboard problem, not an ambiguity', () => {
+  // Reported from real use: "it should work with both". People type "4/102",
+  // "4 / 102" and "cha4/102" and mean one card. The tokeniser splits on
+  // whitespace, so those arrive as one token, three tokens and one glued
+  // token — three parses of one intent. Normalising the spacing is the only
+  // rewriting done to a line, and it changes which READINGS are possible not
+  // at all; it just stops the splitter mangling them.
+
+  test('spaces around the slash do not change the reading', () => {
+    for (const v of ['cha 4/102', 'cha 4 / 102', 'cha 4/ 102', 'cha 4 /102']) {
+      const t = top(v);
+      assert.equal(t.card_number, '4', v);
+      assert.equal(t.total, '102', v);
+      assert.equal(t.name, 'cha', v);
+    }
+  });
+
+  test('a name glued to its number is split', () => {
+    assert.equal(top('cha4/102').name, 'cha');
+    assert.equal(top('cha4/102').card_number, '4');
+    assert.equal(byShape('MEG172/132', 'set_then_name').set_code, 'MEG');
+  });
+
+  test('tabs and runs of spaces collapse', () => {
+    assert.equal(top('  cha    4/102  ').name, 'cha');
+    assert.equal(top('cha\t4/102').name, 'cha');
+  });
+
+  test('normalising does NOT glue a real name to a real number', () => {
+    // "Charizard ex 056/197" must keep its suffix and its denominator.
+    const t = top('Charizard ex 056/197');
+    assert.equal(t.name, 'Charizard ex');
+    assert.equal(t.card_number, '056');
+    assert.equal(t.total, '197');
+  });
+});
+
+describe('a promo badge separated from its number', () => {
+  test('"Froakie XY 03" yields the rejoined reading "XY03"', () => {
+    // The badge and the digits are separate elements on the card, printed
+    // with a gap, so whether a person types a space between them is a coin
+    // toss. The catalogue stores the joined form (xyp-XY03).
+    const i = byShape('Froakie XY 03', 'promo_split_rejoined');
+    assert.ok(i, 'the rejoined reading must exist');
+    assert.equal(i.card_number, 'XY03');
+    assert.equal(i.name, 'Froakie');
+  });
+
+  test('the rejoin does NOT fire when a denominator was given', () => {
+    // "Charizard ex 056/197" has a total, so "ex" is a name suffix and not a
+    // badge. Rejoining would invent "EX056".
+    assert.equal(byShape('Charizard ex 056/197', 'promo_split_rejoined'), undefined);
+  });
+
+  test('a name suffix is heavily penalised even when it could be a badge', () => {
+    const i = byShape('Pikachu V 43', 'promo_split_rejoined');
+    if (i) assert.ok(i.prior < 0.2, `expected a low prior for a name suffix, got ${i.prior}`);
+  });
+});

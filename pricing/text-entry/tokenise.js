@@ -97,11 +97,34 @@ const norm = (s) => String(s ?? '').trim().toLowerCase();
  * @param {string} line
  * @returns {{raw: string, interpretations: Interpretation[], unclaimed: string[]}}
  */
+/**
+ * Put the line into a shape the word-splitter can read, WITHOUT deciding
+ * anything about it.
+ *
+ * People type "4/102", "4 / 102" and "cha4/102" and mean the same card. The
+ * tokeniser splits on whitespace, so those arrive as one token, three tokens
+ * and one glued token respectively — three different parses of one intent.
+ * That is a keyboard problem, not an ambiguity, and it is the only kind of
+ * rewriting done here: nothing below changes which readings are possible, it
+ * only stops the splitter mangling them.
+ */
+export function normaliseSpacing(s) {
+  return String(s ?? '')
+    .trim()
+    // "4 / 102" and "4/ 102" -> "4/102". Spaces around a slash are never
+    // meaningful; a collector number is one thing.
+    .replace(/(\d)\s*\/\s*(\d)/g, '$1/$2')
+    // "cha4/102" and "MEG172/132" -> "cha 4/102". A letter run flush against
+    // a numerator is two tokens typed without the space.
+    .replace(/([A-Za-z])(\d{1,4}\/\d{1,4})/g, '$1 $2')
+    .replace(/\s+/g, ' ');
+}
+
 export function tokeniseLine(line) {
   const raw = String(line ?? '').trim();
   if (!raw) return { raw: '', interpretations: [], unclaimed: [] };
 
-  let words = raw.split(/\s+/);
+  let words = normaliseSpacing(raw).split(/\s+/);
 
   let qty = 1;
   let lang = null;
@@ -215,6 +238,26 @@ export function tokeniseLine(line) {
         set_code: pre[0].toUpperCase(),
         prior: 0.8, shape: 'set_then_name',
       });
+    }
+
+    // READING 4 — a promo badge SEPARATED from its number. "Froakie XY 03" is
+    // the same card as "Froakie XY03": the badge and the digits are distinct
+    // elements on the card, printed with a gap, so whether a person or a model
+    // types a space between them is a coin toss. The catalogue stores the
+    // joined form (`xyp-XY03`), so rejoin them and let the catalogue judge.
+    //
+    // Only when no denominator was given — "Charizard ex 056/197" has a total,
+    // so "ex" there is a name suffix and not a badge.
+    if (total == null && pre.length >= 1 && !catalogueKey) {
+      const last = pre[pre.length - 1];
+      if (/^[A-Za-z]{1,4}$/.test(last)) {
+        interpretations.push({
+          ...base, extras, name: nameOf(pre.slice(0, -1)),
+          card_number: last.toUpperCase() + number, total: null, set_code: null,
+          prior: NAME_SUFFIX.has(norm(last)) ? 0.15 : 0.75,
+          shape: 'promo_split_rejoined',
+        });
+      }
     }
   } else if (pre.length) {
     const keep = pre;

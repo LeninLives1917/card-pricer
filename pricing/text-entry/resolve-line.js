@@ -54,11 +54,31 @@ export function buildNameNumberIndex(cardDb) {
     if (dash < 1) continue;
     const num = key.slice(dash + 1).replace(/^0+(?=.)/, '').toLowerCase();
     const k = normName(v?.name) + '|' + num;
+    // Store the REAL catalogue key, not a set id to rebuild an id from.
+    //
+    // set-resolve.js composes its answer as `${setId}-${normalisedNumber}`,
+    // and that normalisation lowercases. For a purely numeric collector
+    // number that round-trips fine. For an alphanumeric one it does not:
+    // the catalogue key is `xyp-XY03` and the rebuilt id is `xyp-xy03`, so
+    // the lookup that follows misses and the card comes back with a null
+    // name — resolved, and unusable. Keeping the real key sidesteps the
+    // reconstruction entirely.
     const bucket = m.get(k);
-    if (bucket) bucket.push(key.slice(0, dash));
-    else m.set(k, [key.slice(0, dash)]);
+    if (bucket) bucket.push(key);
+    else m.set(k, [key]);
   }
   return m;
+}
+
+/**
+ * Map an id composed by set-resolve.js back to the key the catalogue really
+ * uses. Identical for numeric numbers; differs in case for alphanumeric ones.
+ */
+function realKeyFor(id, nameNumberIndex, normalisedName, num) {
+  const bucket = nameNumberIndex.get(normalisedName + '|' + num);
+  if (!bucket) return id;
+  const wantSet = id.slice(0, id.lastIndexOf('-')).toLowerCase();
+  return bucket.find((k) => k.slice(0, k.lastIndexOf('-')).toLowerCase() === wantSet) ?? id;
 }
 
 const cleanNum = (n) => String(n ?? '').trim().replace(/\/.*$/, '').replace(/^0+(?=.)/, '').toLowerCase();
@@ -145,8 +165,8 @@ export function resolveLine(line, { cardDb, nameIndex, nameNumberIndex }) {
   for (const n of plausible) {
     const printed = (nameIndex.byNorm.get(n) || [n])[0];
     const r = resolveIdentity({ name: printed, card_number: withTotal, set_code: line?.set_code }, cardDb);
-    if (r.id) resolved.push({ r, n });
-    else abstained.push(...(r.candidates || []).map((setId) => `${setId}-${num}`));
+    if (r.id) resolved.push({ r: { ...r, id: realKeyFor(r.id, nameNumberIndex, n, num) }, n });
+    else abstained.push(...(r.candidates || []).map((setId) => realKeyFor(setId + '-' + num, nameNumberIndex, n, num)));
   }
 
   if (resolved.length === 1) {
