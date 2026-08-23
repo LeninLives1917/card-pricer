@@ -1,0 +1,524 @@
+{
+  "mode": "photos",
+  "catalogue": 20427,
+  "queries": 64,
+  "stage1": {
+    "top1": 76.6,
+    "top5": 79.7,
+    "topK": 79.7
+  },
+  "stage2": {
+    "top1": 79.7,
+    "fixed": 2,
+    "broke": 0
+  },
+  "latencyMs": {
+    "p50": 255,
+    "p95": 335.2
+  },
+  "curve": [
+    {
+      "score": 0.9016678033356067,
+      "margin": 0.36034472068944146,
+      "correct": true,
+      "truthKnown": true
+    },
+    {
+      "score": 0.9079298158596317,
+      "margin": 0.32419864839729684,
+      "correct": true,
+      "truthKnown": true
+    },
+    {
+      "score": 0.8366916733833467,
+      "margin": 0.18215636431272852,
+      "correct": true,
+      "truthKnown": true
+    },
+    {
+      "score": 0.9032798065596132,
+      "margin": 0.39543679087358174,
+      "correct": true,
+      "truthKnown": true
+    },
+    {
+      "score": 0.900489800979602,
+      "margin": 0.24440448880897758,
+      "correct": true,
+      "truthKnown": true
+    },
+    {
+      "score": 0.7467914935829871,
+      "margin": 0.14954429908859812,
+      "correct": true,
+      "truthKnown": true
+    },
+    {
+      "score": 0.9000558001116002,
+      "margin": 0.2682745365490731,
+      "correct": true,
+      "truthKnown": true
+    },
+    {
+      "score": 0.8857957715915432,
+      "margin": 0.2025544051088103,
+      "correct": true,
+      "truthKnown": true
+    },
+    {
+      "score": 0.8780457560915121,
+      "margin": 0.2166904333808667,
+      "correct": true,
+      "truthKnown": true
+    },
+    {
+      "score": 0.5346270692541385,
+      "margin": 0.016678033356066768,
+      "correct": false,
+      "truthKnown": false
+    },
+    {
+      "score": 0.7713435426870854,
+      "margin": 0.13361026722053448,
+      "correct": true,
+      "truthKnown": true
+    },
+    {
+      "score": 0.9032798065596132,
+      "margin": 0.10949221898443795,
+      "correct": true,
+      "truthKnown": true
+    },
+    {
+      "score": 0.8569657139314278,
+      "margin": 0.09145018290036577,
+      "correct": true,
+      "truthKnown": true
+    },
+    {
+      "score": 0.8727137454274908,
+      "margin": 0.10558621117242228,
+      "correct": true,
+      "truthKnown": true
+    },
+    {
+      "score": 0.8474796949593899,
+      "margin": 0.10509021018042031,
+      "correct": true,
+      "truthKnown": true
+    },
+    {
+      "score": 0.8639717279434559,
+      "margin": 0.10267220534441068,
+      "correct": true,
+      "truthKnown": true
+    },
+    {
+      "score": 0.9044578089156178,
+      "margin": 0.22710645421290843,
+      "correct": true,
+      "truthKnown": true
+    },
+    {
+      "score": 0.9060078120156241,
+      "margin": 0.16888833777667556,
+      "correct": true,
+      "truthKnown": true
+    },
+    {
+      "score": 0.43685287370574744,
+      "margin": 0.018848037696075348,
+      "correct": false,
+      "truthKnown": false
+    },
+    {
+      "score": 0.8974517949035898,
+      "margin": 0.1760803521607044,
+      "correct": true,
+      "truthKnown": true
+    },
+    {
+      "score": 0.804513609027218,
+      "margin": 0.1341682683365366,
+      "correct": true,
+      "truthKnown": true
+    },
+    {
+      "score": 0.8249736499472999,
+      "margin": 0.15183830367660744,
+      "correct": true,
+      "truthKnown": true
+    },
+    {
+      "score": 0.8794717589435179,
+      "margin": 0.18817037634075273,
+      "correct": true,
+      "truthKnown": true
+    },
+    {
+      "score": 0.7408394816789634,
+      "margin": 0.023498046996094035,
+      "correct": false,
+      "truthKnown": false
+    },
+    {
+      "score": 0.676731353462707,
+      "margin": 0.0175460350920702,
+      "correct": false,
+      "truthKnown": false
+    },
+    {
+      "score": 0.7933535867071734,
+      "margin": 0.11761423522847037,
+      "correct": true,
+      "truthKnown": true
+    },
+    {
+      "score": 0.8836257672515345,
+      "margin": 0.11767623535247074,
+      "correct": true,
+      "truthKnown": true
+    },
+    {
+      "score": 0.6479012958025916,
+      "margin": 0.01829003658007311,
+      "correct": false,
+      "truthKnown": false
+    },
+    {
+      "score": 0.891251782503565,
+      "margin": 0.11947423894847786,
+      "correct": true,
+      "truthKnown": true
+    },
+    {
+      "score": 0.906999813999628,
+      "margin": 0.12858825717651434,
+      "correct": true,
+      "truthKnown": true
+    },
+    {
+      "score": 0.21166842333684668,
+      "margin": 0.01940603881207764,
+      "correct": false,
+      "truthKnown": false
+    },
+    {
+      "score": 0.9043958087916176,
+      "margin": 0.11191022382044769,
+      "correct": true,
+      "truthKnown": true
+    },
+    {
+      "score": 0.4517329034658069,
+      "margin": 0.003720007440014883,
+      "correct": false,
+      "truthKnown": false
+    },
+    {
+      "score": 0.8632897265794531,
+      "margin": 0.20695641391282782,
+      "correct": true,
+      "truthKnown": true
+    },
+    {
+      "score": 0.8961497922995846,
+      "margin": 0.2223944447888896,
+      "correct": true,
+      "truthKnown": true
+    },
+    {
+      "score": 0.8769917539835079,
+      "margin": 0.06522413044826081,
+      "correct": true,
+      "truthKnown": true
+    },
+    {
+      "score": 0.8938557877115755,
+      "margin": 0.10571021142042292,
+      "correct": true,
+      "truthKnown": true
+    },
+    {
+      "score": 0.6935953871907744,
+      "margin": 0.013082026164052296,
+      "correct": false,
+      "truthKnown": false
+    },
+    {
+      "score": 0.8920577841155682,
+      "margin": 0.11333622667245336,
+      "correct": true,
+      "truthKnown": true
+    },
+    {
+      "score": 0.8794717589435179,
+      "margin": 0.14787029574059152,
+      "correct": true,
+      "truthKnown": true
+    },
+    {
+      "score": 0.8741397482794966,
+      "margin": 0.12505425010850024,
+      "correct": true,
+      "truthKnown": true
+    },
+    {
+      "score": 0.7830615661231323,
+      "margin": 0.07898815797631598,
+      "correct": true,
+      "truthKnown": true
+    },
+    {
+      "score": 0.7798995597991196,
+      "margin": 0.0561721123442247,
+      "correct": true,
+      "truthKnown": true
+    },
+    {
+      "score": 0.7736375472750946,
+      "margin": 0.056482112964226006,
+      "correct": true,
+      "truthKnown": true
+    },
+    {
+      "score": 0.4990389980779962,
+      "margin": 0.018786037572075143,
+      "correct": false,
+      "truthKnown": false
+    },
+    {
+      "score": 0.8803397606795214,
+      "margin": 0.00564201128402253,
+      "correct": true,
+      "truthKnown": true
+    },
+    {
+      "score": 0.8952817905635811,
+      "margin": 0.008494016988033981,
+      "correct": true,
+      "truthKnown": true
+    },
+    {
+      "score": 0.8118916237832475,
+      "margin": 0.006138012276024618,
+      "correct": true,
+      "truthKnown": true
+    },
+    {
+      "score": 0.8709157418314837,
+      "margin": 0.1260462520925042,
+      "correct": true,
+      "truthKnown": true
+    },
+    {
+      "score": 0.8697997395994792,
+      "margin": 0.11928823857647719,
+      "correct": true,
+      "truthKnown": true
+    },
+    {
+      "score": 0.5488250976501953,
+      "margin": 0.00632401264802529,
+      "correct": false,
+      "truthKnown": false
+    },
+    {
+      "score": 0.8858577717155435,
+      "margin": 0.12294624589249181,
+      "correct": true,
+      "truthKnown": true
+    },
+    {
+      "score": 0.8811457622915246,
+      "margin": 0.10440820881641766,
+      "correct": true,
+      "truthKnown": true
+    },
+    {
+      "score": 0.8807117614235228,
+      "margin": 0.16008432016864027,
+      "correct": true,
+      "truthKnown": true
+    },
+    {
+      "score": 0.5643251286502573,
+      "margin": 0.013392026784053601,
+      "correct": false,
+      "truthKnown": false
+    },
+    {
+      "score": 0.45098890197780395,
+      "margin": 0.012834025668051308,
+      "correct": false,
+      "truthKnown": false
+    },
+    {
+      "score": 0.8128216256432513,
+      "margin": 0.2685845371690744,
+      "correct": true,
+      "truthKnown": true
+    },
+    {
+      "score": 0.8690557381114762,
+      "margin": 0.19164238328476657,
+      "correct": true,
+      "truthKnown": true
+    },
+    {
+      "score": 0.751751503503007,
+      "margin": 0.24812449624899247,
+      "correct": true,
+      "truthKnown": true
+    },
+    {
+      "score": 0.8249116498232997,
+      "margin": 0.038874077748155544,
+      "correct": true,
+      "truthKnown": true
+    },
+    {
+      "score": 0.7714675429350859,
+      "margin": 0.059272118544237085,
+      "correct": true,
+      "truthKnown": true
+    },
+    {
+      "score": 0.7195734391468783,
+      "margin": 0.007254014508028983,
+      "correct": false,
+      "truthKnown": false
+    },
+    {
+      "score": 0.8195796391592783,
+      "margin": 0.08556017112034231,
+      "correct": true,
+      "truthKnown": true
+    },
+    {
+      "score": 0.8976377952755905,
+      "margin": 0.1091202182404365,
+      "correct": true,
+      "truthKnown": true
+    }
+  ],
+  "failures": [
+    {
+      "query": "20260805_125621.jpg",
+      "truth": null,
+      "got": "ex14-19",
+      "gotName": "Grovyle δ",
+      "s1rank": -1,
+      "s2rank": -1,
+      "s1dist": -8623
+    },
+    {
+      "query": "20260805_125639.jpg",
+      "truth": null,
+      "got": "xy5-164",
+      "gotName": "Weakness Policy",
+      "s1rank": -1,
+      "s2rank": -1,
+      "s1dist": -7046
+    },
+    {
+      "query": "20260805_125645(0).jpg",
+      "truth": null,
+      "got": "me5-39",
+      "gotName": "Dhelmise",
+      "s1rank": -1,
+      "s2rank": -1,
+      "s1dist": -11949
+    },
+    {
+      "query": "20260805_125645.jpg",
+      "truth": null,
+      "got": "sv7-55",
+      "gotName": "Zeraora",
+      "s1rank": -1,
+      "s2rank": -1,
+      "s1dist": -10915
+    },
+    {
+      "query": "20260805_125651(0).jpg",
+      "truth": null,
+      "got": "xy11-66",
+      "gotName": "Yveltal BREAK",
+      "s1rank": -1,
+      "s2rank": -1,
+      "s1dist": -10450
+    },
+    {
+      "query": "20260805_125655.jpg",
+      "truth": null,
+      "got": "sv8pt5-179",
+      "gotName": "Pikachu ex",
+      "s1rank": -1,
+      "s2rank": -1,
+      "s1dist": -3414
+    },
+    {
+      "query": "20260805_125656.jpg",
+      "truth": null,
+      "got": "ecard3-49",
+      "gotName": "Delibird",
+      "s1rank": -1,
+      "s2rank": -1,
+      "s1dist": -7286
+    },
+    {
+      "query": "20260805_125705.jpg",
+      "truth": null,
+      "got": "hgss1-92",
+      "gotName": "Fisherman",
+      "s1rank": -1,
+      "s2rank": -1,
+      "s1dist": -11187
+    },
+    {
+      "query": "20260805_125719.jpg",
+      "truth": null,
+      "got": "hgss1-102",
+      "gotName": "Switch",
+      "s1rank": -1,
+      "s2rank": -1,
+      "s1dist": -8049
+    },
+    {
+      "query": "20260805_125726.jpg",
+      "truth": null,
+      "got": "ex13-5",
+      "gotName": "Deoxys δ",
+      "s1rank": -1,
+      "s2rank": -1,
+      "s1dist": -8852
+    },
+    {
+      "query": "20260805_125731(0).jpg",
+      "truth": null,
+      "got": "dp6-48",
+      "gotName": "Castform",
+      "s1rank": -1,
+      "s2rank": -1,
+      "s1dist": -9102
+    },
+    {
+      "query": "20260805_125731.jpg",
+      "truth": null,
+      "got": "dpp-DP05",
+      "gotName": "Tropical Wind",
+      "s1rank": -1,
+      "s2rank": -1,
+      "s1dist": -7274
+    },
+    {
+      "query": "20260805_125739.jpg",
+      "truth": null,
+      "got": "ecard1-26",
+      "gotName": "Rapidash",
+      "s1rank": -1,
+      "s2rank": -1,
+      "s1dist": -11606
+    }
+  ]
+}

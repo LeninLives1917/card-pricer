@@ -1,0 +1,178 @@
+{
+  "model": "claude-opus-5",
+  "results": [
+    {
+      "file": "Pokmeon test photos/20260805_125550.jpg",
+      "verdict": "absent-from-catalogue",
+      "read": {
+        "legible": true,
+        "name": "Antique Armor Fossil",
+        "number": "072",
+        "setTotal": "084",
+        "setName": "",
+        "language": "English",
+        "notes": "Card is rotated ~90°; illustrator Ayumi Odashima. Set symbol not clearly readable."
+      },
+      "cos": 0.4057288114576229,
+      "matches": [],
+      "nameMatches": 0
+    },
+    {
+      "file": "Pokmeon test photos/20260805_125621.jpg",
+      "verdict": "name-present-number-absent",
+      "read": {
+        "legible": true,
+        "name": "Goldeen",
+        "number": "013",
+        "setTotal": "084",
+        "setName": "",
+        "language": "English",
+        "notes": "Card is rotated and partially out of frame; ©2025 Pokémon copyright line visible, illustrator Shibuzoh."
+      },
+      "cos": 0.5132370264740529,
+      "matches": [],
+      "nameMatches": 16
+    },
+    {
+      "file": "Pokmeon test photos/20260805_125639.jpg",
+      "verdict": "absent-from-catalogue",
+      "read": {
+        "legible": true,
+        "name": "Backtrack Badge",
+        "number": "074",
+        "setTotal": "084",
+        "setName": "",
+        "language": "English",
+        "notes": "Card is rotated ~90°; illustrator credit appears to read \"Toyste Beach\". Trainer - Pokémon Tool card."
+      },
+      "cos": 0.4400148800297601,
+      "matches": [],
+      "nameMatches": 0
+    },
+    {
+      "file": "Pokmeon test photos/20260805_125651(0).jpg",
+      "verdict": "in-catalogue",
+      "read": {
+        "legible": true,
+        "name": "Scrafty",
+        "number": "",
+        "setTotal": "",
+        "setName": "",
+        "language": "English",
+        "notes": "Photo is blurry and card is rotated; HP 120, attacks appear to be \"Bear Kick\" (40) and \"Wild Tackle\" (160). Collector number not readable."
+      },
+      "cos": 0.28513857027714057,
+      "matches": [
+        "bw1-69 (Black & White)",
+        "bw4-74 (Next Destinies)",
+        "bw5-68 (Dark Explorers)"
+      ],
+      "nameMatches": 14
+    },
+    {
+      "file": "Pokmeon test photos/20260805_125655.jpg",
+      "verdict": "illegible",
+      "read": {
+        "legible": false,
+        "name": "",
+        "number": "",
+        "setTotal": "",
+        "setName": "",
+        "language": "",
+        "notes": "Photo is blurry and the card is mostly cut off at the top edge; only a partial sideways card is visible with no readable text."
+      }
+    },
+    {
+      "file": "Pokmeon test photos/20260805_125656.jpg",
+      "verdict": "in-catalogue",
+      "read": {
+        "legible": true,
+        "name": "Huntail",
+        "number": "",
+        "setTotal": "",
+        "setName": "",
+        "language": "English",
+        "notes": "Photo is blurry and rotated; card bottom/collector number not visible in frame. Visible: HP 110, Ability 'Diver's Catch', attack 'Wave Splash' 80."
+      },
+      "cos": 0.4399528799057598,
+      "matches": [
+        "dp4-42 (Great Encounters)",
+        "ex12-18 (Legend Maker)",
+        "ex5-19 (Hidden Legends)"
+      ],
+      "nameMatches": 7
+    },
+    {
+      "file": "Pokmeon test photos/20260805_125719.jpg",
+      "verdict": "in-catalogue",
+      "read": {
+        "legible": true,
+        "name": "Sizzlipede",
+        "number": "",
+        "setTotal": "",
+        "setName": "",
+        "language": "English",
+        "notes": "Photo is blurry and rotated; attack 'Steady Firebreathing' 20 damage visible, but collector number and set symbol are not readable."
+      },
+      "cos": 0.49085498170996344,
+      "matches": [
+        "me1-29 (Mega Evolution)",
+        "sv5-36 (Temporal Forces)",
+        "swsh1-38 (Sword & Shield)"
+      ],
+      "nameMatches": 10
+    },
+    {
+      "file": "Pokmeon test photos/20260805_125726.jpg",
+      "verdict": "name-present-number-absent",
+      "read": {
+        "legible": true,
+        "name": "Marnie's Scrafty",
+        "number": "119",
+        "setTotal": "182",
+        "setName": "",
+        "language": "English",
+        "notes": "Card is rotated/sideways in photo; collector number partially blurry but appears to read 119/182"
+      },
+      "cos": 0.5434310868621737,
+      "matches": [],
+      "nameMatches": 1
+    },
+    {
+      "file": "Pokmeon test photos/20260805_125731(0).jpg",
+      "verdict": "name-present-number-absent",
+      "read": {
+        "legible": true,
+        "name": "Huntail",
+        "number": "056",
+        "setTotal": "182",
+        "setName": "",
+        "language": "English",
+        "notes": "Card is rotated; number reads \"056/182\" though slightly blurred. HP appears to be 110 (partially cut off)."
+      },
+      "cos": 0.5491350982701966,
+      "matches": [],
+      "nameMatches": 7
+    },
+    {
+      "file": "Pokmeon test photos/20260805_125731.jpg",
+      "verdict": "in-catalogue",
+      "read": {
+        "legible": true,
+        "name": "Huntail",
+        "number": "",
+        "setTotal": "",
+        "setName": "",
+        "language": "English",
+        "notes": "Card is rotated and blurry; collector number at bottom not readable. Stage 1 Water Pokemon with Ability \"Diver's Cave\" and attack \"Wave Splash\"."
+      },
+      "cos": 0.4540269080538161,
+      "matches": [
+        "dp4-42 (Great Encounters)",
+        "ex12-18 (Legend Maker)",
+        "ex5-19 (Hidden Legends)"
+      ],
+      "nameMatches": 7
+    }
+  ]
+}

@@ -1,0 +1,16 @@
+[fetch-refs] cache=C:\Users\daith\.card-pricer-v3
+[fetch-refs] 172 sets | imgConcurrency=16 | unauthenticated
+[fetch-refs] 18238 cards listed in 508.5s
+[fetch-refs] 500 fetched (108.6/s) | 11222 cached | 51 failed
+[fetch-refs] 1000 fetched (139.0/s) | 12146 cached | 52 failed
+
+[fetch-refs] ---------------- summary ----------------
+[fetch-refs] fetched      : 1427
+[fetch-refs] already cached: 16759
+[fetch-refs] failed       : 52
+[fetch-refs] retried      : 113 requests needed 276 extra attempts
+[fetch-refs] manifest size: 19890 cards
+[fetch-refs] downloaded   : 232.7 MB source → 39.4 MB cached
+[fetch-refs] rate         : 146.8 cards/s  (23.9 MB/s)
+[fetch-refs] per-card     : 167.0 KB source, 28.3 KB cached
+[fetch-refs] elapsed      : 518.3s

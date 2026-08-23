@@ -1,0 +1,417 @@
+{
+  "model": "claude-opus-5",
+  "results": [
+    {
+      "file": "Pokmeon test photos/20260805_125549.jpg",
+      "verdict": "absent-from-catalogue",
+      "read": {
+        "legible": true,
+        "name": "Antique Armor Fossil",
+        "number": "072",
+        "setTotal": "084",
+        "setName": "",
+        "language": "English",
+        "notes": "Card is rotated; illustrator Ayumi Odashima, ©2024 Pokémon"
+      },
+      "cos": 0.5024490048980098,
+      "matches": [],
+      "nameMatches": 0
+    },
+    {
+      "file": "Pokmeon test photos/20260805_125554.jpg",
+      "verdict": "name-present-number-absent",
+      "read": {
+        "legible": true,
+        "name": "Skarmory",
+        "number": "060",
+        "setTotal": "084",
+        "setName": "",
+        "language": "English",
+        "notes": "Card is rotated ~90°; illustrator listed as Aneseki Dynamic (partially unclear), ©2026 Pokémon copyright line"
+      },
+      "cos": 0.689255378510757,
+      "matches": [],
+      "nameMatches": 26
+    },
+    {
+      "file": "Pokmeon test photos/20260805_125558.jpg",
+      "verdict": "absent-from-catalogue",
+      "read": {
+        "legible": true,
+        "name": "Antique Skull Fossil",
+        "number": "073",
+        "setTotal": "084",
+        "setName": "",
+        "language": "English",
+        "notes": "Card is rotated 90°; illustrator Ayumi Odashima, ©2026"
+      },
+      "cos": 0.5059210118420236,
+      "matches": [],
+      "nameMatches": 0
+    },
+    {
+      "file": "Pokmeon test photos/20260805_125613.jpg",
+      "verdict": "in-catalogue",
+      "read": {
+        "legible": true,
+        "name": "Litwick",
+        "number": "036",
+        "setTotal": "084",
+        "setName": "PLLM",
+        "language": "English",
+        "notes": "Card is rotated 90°; set code reads \"PLLM\" on the left border"
+      },
+      "cos": 0.6336412672825346,
+      "matches": [
+        "sv3-36 (Obsidian Flames)",
+        "sv6-36 (Twilight Masquerade)"
+      ],
+      "nameMatches": 18
+    },
+    {
+      "file": "Pokmeon test photos/20260805_125614.jpg",
+      "verdict": "name-present-number-absent",
+      "read": {
+        "legible": true,
+        "name": "Litwick",
+        "number": "090",
+        "setTotal": "196",
+        "setName": "",
+        "language": "English",
+        "notes": "Card is upside down and rotated; number reads approximately 090/196 but is small and partly blurred."
+      },
+      "cos": 0.5688511377022754,
+      "matches": [],
+      "nameMatches": 18
+    },
+    {
+      "file": "Pokmeon test photos/20260805_125615.jpg",
+      "verdict": "in-catalogue",
+      "read": {
+        "legible": true,
+        "name": "Litwick",
+        "number": "036",
+        "setTotal": "084",
+        "setName": "",
+        "language": "English",
+        "notes": "Card is rotated 90°; set symbol not clearly readable. Illustrator appears to be HYOGONOSUKE."
+      },
+      "cos": 0.6211172422344845,
+      "matches": [
+        "sv3-36 (Obsidian Flames)",
+        "sv6-36 (Twilight Masquerade)"
+      ],
+      "nameMatches": 18
+    },
+    {
+      "file": "Pokmeon test photos/20260805_125619.jpg",
+      "verdict": "name-present-number-absent",
+      "read": {
+        "legible": true,
+        "name": "Goldeen",
+        "number": "013",
+        "setTotal": "084",
+        "setName": "",
+        "language": "English",
+        "notes": "Card is rotated 90°; set symbol appears as a small code near the collector number but is too small to read reliably."
+      },
+      "cos": 0.68001736003472,
+      "matches": [],
+      "nameMatches": 16
+    },
+    {
+      "file": "Pokmeon test photos/20260805_125620.jpg",
+      "verdict": "name-present-number-absent",
+      "read": {
+        "legible": true,
+        "name": "Goldeen",
+        "number": "013",
+        "setTotal": "084",
+        "setName": "",
+        "language": "English",
+        "notes": "Card is rotated ~90°; number reads \"013/084\". Set symbol not clearly identifiable."
+      },
+      "cos": 0.6821253642507284,
+      "matches": [],
+      "nameMatches": 16
+    },
+    {
+      "file": "Pokmeon test photos/20260805_125622.jpg",
+      "verdict": "illegible",
+      "read": {
+        "legible": false,
+        "name": "",
+        "number": "",
+        "setTotal": "",
+        "setName": "",
+        "language": "English",
+        "notes": "Photo is heavily blurred and rotated; text is unreadable. Appears to be a Pokemon card with a green/red Pokemon in the artwork, but name, number and set cannot be reliably read."
+      }
+    },
+    {
+      "file": "Pokmeon test photos/20260805_125625(0).jpg",
+      "verdict": "name-present-number-absent",
+      "read": {
+        "legible": true,
+        "name": "Poltchageist",
+        "number": "005",
+        "setTotal": "084",
+        "setName": "",
+        "language": "English",
+        "notes": "Card is rotated 90°; small set logo near number not clearly readable."
+      },
+      "cos": 0.7675615351230702,
+      "matches": [],
+      "nameMatches": 3
+    },
+    {
+      "file": "Pokmeon test photos/20260805_125625.jpg",
+      "verdict": "name-present-number-absent",
+      "read": {
+        "legible": true,
+        "name": "Poltchageist",
+        "number": "005",
+        "setTotal": "084",
+        "setName": "",
+        "language": "English",
+        "notes": "Card is rotated 90°; small set code stamp near bottom-left reads something like \"PDF EN\" but is too small to confirm. Copyright line: ©2024 Pokémon / Nintendo / Creatures / GAME FREAK. HP 30, Ability Hide 'n' Sneak, attack Furtive Drop, Illus. Mouhho."
+      },
+      "cos": 0.7600595201190402,
+      "matches": [],
+      "nameMatches": 3
+    },
+    {
+      "file": "Pokmeon test photos/20260805_125628.jpg",
+      "verdict": "name-present-number-absent",
+      "read": {
+        "legible": true,
+        "name": "Maschiff",
+        "number": "057",
+        "setTotal": "064",
+        "setName": "",
+        "language": "English",
+        "notes": "Card is rotated 90°; set symbol/code not clearly readable. Basic Darkness-type, HP 70, attack \"Bite\" 40."
+      },
+      "cos": 0.7370574741149483,
+      "matches": [],
+      "nameMatches": 6
+    },
+    {
+      "file": "Pokmeon test photos/20260805_125629.jpg",
+      "verdict": "name-present-number-absent",
+      "read": {
+        "legible": true,
+        "name": "Maschiff",
+        "number": "057",
+        "setTotal": "064",
+        "setName": "",
+        "language": "English",
+        "notes": "Card is rotated ~180°; number reads approximately 057/064 but is small and slightly blurred."
+      },
+      "cos": 0.7176514353028706,
+      "matches": [],
+      "nameMatches": 6
+    },
+    {
+      "file": "Pokmeon test photos/20260805_125630.jpg",
+      "verdict": "name-present-number-absent",
+      "read": {
+        "legible": true,
+        "name": "Maschiff",
+        "number": "057",
+        "setTotal": "084",
+        "setName": "",
+        "language": "English",
+        "notes": "Card is rotated ~90°; set symbol/code not clearly readable. HP 70, Basic, attack \"Bite\" 40."
+      },
+      "cos": 0.7337094674189348,
+      "matches": [],
+      "nameMatches": 6
+    },
+    {
+      "file": "Pokmeon test photos/20260805_125632.jpg",
+      "verdict": "name-present-number-absent",
+      "read": {
+        "legible": true,
+        "name": "Relicanth",
+        "number": "017",
+        "setTotal": "084",
+        "setName": "",
+        "language": "English",
+        "notes": "Card is rotated 90°; set code near number appears as a small logo, not clearly readable."
+      },
+      "cos": 0.6661913323826648,
+      "matches": [],
+      "nameMatches": 15
+    },
+    {
+      "file": "Pokmeon test photos/20260805_125638.jpg",
+      "verdict": "absent-from-catalogue",
+      "read": {
+        "legible": true,
+        "name": "Backtrack Badge",
+        "number": "074",
+        "setTotal": "084",
+        "setName": "",
+        "language": "English",
+        "notes": "Card is rotated 90°; set code appears as a small block near number but not clearly readable. Illustrator: Toyste Beach."
+      },
+      "cos": 0.7232934465868932,
+      "matches": [],
+      "nameMatches": 0
+    },
+    {
+      "file": "Pokmeon test photos/20260805_125640(0).jpg",
+      "verdict": "absent-from-catalogue",
+      "read": {
+        "legible": true,
+        "name": "Bucks Badge",
+        "number": "",
+        "setTotal": "",
+        "setName": "",
+        "language": "English",
+        "notes": "Photo is blurry and rotated; the name reads as a '... Badge' Pokemon Tool Trainer card (possibly 'Barksrock Badge'/'Buck's Badge') but cannot be resolved with certainty. Collector number and set symbol are not readable."
+      },
+      "cos": 0.7136214272428545,
+      "matches": [],
+      "nameMatches": 0
+    },
+    {
+      "file": "Pokmeon test photos/20260805_125640.jpg",
+      "verdict": "absent-from-catalogue",
+      "read": {
+        "legible": true,
+        "name": "Backtrack Badge",
+        "number": "",
+        "setTotal": "",
+        "setName": "",
+        "language": "English",
+        "notes": "Photo is heavily blurred and rotated; card is a Trainer - Pokemon Tool. Collector number not readable."
+      },
+      "cos": 0.6565193130386261,
+      "matches": [],
+      "nameMatches": 0
+    },
+    {
+      "file": "Pokmeon test photos/20260805_125643.jpg",
+      "verdict": "name-present-number-absent",
+      "read": {
+        "legible": true,
+        "name": "Dhelmise",
+        "number": "039",
+        "setTotal": "084",
+        "setName": "",
+        "language": "English",
+        "notes": "Card photographed sideways; set symbol not clearly identifiable."
+      },
+      "cos": 0.6786533573067146,
+      "matches": [],
+      "nameMatches": 10
+    },
+    {
+      "file": "Pokmeon test photos/20260805_125644.jpg",
+      "verdict": "name-present-number-absent",
+      "read": {
+        "legible": true,
+        "name": "Dhelmise",
+        "number": "039",
+        "setTotal": "084",
+        "setName": "",
+        "language": "English",
+        "notes": "Card is rotated; set symbol not clearly readable."
+      },
+      "cos": 0.6869613739227478,
+      "matches": [],
+      "nameMatches": 10
+    },
+    {
+      "file": "Pokmeon test photos/20260805_125645(0).jpg",
+      "verdict": "in-catalogue",
+      "read": {
+        "legible": true,
+        "name": "Dhelmise",
+        "number": "",
+        "setTotal": "",
+        "setName": "",
+        "language": "English",
+        "notes": "Photo is blurry and rotated; card name reads \"Dhelmise\" with attack \"Vengeful Anchor\". Collector number not readable."
+      },
+      "cos": 0.7032674065348131,
+      "matches": [
+        "me1-18 (Mega Evolution)",
+        "sm11-20 (Unified Minds)",
+        "sm12-98 (Cosmic Eclipse)"
+      ],
+      "nameMatches": 10
+    },
+    {
+      "file": "Pokmeon test photos/20260805_125645.jpg",
+      "verdict": "in-catalogue",
+      "read": {
+        "legible": true,
+        "name": "Dhelmise",
+        "number": "",
+        "setTotal": "",
+        "setName": "",
+        "language": "English",
+        "notes": "Photo is blurry and rotated; card name partially readable as \"Dhelmise\", HP 140, attack \"Vengeful Anchor\" 30+. Collector number and set symbol not legible."
+      },
+      "cos": 0.659743319486639,
+      "matches": [
+        "me1-18 (Mega Evolution)",
+        "sm11-20 (Unified Minds)",
+        "sm12-98 (Cosmic Eclipse)"
+      ],
+      "nameMatches": 10
+    },
+    {
+      "file": "Pokmeon test photos/20260805_125646.jpg",
+      "verdict": "in-catalogue",
+      "read": {
+        "legible": true,
+        "name": "Dhelmise",
+        "number": "",
+        "setTotal": "",
+        "setName": "",
+        "language": "English",
+        "notes": "Photo is blurry and rotated; card name, HP 140, and attack 'Vengeful Anchor' are readable, but the collector number and set symbol are too blurred to read."
+      },
+      "cos": 0.6641453282906565,
+      "matches": [
+        "me1-18 (Mega Evolution)",
+        "sm11-20 (Unified Minds)",
+        "sm12-98 (Cosmic Eclipse)"
+      ],
+      "nameMatches": 10
+    },
+    {
+      "file": "Pokmeon test photos/20260805_125705.jpg",
+      "verdict": "illegible",
+      "read": {
+        "legible": true,
+        "name": "",
+        "number": "",
+        "setTotal": "",
+        "setName": "",
+        "language": "English",
+        "notes": "Photo is heavily blurred and card is sideways. Appears to be a Supporter trainer card with text 'Draw 2 cards...' but the name and collector number cannot be read reliably."
+      }
+    },
+    {
+      "file": "Pokmeon test photos/20260805_125739.jpg",
+      "verdict": "absent-from-catalogue",
+      "read": {
+        "legible": true,
+        "name": "Brock's Sudowoodo",
+        "number": "",
+        "setTotal": "",
+        "setName": "",
+        "language": "English",
+        "notes": "Card is rotated and blurry; collector number at bottom left not readable. HP 110, attacks \"Impound\" (20) and \"Try to Imitate\" visible."
+      },
+      "cos": 0.6922313844627689,
+      "matches": [],
+      "nameMatches": 0
+    }
+  ]
+}

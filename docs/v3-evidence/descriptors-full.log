@@ -1,0 +1,37 @@
+[descriptors] 19890 cards from C:\Users\daith\.card-pricer-v3
+[descriptors] 2000/19890 (29/s)
+[descriptors] 4000/19890 (29/s)
+[descriptors] 6000/19890 (28/s)
+[descriptors] 8000/19890 (29/s)
+[descriptors] 10000/19890 (30/s)
+[descriptors] 12000/19890 (31/s)
+[descriptors] 14000/19890 (32/s)
+[descriptors] 16000/19890 (32/s)
+[descriptors] 18000/19890 (33/s)
+[descriptors] computed 19890, failed 0, in 623.1s
+[descriptors] wrote C:\Users\daith\.card-pricer-v3\descriptors.json (10.8 MB)
+
+[descriptors] ============ intrinsic separability ============
+[descriptors] "nn" = Hamming distance from a card to the CLOSEST OTHER card.
+[descriptors] A photo must match its true card more tightly than this to be safe.
+
+family        cards  distinct  collide  rate    nnMin  p01  p05  p25  med
+------------  -----  --------  -------  ------  -----  ---  ---  ---  ---
+full-phash    19890     19634      493  0.0248      0    0    2    8   10
+full-dhash    19890     19754      263  0.0132      0    0    3    8   10
+full-whash    19890     19487      751  0.0378      0    0    2    4    7
+art-phash     19890     19604      548  0.0276      0    0    2   14   14
+art-dhash     19890     19713      337  0.0169      0    0    2   13   14
+art-whash     19890     19540      644  0.0324      0    0    2    6   10
+
+[descriptors] wrote C:\Users\daith\.card-pricer-v3\separability.json
+
+[descriptors] closest confusable pairs (full-phash):
+  d= 0  base2-23 "Nidoqueen"  vs  base6-32 "Nidoqueen"
+  d= 0  base4-128 "Lightning Energy"  vs  gym1-130 "Lightning Energy"
+  d= 0  base4-81 "Metapod"  vs  base6-54 "Metapod"
+  d= 0  base6-10 "Flareon"  vs  base2-3 "Flareon"
+  d= 0  bw1-17 "Pignite"  vs  mcd12-4 "Pignite"
+  d= 0  bw10-63 "Shelgon"  vs  dv1-7 "Shelgon"
+  d= 0  bw7-49 "Keldeo-EX"  vs  bw11-45 "Keldeo-EX"
+  d= 0  bw8-18 "Victini-EX"  vs  bw11-24 "Victini-EX"

@@ -1,0 +1,386 @@
+[
+ {
+  "rel": "Pokmeon test photos/20260805_125549.jpg",
+  "hit": false,
+  "detected": true,
+  "cos": 0.5024490048980098
+ },
+ {
+  "rel": "Pokmeon test photos/20260805_125550.jpg",
+  "hit": false,
+  "detected": false,
+  "cos": 0.4057288114576229
+ },
+ {
+  "rel": "Pokmeon test photos/20260805_125554.jpg",
+  "hit": false,
+  "detected": true,
+  "cos": 0.689255378510757
+ },
+ {
+  "rel": "Pokmeon test photos/20260805_125558.jpg",
+  "hit": false,
+  "detected": true,
+  "cos": 0.5059210118420236
+ },
+ {
+  "rel": "Pokmeon test photos/20260805_125613.jpg",
+  "hit": false,
+  "detected": true,
+  "cos": 0.6336412672825346
+ },
+ {
+  "rel": "Pokmeon test photos/20260805_125614.jpg",
+  "hit": false,
+  "detected": true,
+  "cos": 0.5688511377022754
+ },
+ {
+  "rel": "Pokmeon test photos/20260805_125615.jpg",
+  "hit": false,
+  "detected": true,
+  "cos": 0.6211172422344845
+ },
+ {
+  "rel": "Pokmeon test photos/20260805_125619.jpg",
+  "hit": false,
+  "detected": true,
+  "cos": 0.68001736003472
+ },
+ {
+  "rel": "Pokmeon test photos/20260805_125620.jpg",
+  "hit": false,
+  "detected": true,
+  "cos": 0.6821253642507284
+ },
+ {
+  "rel": "Pokmeon test photos/20260805_125621.jpg",
+  "hit": false,
+  "detected": false,
+  "cos": 0.5132370264740529
+ },
+ {
+  "rel": "Pokmeon test photos/20260805_125622.jpg",
+  "hit": false,
+  "detected": true,
+  "cos": 0.6141732283464567
+ },
+ {
+  "rel": "Pokmeon test photos/20260805_125625(0).jpg",
+  "hit": false,
+  "detected": true,
+  "cos": 0.7675615351230702
+ },
+ {
+  "rel": "Pokmeon test photos/20260805_125625.jpg",
+  "hit": false,
+  "detected": true,
+  "cos": 0.7600595201190402
+ },
+ {
+  "rel": "Pokmeon test photos/20260805_125628.jpg",
+  "hit": false,
+  "detected": true,
+  "cos": 0.7370574741149483
+ },
+ {
+  "rel": "Pokmeon test photos/20260805_125629.jpg",
+  "hit": false,
+  "detected": true,
+  "cos": 0.7176514353028706
+ },
+ {
+  "rel": "Pokmeon test photos/20260805_125630.jpg",
+  "hit": false,
+  "detected": true,
+  "cos": 0.7337094674189348
+ },
+ {
+  "rel": "Pokmeon test photos/20260805_125632.jpg",
+  "hit": false,
+  "detected": true,
+  "cos": 0.6661913323826648
+ },
+ {
+  "rel": "Pokmeon test photos/20260805_125638.jpg",
+  "hit": false,
+  "detected": true,
+  "cos": 0.7232934465868932
+ },
+ {
+  "rel": "Pokmeon test photos/20260805_125639.jpg",
+  "hit": false,
+  "detected": false,
+  "cos": 0.4400148800297601
+ },
+ {
+  "rel": "Pokmeon test photos/20260805_125640(0).jpg",
+  "hit": false,
+  "detected": true,
+  "cos": 0.7136214272428545
+ },
+ {
+  "rel": "Pokmeon test photos/20260805_125640.jpg",
+  "hit": false,
+  "detected": true,
+  "cos": 0.6565193130386261
+ },
+ {
+  "rel": "Pokmeon test photos/20260805_125643.jpg",
+  "hit": false,
+  "detected": true,
+  "cos": 0.6786533573067146
+ },
+ {
+  "rel": "Pokmeon test photos/20260805_125644.jpg",
+  "hit": false,
+  "detected": true,
+  "cos": 0.6869613739227478
+ },
+ {
+  "rel": "Pokmeon test photos/20260805_125645(0).jpg",
+  "hit": false,
+  "detected": true,
+  "cos": 0.7032674065348131
+ },
+ {
+  "rel": "Pokmeon test photos/20260805_125645.jpg",
+  "hit": false,
+  "detected": true,
+  "cos": 0.659743319486639
+ },
+ {
+  "rel": "Pokmeon test photos/20260805_125646.jpg",
+  "hit": false,
+  "detected": true,
+  "cos": 0.6641453282906565
+ },
+ {
+  "rel": "Pokmeon test photos/20260805_125650.jpg",
+  "hit": true,
+  "detected": true,
+  "cos": 0.8520677041354082
+ },
+ {
+  "rel": "Pokmeon test photos/20260805_125651(0).jpg",
+  "hit": false,
+  "detected": false,
+  "cos": 0.28513857027714057
+ },
+ {
+  "rel": "Pokmeon test photos/20260805_125651.jpg",
+  "hit": true,
+  "detected": true,
+  "cos": 0.8594457188914378
+ },
+ {
+  "rel": "Pokmeon test photos/20260805_125654.jpg",
+  "hit": true,
+  "detected": true,
+  "cos": 0.8872837745675491
+ },
+ {
+  "rel": "Pokmeon test photos/20260805_125655.jpg",
+  "hit": false,
+  "detected": false,
+  "cos": 0.22853245706491412
+ },
+ {
+  "rel": "Pokmeon test photos/20260805_125656(0).jpg",
+  "hit": true,
+  "detected": true,
+  "cos": 0.8945377890755781
+ },
+ {
+  "rel": "Pokmeon test photos/20260805_125656.jpg",
+  "hit": false,
+  "detected": false,
+  "cos": 0.4399528799057598
+ },
+ {
+  "rel": "Pokmeon test photos/20260805_125700(0).jpg",
+  "hit": true,
+  "detected": true,
+  "cos": 0.8622357244714489
+ },
+ {
+  "rel": "Pokmeon test photos/20260805_125700.jpg",
+  "hit": true,
+  "detected": true,
+  "cos": 0.9090458180916362
+ },
+ {
+  "rel": "Pokmeon test photos/20260805_125704(0).jpg",
+  "hit": true,
+  "detected": true,
+  "cos": 0.828507657015314
+ },
+ {
+  "rel": "Pokmeon test photos/20260805_125704.jpg",
+  "hit": true,
+  "detected": true,
+  "cos": 0.8651497302994606
+ },
+ {
+  "rel": "Pokmeon test photos/20260805_125705.jpg",
+  "hit": false,
+  "detected": true,
+  "cos": 0.6743753487506975
+ },
+ {
+  "rel": "Pokmeon test photos/20260805_125706.jpg",
+  "hit": true,
+  "detected": true,
+  "cos": 0.8649637299274598
+ },
+ {
+  "rel": "Pokmeon test photos/20260805_125710(0).jpg",
+  "hit": true,
+  "detected": true,
+  "cos": 0.8187736375472751
+ },
+ {
+  "rel": "Pokmeon test photos/20260805_125710.jpg",
+  "hit": true,
+  "detected": true,
+  "cos": 0.8220596441192882
+ },
+ {
+  "rel": "Pokmeon test photos/20260805_125711.jpg",
+  "hit": true,
+  "detected": true,
+  "cos": 0.7172174344348689
+ },
+ {
+  "rel": "Pokmeon test photos/20260805_125715.jpg",
+  "hit": true,
+  "detected": true,
+  "cos": 0.7493334986669974
+ },
+ {
+  "rel": "Pokmeon test photos/20260805_125716.jpg",
+  "hit": true,
+  "detected": true,
+  "cos": 0.7309814619629239
+ },
+ {
+  "rel": "Pokmeon test photos/20260805_125719.jpg",
+  "hit": false,
+  "detected": false,
+  "cos": 0.49085498170996344
+ },
+ {
+  "rel": "Pokmeon test photos/20260805_125721(0).jpg",
+  "hit": true,
+  "detected": true,
+  "cos": 0.8503317006634014
+ },
+ {
+  "rel": "Pokmeon test photos/20260805_125721.jpg",
+  "hit": true,
+  "detected": true,
+  "cos": 0.8805257610515221
+ },
+ {
+  "rel": "Pokmeon test photos/20260805_125722.jpg",
+  "hit": true,
+  "detected": true,
+  "cos": 0.7668175336350672
+ },
+ {
+  "rel": "Pokmeon test photos/20260805_125725.jpg",
+  "hit": true,
+  "detected": true,
+  "cos": 0.8256556513113026
+ },
+ {
+  "rel": "Pokmeon test photos/20260805_125726(0).jpg",
+  "hit": true,
+  "detected": true,
+  "cos": 0.8262756525513051
+ },
+ {
+  "rel": "Pokmeon test photos/20260805_125726.jpg",
+  "hit": false,
+  "detected": false,
+  "cos": 0.5434310868621737
+ },
+ {
+  "rel": "Pokmeon test photos/20260805_125727.jpg",
+  "hit": true,
+  "detected": true,
+  "cos": 0.8504557009114018
+ },
+ {
+  "rel": "Pokmeon test photos/20260805_125729(0).jpg",
+  "hit": true,
+  "detected": true,
+  "cos": 0.8530597061194123
+ },
+ {
+  "rel": "Pokmeon test photos/20260805_125729.jpg",
+  "hit": true,
+  "detected": true,
+  "cos": 0.8580817161634323
+ },
+ {
+  "rel": "Pokmeon test photos/20260805_125731(0).jpg",
+  "hit": false,
+  "detected": false,
+  "cos": 0.5491350982701966
+ },
+ {
+  "rel": "Pokmeon test photos/20260805_125731.jpg",
+  "hit": false,
+  "detected": false,
+  "cos": 0.4540269080538161
+ },
+ {
+  "rel": "Pokmeon test photos/20260805_125735(0).jpg",
+  "hit": true,
+  "detected": true,
+  "cos": 0.7714675429350859
+ },
+ {
+  "rel": "Pokmeon test photos/20260805_125735.jpg",
+  "hit": true,
+  "detected": true,
+  "cos": 0.8739537479074958
+ },
+ {
+  "rel": "Pokmeon test photos/20260805_125736.jpg",
+  "hit": true,
+  "detected": true,
+  "cos": 0.6979353958707918
+ },
+ {
+  "rel": "Pokmeon test photos/20260805_125738.jpg",
+  "hit": true,
+  "detected": true,
+  "cos": 0.767003534007068
+ },
+ {
+  "rel": "Pokmeon test photos/20260805_125739(0).jpg",
+  "hit": true,
+  "detected": true,
+  "cos": 0.7125674251348503
+ },
+ {
+  "rel": "Pokmeon test photos/20260805_125739.jpg",
+  "hit": false,
+  "detected": true,
+  "cos": 0.6922313844627689
+ },
+ {
+  "rel": "Pokmeon test photos/20260805_125740.jpg",
+  "hit": true,
+  "detected": true,
+  "cos": 0.7558435116870234
+ },
+ {
+  "rel": "Pokmeon test photos/20260805_125744.jpg",
+  "hit": true,
+  "detected": true,
+  "cos": 0.8693657387314775
+ }
+]

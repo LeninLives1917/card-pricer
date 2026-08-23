@@ -1,0 +1,452 @@
+{
+  "full-phash": {
+    "cards": 19890,
+    "distinctDescriptors": 19634,
+    "collisionGroups": 237,
+    "collidingCards": 493,
+    "collisionRate": 0.0248,
+    "nnSampled": 1530,
+    "nnMin": 0,
+    "nnP01": 0,
+    "nnP05": 2,
+    "nnP25": 8,
+    "nnMedian": 10,
+    "worstPairs": [
+      {
+        "card": "base2-23",
+        "nearest": "base6-32",
+        "distance": 0
+      },
+      {
+        "card": "base4-128",
+        "nearest": "gym1-130",
+        "distance": 0
+      },
+      {
+        "card": "base4-81",
+        "nearest": "base6-54",
+        "distance": 0
+      },
+      {
+        "card": "base6-10",
+        "nearest": "base2-3",
+        "distance": 0
+      },
+      {
+        "card": "bw1-17",
+        "nearest": "mcd12-4",
+        "distance": 0
+      },
+      {
+        "card": "bw10-63",
+        "nearest": "dv1-7",
+        "distance": 0
+      },
+      {
+        "card": "bw7-49",
+        "nearest": "bw11-45",
+        "distance": 0
+      },
+      {
+        "card": "bw8-18",
+        "nearest": "bw11-24",
+        "distance": 0
+      },
+      {
+        "card": "dp5-80",
+        "nearest": "dp2-110",
+        "distance": 0
+      },
+      {
+        "card": "dv1-18",
+        "nearest": "bw4-87",
+        "distance": 0
+      },
+      {
+        "card": "ex1-89",
+        "nearest": "ex16-80",
+        "distance": 0
+      },
+      {
+        "card": "ex10-?",
+        "nearest": "ex10-!",
+        "distance": 0
+      }
+    ]
+  },
+  "full-dhash": {
+    "cards": 19890,
+    "distinctDescriptors": 19754,
+    "collisionGroups": 127,
+    "collidingCards": 263,
+    "collisionRate": 0.0132,
+    "nnSampled": 1530,
+    "nnMin": 0,
+    "nnP01": 0,
+    "nnP05": 3,
+    "nnP25": 8,
+    "nnMedian": 10,
+    "worstPairs": [
+      {
+        "card": "base4-128",
+        "nearest": "gym2-130",
+        "distance": 0
+      },
+      {
+        "card": "col1-93",
+        "nearest": "hgss1-120",
+        "distance": 0
+      },
+      {
+        "card": "dv1-18",
+        "nearest": "bw4-87",
+        "distance": 0
+      },
+      {
+        "card": "ex10-?",
+        "nearest": "ex10-!",
+        "distance": 0
+      },
+      {
+        "card": "g1-52",
+        "nearest": "xy8-97",
+        "distance": 0
+      },
+      {
+        "card": "gym2-129",
+        "nearest": "base1-99",
+        "distance": 0
+      },
+      {
+        "card": "hgss1-115",
+        "nearest": "col1-88",
+        "distance": 0
+      },
+      {
+        "card": "sv2-141",
+        "nearest": "sv4pt5-62",
+        "distance": 0
+      },
+      {
+        "card": "sv2-153",
+        "nearest": "sv4pt5-69",
+        "distance": 0
+      },
+      {
+        "card": "sv4-164",
+        "nearest": "sv5-149",
+        "distance": 0
+      },
+      {
+        "card": "sv4pt5-43",
+        "nearest": "sv1-106",
+        "distance": 0
+      },
+      {
+        "card": "sv4pt5-79",
+        "nearest": "sv1-170",
+        "distance": 0
+      }
+    ]
+  },
+  "full-whash": {
+    "cards": 19890,
+    "distinctDescriptors": 19487,
+    "collisionGroups": 348,
+    "collidingCards": 751,
+    "collisionRate": 0.0378,
+    "nnSampled": 1530,
+    "nnMin": 0,
+    "nnP01": 0,
+    "nnP05": 2,
+    "nnP25": 4,
+    "nnMedian": 7,
+    "worstPairs": [
+      {
+        "card": "base2-35",
+        "nearest": "base6-23",
+        "distance": 0
+      },
+      {
+        "card": "base2-47",
+        "nearest": "base4-62",
+        "distance": 0
+      },
+      {
+        "card": "base2-59",
+        "nearest": "base4-85",
+        "distance": 0
+      },
+      {
+        "card": "base3-48",
+        "nearest": "base6-78",
+        "distance": 0
+      },
+      {
+        "card": "base4-34",
+        "nearest": "base6-21",
+        "distance": 0
+      },
+      {
+        "card": "base4-46",
+        "nearest": "base6-49",
+        "distance": 0
+      },
+      {
+        "card": "base4-93",
+        "nearest": "base6-95",
+        "distance": 0
+      },
+      {
+        "card": "base6-10",
+        "nearest": "base2-3",
+        "distance": 0
+      },
+      {
+        "card": "base6-36",
+        "nearest": "base1-23",
+        "distance": 0
+      },
+      {
+        "card": "base6-71",
+        "nearest": "base4-72",
+        "distance": 0
+      },
+      {
+        "card": "base6-95",
+        "nearest": "base4-93",
+        "distance": 0
+      },
+      {
+        "card": "bw10-63",
+        "nearest": "dv1-7",
+        "distance": 0
+      }
+    ]
+  },
+  "art-phash": {
+    "cards": 19890,
+    "distinctDescriptors": 19604,
+    "collisionGroups": 262,
+    "collidingCards": 548,
+    "collisionRate": 0.0276,
+    "nnSampled": 1530,
+    "nnMin": 0,
+    "nnP01": 0,
+    "nnP05": 2,
+    "nnP25": 14,
+    "nnMedian": 14,
+    "worstPairs": [
+      {
+        "card": "base2-47",
+        "nearest": "base6-65",
+        "distance": 0
+      },
+      {
+        "card": "bw10-63",
+        "nearest": "dv1-7",
+        "distance": 0
+      },
+      {
+        "card": "bw7-128",
+        "nearest": "bw1-93",
+        "distance": 0
+      },
+      {
+        "card": "bw7-49",
+        "nearest": "bw11-45",
+        "distance": 0
+      },
+      {
+        "card": "bw8-18",
+        "nearest": "bw11-24",
+        "distance": 0
+      },
+      {
+        "card": "col1-93",
+        "nearest": "hgss1-120",
+        "distance": 0
+      },
+      {
+        "card": "dp4-101",
+        "nearest": "dp7-91",
+        "distance": 0
+      },
+      {
+        "card": "dv1-18",
+        "nearest": "bw4-87",
+        "distance": 0
+      },
+      {
+        "card": "ex10-88",
+        "nearest": "ex1-87",
+        "distance": 0
+      },
+      {
+        "card": "ex10-?",
+        "nearest": "ex10-!",
+        "distance": 0
+      },
+      {
+        "card": "ex13-93",
+        "nearest": "ex12-80",
+        "distance": 0
+      },
+      {
+        "card": "ex16-84",
+        "nearest": "ex12-78",
+        "distance": 0
+      }
+    ]
+  },
+  "art-dhash": {
+    "cards": 19890,
+    "distinctDescriptors": 19713,
+    "collisionGroups": 160,
+    "collidingCards": 337,
+    "collisionRate": 0.0169,
+    "nnSampled": 1530,
+    "nnMin": 0,
+    "nnP01": 0,
+    "nnP05": 2,
+    "nnP25": 13,
+    "nnMedian": 14,
+    "worstPairs": [
+      {
+        "card": "base1-54",
+        "nearest": "base4-81",
+        "distance": 0
+      },
+      {
+        "card": "base2-47",
+        "nearest": "base4-62",
+        "distance": 0
+      },
+      {
+        "card": "base4-81",
+        "nearest": "base1-54",
+        "distance": 0
+      },
+      {
+        "card": "bw10-63",
+        "nearest": "dv1-7",
+        "distance": 0
+      },
+      {
+        "card": "bw8-18",
+        "nearest": "bw11-24",
+        "distance": 0
+      },
+      {
+        "card": "col1-93",
+        "nearest": "hgss1-120",
+        "distance": 0
+      },
+      {
+        "card": "dv1-18",
+        "nearest": "bw4-87",
+        "distance": 0
+      },
+      {
+        "card": "ex10-88",
+        "nearest": "ex6-97",
+        "distance": 0
+      },
+      {
+        "card": "ex10-?",
+        "nearest": "ex10-!",
+        "distance": 0
+      },
+      {
+        "card": "ex16-84",
+        "nearest": "ex12-78",
+        "distance": 0
+      },
+      {
+        "card": "ex9-89",
+        "nearest": "ex2-93",
+        "distance": 0
+      },
+      {
+        "card": "hgss1-115",
+        "nearest": "col1-88",
+        "distance": 0
+      }
+    ]
+  },
+  "art-whash": {
+    "cards": 19890,
+    "distinctDescriptors": 19540,
+    "collisionGroups": 294,
+    "collidingCards": 644,
+    "collisionRate": 0.0324,
+    "nnSampled": 1530,
+    "nnMin": 0,
+    "nnP01": 0,
+    "nnP05": 2,
+    "nnP25": 6,
+    "nnMedian": 10,
+    "worstPairs": [
+      {
+        "card": "base2-47",
+        "nearest": "base6-65",
+        "distance": 0
+      },
+      {
+        "card": "base4-128",
+        "nearest": "gym1-130",
+        "distance": 0
+      },
+      {
+        "card": "base4-34",
+        "nearest": "base6-21",
+        "distance": 0
+      },
+      {
+        "card": "base4-7",
+        "nearest": "base6-12",
+        "distance": 0
+      },
+      {
+        "card": "base6-12",
+        "nearest": "base4-7",
+        "distance": 0
+      },
+      {
+        "card": "bw10-63",
+        "nearest": "dv1-7",
+        "distance": 0
+      },
+      {
+        "card": "bw7-49",
+        "nearest": "bw11-45",
+        "distance": 0
+      },
+      {
+        "card": "cel25c-107_A",
+        "nearest": "hgss1-107",
+        "distance": 0
+      },
+      {
+        "card": "col1-93",
+        "nearest": "hgss1-120",
+        "distance": 0
+      },
+      {
+        "card": "dp4-101",
+        "nearest": "dp7-91",
+        "distance": 0
+      },
+      {
+        "card": "dp5-80",
+        "nearest": "dp2-110",
+        "distance": 0
+      },
+      {
+        "card": "dv1-18",
+        "nearest": "bw4-87",
+        "distance": 0
+      }
+    ]
+  }
+}

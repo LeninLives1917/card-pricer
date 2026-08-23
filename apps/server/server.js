@@ -2,10 +2,12 @@
 // Owner: A1 | Slice: S5
 //
 // Thin bootstrap that imports the Express app and starts listening.
-// NOT YET wired into package.json — root server.js stays the entrypoint
-// until the phase-5 cutover (V2_RELEASE_NOTES). For now this exists so
-// `node apps/server/server.js` works end-to-end as a pre-cutover smoke
-// test for sub-agents, and `node --check` proves the whole graph imports.
+//
+// THIS IS THE ENTRYPOINT. package.json `main`/`start`/`prestart` and
+// render.yaml:24-25 all target this file; the phase-5 cutover happened. The
+// comment here previously said the opposite ("NOT YET wired into
+// package.json — root server.js stays the entrypoint"), which sent anyone
+// reading it to the dead 5,729-line root server.js instead.
 //
 // V1 boot banner preserved verbatim (server.js:5721-5729).
 
