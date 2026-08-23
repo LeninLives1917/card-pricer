@@ -47,17 +47,21 @@ on:
     - cron: '3,13,23,33,43,53 * * * *'
   workflow_dispatch:
     inputs:
-      base_url:
+      health_url:
         description: >-
-          Target to probe. Defaults to production. Override it to prove the
-          ALARM still fires — a monitor only ever seen passing is half tested,
-          and the same discipline applies here as to a regression spec: verify
-          it goes red against the thing it is supposed to catch. Pointing this
-          at .../api/version returns valid JSON with no "status":"ok" in it,
-          which is exactly the shape of a degraded response, and the job must
-          fail.
+          FULL url to probe for the health check. Defaults to production.
+          Override it to prove the ALARM still fires — a monitor only ever
+          seen passing is half tested, and the rule this repo applies to
+          regression specs (verify it goes red against the thing it is
+          supposed to catch) applies to the thing doing the catching.
+
+          The override worth running is .../api/version — it returns HTTP 200
+          with valid JSON that contains no "status":"ok". That is precisely
+          the shape of the August 2026 incident: a live, responding service
+          returning 200 while everything behind it failed. A status-code
+          monitor passes that. This one must fail it.
         required: false
-        default: https://card-pricer-60qq.onrender.com
+        default: ''
 
 permissions:
   contents: read
@@ -67,7 +71,8 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  BASE_URL: ${{ github.event.inputs.base_url || 'https://card-pricer-60qq.onrender.com' }}
+  BASE_URL: https://card-pricer-60qq.onrender.com
+  HEALTH_URL: ${{ github.event.inputs.health_url || 'https://card-pricer-60qq.onrender.com/api/health' }}
 
 jobs:
   check:
@@ -87,7 +92,7 @@ jobs:
           code=''
           while [ "$attempt" -lt 3 ]; do
             attempt=$((attempt + 1))
-            code=$(curl -s -o /tmp/health.json -w '%{http_code}' --max-time 45 "$BASE_URL/api/health" || echo "000")
+            code=$(curl -s -o /tmp/health.json -w '%{http_code}' --max-time 45 "$HEALTH_URL" || echo "000")
             body=$(cat /tmp/health.json 2>/dev/null || echo '')
             if printf '%s' "$body" | grep -q '"status":"ok"'; then
               echo "attempt $attempt: healthy (HTTP $code)"
@@ -97,7 +102,7 @@ jobs:
             [ "$attempt" -lt 3 ] && sleep 20
           done
 
-          echo '--- /api/health ---'
+          echo "--- $HEALTH_URL ---"
           # Bash substring rather than `| head -c`. Piping a large body into
           # head makes head close the pipe first, and printf then reports
           # "write error: Broken pipe" into the alert output. Cosmetic, but
