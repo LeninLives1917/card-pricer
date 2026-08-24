@@ -240,7 +240,20 @@ async function startTextEntry() {
     // the operator can fix the paste, rather than an error they have to work
     // out for themselves.
     if (r.ok && r.body?.resolution?.status === 'multi') {
-      state.currentResults.push(makeErrorRow(row, r.body.resolution.question));
+      // Carry the resolved pieces onto the row so results.js can offer the
+      // split as a BUTTON. Telling the operator to retype a line the system
+      // has already worked out is not an answer, it is homework.
+      state.currentResults.push({
+        card: { name: row.raw, set_code: '', card_number: '' },
+        pieces: r.body.resolution.pieces.map((p) => ({
+          text: p.text,
+          status: p.status,
+          card_id: p.card_id,
+          card: p.candidates?.[0] || null,
+        })),
+        _parsed_line: row.raw,
+        _payload: payload,
+      });
       continue;
     }
 
@@ -750,6 +763,57 @@ window.addEventListener('cp:candidate-chosen', async (ev) => {
   const sess = currentSession();
   if (sess) {
     sess.log.unshift({ ...result, ts: Date.now() });
+    saveAllSessions();
+    window.dispatchEvent(new CustomEvent('cp:log-changed'));
+  }
+  window.dispatchEvent(new CustomEvent('cp:results-changed'));
+});
+
+// ============================================================
+// Split confirmation — the operator says "yes, that was two cards"
+// ============================================================
+//
+// results.js renders the multi row with the pieces named and fires
+// cp:split-confirmed when the operator agrees. Each piece is looked up by its
+// own text — the same path any typed line takes — then priced, and the single
+// question row is replaced by the resulting cards in place.
+
+window.addEventListener('cp:split-confirmed', async (ev) => {
+  const { resultIndex } = ev.detail || {};
+  const entry = state.currentResults?.[resultIndex];
+  if (!entry?.pieces?.length) return;
+
+  console.log(`[TEXT] operator confirmed a ${entry.pieces.length}-card split: `
+    + entry.pieces.map((p) => p.text).join(' + '));
+
+  const priced = [];
+  for (const piece of entry.pieces) {
+    const r = await postJson('/api/identify-manual', {
+      ...(entry._payload || {}),
+      // Only the piece's own text. The parsed fields on the original payload
+      // describe the whole run-together line and would fight it.
+      text: piece.text,
+      set_code: undefined,
+      card_number: undefined,
+      name: undefined,
+      total: undefined,
+    });
+    const card = r.ok ? r.body?.cards?.[0] : null;
+    if (!card) {
+      priced.push(makeErrorRow({ raw: piece.text, name: piece.text },
+        r.body?.error || 'could not price this half'));
+      continue;
+    }
+    const p = await postJson('/api/price', { card, buyPercentage: state.buyPercentage });
+    priced.push(p.ok ? p.body : { card, cardmarket: null, ebay: null, buy_price: null });
+  }
+
+  // Replace the one question row with the cards it turned into.
+  state.currentResults.splice(resultIndex, 1, ...priced);
+
+  const sess = currentSession();
+  if (sess) {
+    for (const row of priced) if (!row.error) sess.log.unshift({ ...row, ts: Date.now() });
     saveAllSessions();
     window.dispatchEvent(new CustomEvent('cp:log-changed'));
   }

@@ -14,7 +14,22 @@ import { postJson } from './api-client.js';
 import { state, currentLog, saveAllSessions, getSetting } from './state.js';
 import { openCorrectModal } from './correct.js';
 
-const CONDITIONS = ['NM', 'LP', 'MP', 'HP', 'DMG'];
+// Cardmarket's grades, in Cardmarket's order — the vocabulary the marketplace
+// we price against actually uses. Was ['NM','LP','MP','HP','DMG'], a
+// TCGPlayer-shaped scale whose names disagreed with the minCondition codes it
+// filtered on. See pricing/conditions.js; the multipliers did not move.
+//
+// Duplicated from pricing/conditions.js CONDITION_ORDER rather than imported:
+// a vendor module cannot import from pricing/ (the browser resolves it to a
+// path the server does not serve and the whole app dies — see text-parse.js).
+// tests/regression/conditions.spec.js asserts the two agree.
+const CONDITIONS = ['NM', 'EX', 'GD', 'LP', 'PL', 'PO'];
+
+/** Full names, shown in the picker so "GD" is not a guess. */
+const CONDITION_LABELS = {
+  NM: 'Near Mint', EX: 'Excellent', GD: 'Good',
+  LP: 'Light Played', PL: 'Played', PO: 'Poor',
+};
 
 let _currentEntry = null;   // ref into currentResults[0] OR session log entry
 let _ask = 0;               // negotiate input — €
@@ -64,11 +79,59 @@ export function renderResultSheet() {
     ? `<span class="status-badge rare">${escapeHtml(card.graded.company)} ${escapeHtml(String(card.graded.grade))}</span>`
     : '';
 
-  // Condition cycle button (Pokemon/etc. — graded skips condition).
+  // CONDITION PICKER — every grade one tap away, on Cardmarket's scale.
+  //
+  // Was a cycle button. Cycling through five grades was tolerable; six makes
+  // reaching Poor from Near Mint five taps, and the operator asked to adjust a
+  // card AFTER it has been priced, which is a picker.
+  //
+  // Graded cards skip it entirely: the grade IS the condition, and the engine
+  // prices off graded comps rather than applying a multiplier.
   const condition = card.condition_estimate || 'NM';
   const conditionBtn = card.graded
     ? ''
-    : `<button class="data-badge" data-action="cycle-condition" title="Cycle condition">${escapeHtml(condition)}</button>`;
+    : `<div class="condition-picker" style="display:flex; gap:4px; flex-wrap:wrap;">
+         ${CONDITIONS.map((g) => `
+           <button class="data-badge" data-action="set-condition" data-grade="${g}"
+             title="${escapeAttr(CONDITION_LABELS[g] || g)}"
+             style="${g === condition
+               ? 'background:var(--accent,#6c5ce7); color:#fff; font-weight:700;'
+               : 'opacity:0.55;'}">${g}</button>`).join('')}
+       </div>`;
+
+  // PRICE CONTEXT — the numbers the API already returns and nobody sees.
+  //
+  // The headline figure is the cheapest Near Mint listing: one seller's asking
+  // price, which moves for reasons that have nothing to do with the card.
+  // Measured on real rows: Dark Dragonite showed EUR 44.75 against a 30-day
+  // average of EUR 60.81, and Slowking showed EUR 19.99 against EUR 9.41. The
+  // averages were arriving in the same response the whole time and were
+  // dropped on the floor.
+  const rcm = entry.rapidapi_cm || {};
+  const trendBits = [];
+  if (rcm.avg7 != null) trendBits.push(`7d €${Number(rcm.avg7).toFixed(2)}`);
+  if (rcm.avg30 != null) trendBits.push(`30d €${Number(rcm.avg30).toFixed(2)}`);
+  if (rcm.available_items != null) trendBits.push(`${rcm.available_items} listed`);
+  const trendBlock = trendBits.length
+    ? `<div class="sheet-card-meta" style="margin-top:var(--p-1); font-size:11px;">
+         ${escapeHtml(trendBits.join(' · '))}
+       </div>`
+    : '';
+
+  // eBay — ACTIVE LISTINGS, and labelled as such.
+  //
+  // eBay's Browse API has no sold filter: it returns what people are ASKING,
+  // sorted cheapest first. Calling that a sold price is what produced EUR 2.28
+  // for a card worth EUR 168-210, which is why eBay is excluded from
+  // bestPrice entirely (price.js). Shown here for context, named honestly.
+  // Real sold data needs eBay's Marketplace Insights API.
+  const eb = entry.ebay || {};
+  const ebayBlock = (eb.median_price != null || eb.sample_size)
+    ? `<div class="sheet-card-meta" style="margin-top:var(--p-1); font-size:11px; opacity:0.75;">
+         eBay asking${eb.median_price != null ? ` ~€${Number(eb.median_price).toFixed(2)}` : ''}
+         ${eb.sample_size ? `(${eb.sample_size} live listings)` : ''} — not sold prices
+       </div>`
+    : '';
 
   // Candidates picker — surfaces alt matches verifyPokemon returned.
   const candidates = Array.isArray(card.candidates) ? card.candidates : [];
@@ -97,6 +160,8 @@ export function renderResultSheet() {
         <div class="sheet-card-meta">
           ${escapeHtml(card.set_name || '')}${card.set_code ? ' · ' + escapeHtml((card.set_code || '').toUpperCase()) : ''}${card.card_number ? ' · #' + escapeHtml(card.card_number) : ''}${card.rarity ? ' · ' + escapeHtml(card.rarity) : ''}
         </div>
+        ${trendBlock}
+        ${ebayBlock}
         <div style="margin-top:var(--p-2); display:flex; gap:var(--p-1); align-items:center;">
           ${conditionBtn}
           ${cmUrl ? `<a class="data-badge" href="${escapeAttr(cmUrl)}" target="_blank" rel="noopener noreferrer">Cardmarket →</a>` : ''}
@@ -177,6 +242,7 @@ export function wireResultSheet() {
       case 'details': return doDetails();
       case 'dismiss': return closeResultSheet();
       case 'cycle-condition': return cycleCondition();
+      case 'set-condition': return setCondition(el.dataset.grade);
       case 'correct-card': return openCorrectModal(_currentEntry);
       case 'pick-candidate': {
         const idx = parseInt(target.dataset.idx, 10);
@@ -228,7 +294,23 @@ async function cycleCondition() {
   if (!_currentEntry || !_currentEntry.card) return;
   const card = _currentEntry.card;
   const idx = CONDITIONS.indexOf(card.condition_estimate || 'NM');
-  card.condition_estimate = CONDITIONS[(idx + 1) % CONDITIONS.length];
+  // -1 when the stored grade is a legacy one (MP/HP/DMG) that is no longer
+  // offered: start the cycle from the top rather than wrapping to the end.
+  card.condition_estimate = CONDITIONS[idx < 0 ? 0 : (idx + 1) % CONDITIONS.length];
+  await reprice();
+}
+
+/**
+ * Set the grade directly, rather than cycling to it.
+ *
+ * Cycling was fine with five grades and is tedious with six — picking Poor
+ * from Near Mint is five taps. The operator asked to adjust condition per card
+ * AFTER pricing, which is a picker, not a cycle.
+ */
+async function setCondition(grade) {
+  if (!_currentEntry || !_currentEntry.card) return;
+  if (!CONDITIONS.includes(grade)) return;
+  _currentEntry.card.condition_estimate = grade;
   await reprice();
 }
 

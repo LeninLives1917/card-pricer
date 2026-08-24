@@ -428,3 +428,55 @@ describe("the operator's run-together paste", () => {
     assert.ok(r.candidates.length > 1);
   });
 });
+
+describe('a set code is a CLAIM, not a fact', () => {
+  test('THE WRONG ANSWER: "scr065" is Scream Tail SVP 065, not Alcremie SCR 65', () => {
+    // Caught by the operator against a real card. Both readings resolve:
+    // SCR is Stellar Crown and sv7-65 is Alcremie; "scr" is also the start of
+    // Scream Tail, which is svp-65.
+    //
+    // The set-code reading was winning because it ranked top for being
+    // "unique by construction, 100%". That figure justifies "GIVEN SCR is a
+    // set code, set + number identifies one card". It says nothing about
+    // whether SCR IS a set code rather than three letters of a name — and
+    // that was the claim being decided. Evidence for one settled the other.
+    const r = resolveTypedLine('scr065', deps);
+    assert.equal(r.status, 'ambiguous', `expected a question, got ${r.card_id}`);
+    const names = r.candidates.map((c) => c.name);
+    assert.ok(names.includes('Scream Tail'), `Scream Tail must be offered, got ${names}`);
+    assert.ok(names.includes('Alcremie'), `Alcremie must still be offered, got ${names}`);
+  });
+
+  test('a denominator that AGREES with the set corroborates the code', () => {
+    // "MEG 172/132" — Mega Evolution has 132 cards, so MEG is corroborated
+    // and outranks the name reading. This is the difference between a code
+    // that is merely possible and one the line supports.
+    const r = resolveTypedLine('MEG 172/132', deps);
+    assert.equal(r.status, 'resolved');
+    assert.equal(r.candidates[0].name, 'Mystery Garden');
+  });
+
+  test('a set code with no rival name reading still resolves', () => {
+    // "PFL 94" has no name in it at all, so nothing competes and the code
+    // stands. Downgrading the rank must not break the legacy shape.
+    const r = resolveTypedLine('PFL 94', deps);
+    assert.equal(r.status, 'resolved');
+    assert.equal(r.candidates[0].name, 'Wondrous Patch');
+  });
+
+  test('a catalogue key keeps the top rank — it is not a guess about letters', () => {
+    const r = resolveTypedLine('sv3pt5-4', deps);
+    assert.equal(r.status, 'resolved');
+    assert.equal(r.card_id, 'sv3pt5-4');
+  });
+
+  test('spaced and compact forms of the same line agree', () => {
+    const a = resolveTypedLine('scr065', deps);
+    const b = resolveTypedLine('scr 065', deps);
+    assert.equal(a.status, b.status);
+    assert.deepEqual(
+      a.candidates.map((c) => c.id).sort(),
+      b.candidates.map((c) => c.id).sort(),
+    );
+  });
+});

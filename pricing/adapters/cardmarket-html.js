@@ -16,8 +16,21 @@ import { axios } from '../../apps/server/_clients.js';
 
 const NAME = 'cardmarket-html';
 
-// V1: CONDITION_TO_CM table — Cardmarket's minCondition query parameter.
-const CONDITION_TO_CM = { NM: 2, LP: 4, MP: 5, HP: 6, DMG: 7 };
+// Cardmarket's own minCondition codes: 1=MT 2=NM 3=EX 4=GD 5=LP 6=PL 7=PO.
+//
+// The old table was { NM:2, LP:4, MP:5, HP:6, DMG:7 } — the CODES were right
+// for the multipliers attached to them, but the NAMES were a TCGPlayer-shaped
+// scale, so "LP" filtered for Good and "MP" filtered for Light Played. The
+// grades are now Cardmarket's, which is the vocabulary the operator asked for
+// and the one the marketplace uses. See pricing/conditions.js.
+//
+// Legacy names are kept pointing at the same codes they always did, so a
+// stored session or an older client filters exactly as before.
+const CONDITION_TO_CM = {
+  MT: 1, NM: 2, EX: 3, GD: 4, LP: 5, PL: 6, PO: 7,
+  // legacy — unchanged codes, so old input behaves identically
+  MP: 5, HP: 6, DMG: 7,
+};
 
 // V1: CM_GAME_SLUGS — the URL path segment per game family.
 const CM_GAME_SLUGS = {

@@ -156,6 +156,11 @@ export function resolveLine(line, { cardDb, nameIndex, nameNumberIndex }) {
         status: 'resolved', card_id: id, confidence: 'high', reason: 'set_code_and_number',
         contradiction: false, candidates: [hydrateEarly(id)], matched_name: null,
         name_match: 'none',
+        // Did the typed denominator actually AGREE with this set's size, or
+        // was there simply no denominator to disagree with? The two are very
+        // different amounts of evidence and the ranking depends on knowing
+        // which happened — see rankOf in resolveTypedLine.
+        corroborated_by_total: printed != null && actual != null && printed === actual,
       };
     }
     return none('not_found', 'set_code_and_number_not_in_catalogue');
@@ -322,9 +327,32 @@ export function resolveTypedLine(raw, deps, opts = {}) {
   // with a printed total measured 99.6%; a three-letter prefix 99.0%; a typo
   // correction is weaker still. That ordering is a property of the data, not
   // a preference.
+  // A CORRECTION, from a wrong answer the operator caught.
+  //
+  // "scr065" returned Alcremie — SCR is Stellar Crown and sv7-65 is a real
+  // card. It is Scream Tail, svp-65, and "scr" is the start of the name.
+  //
+  // Both readings resolve, and the set-code one was winning because it was
+  // ranked top for being "unique by construction, 100%". That figure justifies
+  // "GIVEN SCR is a set code, set + number identifies one card". It says
+  // nothing about whether SCR IS a set code rather than the first three
+  // letters of a name — and that second claim was the one being decided.
+  // Evidence for one was used to settle the other.
+  //
+  // So the set-code reading only outranks everything when the typed
+  // denominator AGREED with that set's size. "MEG 172/132" has that: me1 has
+  // 132 cards, so the code is corroborated and Mystery Garden wins. "scr065"
+  // has no denominator at all, so the code is merely possible — it ranks
+  // level with a name prefix, ties, and the line becomes a question.
+  //
+  // A catalogue key ("sv3pt5-4") keeps the top rank: it is not a guess about
+  // what the letters mean, it is the key itself.
   const EVIDENCE = { none: 4, exact: 3, prefix: 2, fuzzy: 1 };
-  const rankOf = (r) => (r.reason === 'set_code_and_number' || r.shape === 'catalogue_key')
-    ? 5 : (EVIDENCE[r.name_match] ?? 0);
+  const rankOf = (r) => {
+    if (r.shape === 'catalogue_key') return 5;
+    if (r.reason === 'set_code_and_number') return r.corroborated_by_total ? 5 : 2;
+    return EVIDENCE[r.name_match] ?? 0;
+  };
 
   const resolvedAll = [];
   let firstAmbiguous = null;

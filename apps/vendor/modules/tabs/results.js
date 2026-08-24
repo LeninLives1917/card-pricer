@@ -38,6 +38,39 @@ export function render() {
     const userImg = entry.image || '';
     const refImg = entry.reference_image || card.image_url || card.reference_image || '';
     const thumbHtml = renderRowThumbs(userImg, refImg);
+    // MULTI — the line is several cards run together. Ask, then DO it.
+    //
+    // Telling the operator to "put each on its own line" makes them retype
+    // something the system has already worked out. The pieces are resolved
+    // and named; the only thing missing is their confirmation that the line
+    // really was two cards, so that is the only thing asked for.
+    if (entry.pieces?.length) {
+      const names = entry.pieces
+        .map((p) => (p.card ? `<strong>${escapeHtml(p.card.name)}</strong>` : escapeHtml(p.text)))
+        .join(' &nbsp;+&nbsp; ');
+      const allResolved = entry.pieces.every((p) => p.status === 'resolved');
+      return `
+        <div class="session-log-row" style="border-left:3px solid #d99a2b; display:block; cursor:default;">
+          <div style="display:flex; justify-content:space-between; align-items:baseline; gap:8px;">
+            <div class="name">${escapeHtml(entry._parsed_line || '')}</div>
+            <span class="data-badge" style="font-size:10px; color:#d99a2b; white-space:nowrap;">
+              ${entry.pieces.length} cards?
+            </span>
+          </div>
+          <div class="meta" style="margin-top:6px;">${names}</div>
+          <div style="display:flex; gap:6px; margin-top:8px;">
+            <button class="btn primary" data-split="${idx}" style="font-size:12px; padding:6px 12px;"
+              ${allResolved ? '' : 'disabled'}>
+              Yes — split and price ${entry.pieces.length}
+            </button>
+            <button class="btn ghost" data-split-no="${idx}" style="font-size:12px; padding:6px 12px;">
+              No, one card
+            </button>
+          </div>
+        </div>
+      `;
+    }
+
     // AMBIGUOUS — the line resolved to more than one real card, so the answer
     // is a question. Measured: 102 of the catalogue's name+number groups stay
     // ambiguous under a three-letter prefix, and 63 of those are DIFFERENT
@@ -89,6 +122,34 @@ export function render() {
       </div>
     `;
   }).join('');
+  root.querySelectorAll('[data-split]').forEach((btn) => {
+    btn.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      const i = parseInt(btn.dataset.split, 10);
+      btn.textContent = 'Pricing…';
+      btn.disabled = true;
+      window.dispatchEvent(new CustomEvent('cp:split-confirmed', { detail: { resultIndex: i } }));
+    });
+  });
+
+  root.querySelectorAll('[data-split-no]').forEach((btn) => {
+    btn.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      const i = parseInt(btn.dataset.splitNo, 10);
+      const entry = state.currentResults?.[i];
+      if (!entry) return;
+      // Declining the split is information too: the line was one card the
+      // system could not read, not two run together. Turn it into an ordinary
+      // unresolved row rather than leaving the question sitting there.
+      state.currentResults[i] = {
+        card: { name: entry._parsed_line || '', set_code: '', card_number: '' },
+        error: 'Could not identify — try name + number, e.g. cha 4/102',
+        _parsed_line: entry._parsed_line,
+      };
+      window.dispatchEvent(new CustomEvent('cp:results-changed'));
+    });
+  });
+
   root.querySelectorAll('[data-pick]').forEach((btn) => {
     btn.addEventListener('click', (ev) => {
       ev.stopPropagation();
