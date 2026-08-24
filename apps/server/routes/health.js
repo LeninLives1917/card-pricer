@@ -22,6 +22,7 @@ import { getPriceMatchCounts } from '../../../infra/observability/price-match-co
 import { getTextEntryCounts } from '../../../infra/observability/text-entry-counters.js';
 import { reconcileEnv } from '../../../infra/observability/env-reconcile.js';
 import { setResolutionState } from '../../../pricing/set-resolve.js';
+import { urlStoreState } from '../../../pricing/adapters/cardmarket-html.js';
 import { isEnabled as rectifyEnabled } from '../../../pricing/card-rectify.js';
 import { getFastPathMode } from '../../../pricing/fast-path-mode.js';
 
@@ -157,6 +158,15 @@ export async function buildHealthPayload(deps = {}) {
     text_entry: textEntryCheck(readTextEntry()),
     env_drift: reconcileEnv({ blueprint: readBlueprint(), env }),
     set_resolution: setResolutionCheck((deps.setResolution ?? setResolutionState)()),
+    // The Cardmarket product-URL store. ADVISORY — a link is a convenience and
+    // must never degrade the service.
+    //
+    // Reported because it is otherwise invisible: the URL cannot be built, only
+    // looked up from a redirect service measured to fail transiently on roughly
+    // a third of cards, and a store that silently stopped loading would look
+    // exactly like one that works and simply never hits. `entries: null` means
+    // NEVER LOADED, which is not the same as loaded-and-empty.
+    cardmarket_urls: cardmarketUrlCheck((deps.urlStore ?? urlStoreState)()),
     // Reported because it was previously unverifiable from outside the box:
     // the only way to know whether rectification was on in production was to
     // trust that someone had set it. Informational, not a failure — health
@@ -538,3 +548,33 @@ router.post('/api/widget/loaded', (req, res) => {
 });
 
 export default router;
+
+/**
+ * Cardmarket product-URL store. Advisory: never sets `degraded`.
+ *
+ * Reports the RATIO, per CLAUDE.md — a bare count of disk hits is unreadable
+ * without knowing how many lookups happened at all, and "never asked" (null)
+ * must stay distinguishable from "asked and never served" (0).
+ */
+export function cardmarketUrlCheck(s) {
+  const served = s?.served_from_disk ?? 0;
+  return {
+    ok: (s?.load_failed ?? 0) === 0 && (s?.write_failed ?? 0) === 0,
+    entries: s?.entries ?? null,
+    loaded_entries: s?.loaded_entries ?? null,
+    served_from_disk: served,
+    hits_from_disk: s?.hits_from_disk ?? 0,
+    misses_from_disk: s?.misses_from_disk ?? 0,
+    miss_expired: s?.miss_expired ?? 0,
+    writes: s?.writes ?? 0,
+    load_failed: s?.load_failed ?? 0,
+    write_failed: s?.write_failed ?? 0,
+    detail: s?.entries == null
+      ? 'never loaded — no card has been linked yet this boot'
+      : (s.load_failed > 0
+        ? 'the store FAILED to load — every card will re-resolve against a flaky upstream'
+        : s.write_failed > 0
+          ? 'the store loaded but cannot be WRITTEN — resolutions will not survive a restart'
+          : `${s.entries} cards known, ${served} served from disk this boot`),
+  };
+}

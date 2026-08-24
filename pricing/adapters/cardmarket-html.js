@@ -13,6 +13,14 @@
 // unavailable rather than "no data for this card".
 
 import { axios } from '../../apps/server/_clients.js';
+import {
+  loadUrlStore,
+  lookup as lookupStored,
+  remember as rememberUrl,
+  flushUrlStore,
+  urlStoreState,
+  _resetUrlStore,
+} from './cardmarket-url-store.js';
 
 const NAME = 'cardmarket-html';
 
@@ -156,11 +164,23 @@ export async function resolveCardmarketProductUrl(card, { timeoutMs = 6000 } = {
     return hit === NO_PRODUCT ? null : hit;
   }
 
+  // The disk store, so a resolved URL survives a restart. Without it every
+  // deploy threw the whole map away and the operator paid the flaky redirect
+  // service again from zero. `hit:false` means NEVER ASKED, which is not the
+  // same as asked-and-absent — see cardmarket-url-store.js.
+  await loadUrlStore();
+  const stored = lookupStored(key);
+  if (stored.hit) {
+    _productUrlCache.set(key, stored.url ?? NO_PRODUCT);
+    return stored.url;
+  }
+
   const redirect = card?.cardmarket_url || card?.cardmarketUrl;
   if (!redirect || !/prices\.pokemontcg\.io/.test(redirect)) {
     // Already a direct Cardmarket link, or nothing to follow.
     const direct = redirect && /cardmarket\.com/.test(redirect) ? redirect : null;
     _productUrlCache.set(key, direct ?? NO_PRODUCT);
+    rememberUrl(key, direct);
     return direct;
   }
 
@@ -176,8 +196,19 @@ export async function resolveCardmarketProductUrl(card, { timeoutMs = 6000 } = {
   //
   // A 302 or a 404 is an ANSWER and ends the loop. Only 5xx and network
   // errors are retried.
+  // FIVE attempts, not three. Measured against the four cards that survived a
+  // 3-attempt run:
+  //
+  //   sv1-62        502 -> 302            recovered on 2
+  //   sv1-188       500 502 502 -> 302    recovered on 4
+  //   zsv10pt5-134  502 -> 302            recovered on 2
+  //   me4-53        404 404 404 404 404   genuinely absent
+  //
+  // Three of the four were transient and one is a real miss. A 404 is a
+  // DEFINITE answer and ends the loop immediately, so the extra attempts cost
+  // nothing on cards that truly have no page.
   let lastWasTransient = false;
-  for (let attempt = 0; attempt < 3; attempt += 1) {
+  for (let attempt = 0; attempt < 5; attempt += 1) {
     try {
       const ctl = new AbortController();
       const t = setTimeout(() => ctl.abort(), timeoutMs);
@@ -190,13 +221,17 @@ export async function resolveCardmarketProductUrl(card, { timeoutMs = 6000 } = {
         const ok = loc && /cardmarket\.com/.test(loc) ? loc : null;
         // A definite answer, cached either way — including the miss, so a
         // card with genuinely no page is not looked up again all session.
+        // It also goes to disk: a hit forever, a miss for 14 days, because a
+        // set too new to be mapped today will be mapped later and a permanent
+        // "no page" would never notice it had become wrong.
         _productUrlCache.set(key, ok ?? NO_PRODUCT);
+        rememberUrl(key, ok);
         return ok;
       }
     } catch {
       lastWasTransient = true;
     }
-    if (attempt < 2) await new Promise((res) => setTimeout(res, 400 * (attempt + 1)));
+    if (attempt < 4) await new Promise((res) => setTimeout(res, 350 * (attempt + 1)));
   }
 
   // Never cache a transient failure as "no product" — that would make one bad
@@ -206,9 +241,12 @@ export async function resolveCardmarketProductUrl(card, { timeoutMs = 6000 } = {
 }
 
 /** Test seam. */
-export function resetCardmarketUrlCache() {
+export function resetCardmarketUrlCache(storePath) {
   _productUrlCache.clear();
+  _resetUrlStore(storePath);
 }
+
+export { flushUrlStore, urlStoreState };
 
 /**
  * Direct HTML scrape — V1 server.js:fetchCardmarketPrice. Returns the V1

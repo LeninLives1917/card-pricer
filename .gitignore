@@ -28,6 +28,18 @@ data/card-db.json
 data/card-prices.json
 data/card-phashes.json
 data/card-index-manifest.json
+
+# Generated at runtime by pricing/adapters/cardmarket-url-store.js — resolved
+# Cardmarket product URLs, so a restart does not re-pay a redirect service that
+# fails transiently on roughly a third of cards.
+#
+# Deliberately NOT committed. data/ is where the Render persistent disk mounts,
+# so a tracked copy would be shadowed by the disk and never read — the exact
+# trap that silently disabled printedTotal disambiguation for weeks (see
+# pricing/set-resolve.js). The store belongs ON the disk; it warms in one
+# session and persists from there.
+data/cardmarket-urls.json
+data/cardmarket-urls.json.tmp
 data/weekly-market/
 
 # NOT ignored, and deliberately so: pricing/reference/pokemon-sets.json.
