@@ -245,3 +245,57 @@ describe('duplicate upstream products', () => {
     assert.equal(r.considered, 2, 'null ids are not equal to each other');
   });
 });
+
+describe('duplicate ids that DISAGREE are a conflict, not a duplicate', () => {
+  // PINS a bug introduced by the dedupe above and caught by verifying against
+  // production. Two upstream rows for Base Set Charizard #4 carry the SAME
+  // cardmarket_id 660224 and completely different numbers:
+  //
+  //     base/charizard-4-2   nm=null   avg30=10.46      avail=509
+  //     base/charizard-24    nm=2695   avg30=2475.96    avail=39
+  //
+  // Collapsing on the id alone kept whichever came first and quoted EUR 10.46
+  // for a card whose 30-day average is EUR 2,475 — and TCGplayer says USD 731,
+  // so the two sources disagreed by 70x. Before dedupe this case refused;
+  // after it, it answered confidently and wrongly, which is strictly worse than
+  // the bug it was fixing.
+  //
+  // Sharing an id is not sufficient. The PAYLOADS must agree.
+  const base = (slug, nm, avg30, avail) => ({
+    name: 'Charizard', card_number: '4', cardmarket_id: 660224, slug,
+    episode: { name: 'Base', code: 'BS', cards_printed_total: 102 },
+    prices: { cardmarket: { lowest_near_mint: nm, '30d_average': avg30, available_items: avail } },
+  });
+  const ASK = { name: 'Charizard', set_name: 'Base', set_code: 'BS', card_number: '4' };
+
+  test('the real conflict refuses rather than picking one', () => {
+    const r = chooseTcggoCandidate(
+      [base('charizard-4-2', null, 10.46, 509), base('charizard-24', 2695, 2475.96, 39)], ASK,
+    );
+    assert.equal(r.item, null, 'EUR 10.46 must not be quoted for this card');
+    assert.equal(r.reason, 'set_ambiguous');
+    assert.equal(r.considered, 2);
+  });
+
+  test('order does not decide it', () => {
+    // The old rule was order-dependent, which is what made it a lottery.
+    const r = chooseTcggoCandidate(
+      [base('charizard-24', 2695, 2475.96, 39), base('charizard-4-2', null, 10.46, 509)], ASK,
+    );
+    assert.equal(r.item, null);
+  });
+
+  test('genuinely identical rows still collapse to one', () => {
+    const r = chooseTcggoCandidate([base('a', 275, 275, 97), base('b', 275, 275, 97)], ASK);
+    assert.equal(r.reason, 'set_confirmed');
+    assert.equal(r.considered, 1);
+  });
+
+  test('a differing available_items alone is enough to keep both', () => {
+    // Supply is the field the price history exists to record. Two rows that
+    // disagree about it cannot be averaged into one without inventing data.
+    const r = chooseTcggoCandidate([base('a', 275, 275, 97), base('b', 275, 275, 12)], ASK);
+    assert.equal(r.considered, 2);
+    assert.equal(r.item, null);
+  });
+});

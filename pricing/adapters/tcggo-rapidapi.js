@@ -185,13 +185,36 @@ export function chooseTcggoCandidate(candidates, card) {
   // set, and the ambiguity rule below correctly-but-uselessly refuses to price
   // a card that has exactly one product behind it. Measured: this alone was
   // every remaining refusal in a 60-card sample.
+  //
+  // COLLAPSE ONLY WHEN THE PAYLOADS AGREE. Sharing an id is NOT sufficient, and
+  // assuming it was introduced a worse bug than the one it fixed. Measured
+  // 24 Aug 2026 — two upstream rows for Base Set Charizard #4, same
+  // cardmarket_id 660224:
+  //
+  //     base/charizard-4-2   nm=null   avg30=10.46      avail=509
+  //     base/charizard-24    nm=2695   avg30=2475.96    avail=39
+  //
+  // Collapsing on the id alone kept whichever came first and quoted EUR 10.46
+  // for a card whose 30-day average is EUR 2,475. Before dedupe that case
+  // refused; after, it answered confidently and wrongly, which is strictly
+  // worse. Two rows that disagree about the price are not one product seen
+  // twice — they are a data conflict we cannot adjudicate, so they stay as
+  // separate candidates and the ambiguity rule below refuses.
+  const priceSignature = (item) => {
+    const cm = item?.prices?.cardmarket ?? {};
+    return [cm.lowest_near_mint ?? 'x', cm['30d_average'] ?? 'x', cm.available_items ?? 'x'].join('|');
+  };
   const deduped = [];
-  const seenProduct = new Set();
+  const seenProduct = new Map();
   for (const item of sameNumber) {
     const pid = item?.cardmarket_id;
     if (pid != null) {
-      if (seenProduct.has(pid)) continue;
-      seenProduct.add(pid);
+      const sig = priceSignature(item);
+      const prior = seenProduct.get(pid);
+      // Same id AND same numbers: genuinely the same product listed twice.
+      if (prior === sig) continue;
+      // Same id, different numbers: keep both and let the gate refuse.
+      if (prior === undefined) seenProduct.set(pid, sig);
     }
     deduped.push(item);
   }
