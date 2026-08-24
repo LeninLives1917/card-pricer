@@ -10,7 +10,9 @@ import express from 'express';
 import { requireAuth } from '../middleware/auth.js';
 import { quoteLeadLimiter } from '../middleware/rate-limit.js';
 // S6 import-flip
-import { buildCardmarketUrl, fetchCardmarketPrice } from '../../../pricing/adapters/cardmarket-html.js';
+import { buildCardmarketUrl, fetchCardmarketPrice, resolveCardmarketProductUrl, withCardmarketFilters }
+  from '../../../pricing/adapters/cardmarket-html.js';
+import { CONDITION_MULTIPLIERS } from '../../../pricing/conditions.js';
 import { priceMagicCard } from '../../../pricing/adapters/scryfall.js';
 import { pricePokemonCard } from '../../../pricing/adapters/pokemontcg.js';
 import { fetchJustTCGPrice } from '../../../pricing/adapters/justtcg.js';
@@ -31,10 +33,24 @@ async function handlePrice(req, res) {
       return res.status(400).json({ error: 'Card data required' });
     }
 
-    const conditionMultipliers = {
-      'NM': 1.0, 'LP': 0.85, 'MP': 0.70, 'HP': 0.50, 'DMG': 0.30
-    };
-    const conditionMult = conditionMultipliers[card.condition_estimate] || 1.0;
+    // IMPORTED, not re-declared. This route carried its own copy of the
+    // multiplier table, and it had gone stale against the picker the vendor
+    // app actually shows.
+    //
+    // MEASURED live on Blastoise BS 2, 24 Aug 2026, before this fix — the same
+    // €8.56 offer came back for FOUR of the six grades on offer:
+    //
+    //   NM 1.00   EX 1.00*   GD 1.00*   LP 0.85*   PL 1.00*   PO 1.00*
+    //
+    // The local table knew only NM/LP/MP/HP/DMG, so EX, GD, PL and PO fell
+    // through `|| 1.0` and were priced as Near Mint, and LP was 15 points too
+    // generous. A Poor card was quoted at the Near Mint price. The shop
+    // overpaid on every played card the picker was used on.
+    //
+    // A condition the table does not know still defaults to 1.0 — unchanged,
+    // and correct: refusing to price an unrecognised grade would be worse than
+    // quoting it at Near Mint and letting the operator adjust.
+    const conditionMult = CONDITION_MULTIPLIERS[String(card.condition_estimate || 'NM').toUpperCase()] ?? 1.0;
     const buyPercentage = (req.body.buyPercentage || process.env.DEFAULT_BUY_PERCENTAGE || 60) / 100;
 
     const cacheKey = priceCacheKey(card, buyPercentage);
@@ -44,6 +60,14 @@ async function handlePrice(req, res) {
       return res.json({ ...cached, cached: true });
     }
 
+    // Resolve the direct Cardmarket product page BEFORE building the links —
+    // buildCardmarketUrl reads the resolved URL out of the resolver's cache, so
+    // the order matters. This route previously never called the resolver at
+    // all, which is why every link it returned was a bare search.
+    //
+    // Never blocks a price: the resolver swallows its own errors and returns
+    // null, and a null simply leaves the filtered search link in place.
+    await resolveCardmarketProductUrl(card).catch(() => null);
     const cmLinks = buildCardmarketUrl(card);
 
     const pricingPromises = [];
@@ -82,11 +106,20 @@ async function handlePrice(req, res) {
     let pricing = {
       card: card,
       cardmarket: {
-        url: cmLinks.search_url,
+        // `url` is what the UI opens, so it must be the BEST link already
+        // filtered to English (language=1) and this card's condition. It used
+        // to be cmLinks.search_url — unfiltered, and never a product page —
+        // so the operator landed on an unfiltered search for every card while
+        // the filtered variant sat unused in the field beside it.
+        url: cmLinks.best_url,
+        url_kind: cmLinks.best_url_kind,
+        product_url: cmLinks.product_url_filtered,
         filtered_url: cmLinks.filtered_search_url,
         search_url: cmLinks.search_url,
         source: 'cardmarket_link',
-        note: 'Tap to check live Cardmarket prices'
+        note: cmLinks.best_url_kind === 'product'
+          ? 'Cardmarket — English, this condition'
+          : 'Cardmarket search — English, this condition',
       },
       ebay: null,
       tcgplayer: null,
@@ -115,9 +148,15 @@ async function handlePrice(req, res) {
         }
 
         if (result.data.cardmarket_product_url && result.data.cardmarket_product_url.includes('cardmarket.com')) {
-          pricing.cardmarket.url = result.data.cardmarket_product_url;
-          pricing.cardmarket.filtered_url = result.data.cardmarket_product_url;
-          console.log(`[CM-URL] Using Cardmarket URL from API: ${result.data.cardmarket_product_url}`);
+          // A product page from the game API beats our search link — but it
+          // arrives UNFILTERED, and assigning it raw (as this did) threw away
+          // the English + condition filters on exactly the cards where we had
+          // the best link. Filter it the same way every other link is.
+          const filtered = withCardmarketFilters(result.data.cardmarket_product_url, card.condition_estimate);
+          pricing.cardmarket.url = filtered;
+          pricing.cardmarket.url_kind = 'product';
+          pricing.cardmarket.product_url = filtered;
+          console.log(`[CM-URL] Using Cardmarket URL from API: ${filtered}`);
         }
       }
 

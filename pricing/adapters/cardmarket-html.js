@@ -109,6 +109,24 @@ export function buildCardmarketUrl(card) {
   };
 }
 
+/**
+ * Append Cardmarket's English + condition filters to any product or search URL.
+ *
+ * Exported as withCardmarketFilters so callers that obtain a product URL from
+ * somewhere else (the game API hands one back on some cards) filter it the same
+ * way rather than shipping it raw — which is what apps/server/routes/price.js
+ * did, discarding the filters on precisely the cards where the link was best.
+ *
+ * @param {string} url
+ * @param {number|string} cond  a Cardmarket code (1-7) or a grade name (NM, GD…)
+ */
+export function withCardmarketFilters(url, cond) {
+  const code = typeof cond === 'number'
+    ? cond
+    : (CONDITION_TO_CM[String(cond || 'NM').toUpperCase()] || 2);
+  return withFilters(url, code);
+}
+
 /** language=1 is Cardmarket's ENGLISH filter; minCondition is its grade floor. */
 function withFilters(url, condCode) {
   // Drop pokemontcg.io's campaign parameters. They are their attribution, not
