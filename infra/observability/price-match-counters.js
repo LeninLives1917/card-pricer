@@ -66,6 +66,15 @@ const OUTCOMES = [
    * missing prices are ours, not the vendor's.
    */
   'adapter_error',
+  /**
+   * The upstream had a price but its own timestamp said it was too old to use.
+   * Added 24 Aug 2026: pokemontcg.io's Cardmarket feed froze when the project
+   * moved to Scrydex, and a median-209-day-old price was standing in whenever
+   * the live source failed. Watch this: if it covers the whole catalogue then
+   * the euro fallback is effectively gone and the live source is a single point
+   * of failure.
+   */
+  'rejected_stale_price',
 ];
 
 const bySource = new Map();

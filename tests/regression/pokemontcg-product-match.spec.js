@@ -30,7 +30,7 @@ import { test, describe, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { axios } from '../../apps/server/_clients.js';
-import { pricePokemonCard } from '../../pricing/adapters/pokemontcg.js';
+import { pricePokemonCard, priceAgeDays } from '../../pricing/adapters/pokemontcg.js';
 import {
   getPriceMatchCounts,
   resetPriceMatchCounts,
@@ -44,13 +44,23 @@ const CHARIZARD = {
   set_code: 'SVP',
 };
 
-const row = (number, cmLow, setName = 'Some Set') => ({
+/** A stamp the staleness gate will accept, expressed relative to now. */
+const daysAgo = (n) => {
+  const d = new Date(Date.now() - n * 86400000);
+  return `${d.getUTCFullYear()}/${String(d.getUTCMonth() + 1).padStart(2, '0')}/${String(d.getUTCDate()).padStart(2, '0')}`;
+};
+
+const row = (number, cmLow, setName = 'Some Set', ageDays = 2) => ({
   name: 'Charizard ex',
   number: String(number),
   set: { id: setName.toLowerCase().replace(/\s+/g, ''), name: setName },
   images: { large: `https://example.invalid/${number}.png` },
   rarity: 'Double Rare',
-  cardmarket: { prices: { lowPriceExPlus: cmLow, trendPrice: cmLow } },
+  // updatedAt is REQUIRED now: pokemontcg.io's Cardmarket feed froze at a
+  // median age of 209 days when the project moved to Scrydex, so an undated or
+  // old price is refused rather than quoted. See the staleness gate in
+  // pricing/adapters/pokemontcg.js.
+  cardmarket: { updatedAt: daysAgo(ageDays), prices: { lowPriceExPlus: cmLow, trendPrice: cmLow } },
 });
 
 /** No #56 anywhere — the page shape that produced EUR 561.50. */
@@ -167,5 +177,64 @@ describe('pokemontcg.io product match gate', () => {
 
   test('match_rate is null when nothing was ever asked', () => {
     assert.equal(getPriceMatchCounts().match_rate, null);
+  });
+});
+
+describe('pokemontcg staleness gate', () => {
+  // PINS the exposure found 24 Aug 2026. routes/price.js overwrites this
+  // adapter's Cardmarket number with the live TCGGO one ONLY when TCGGO
+  // succeeds. On a 429, a 403 or a network blip the overwrite is skipped and
+  // this number stands — and measured on 16 random catalogue cards it is a
+  // median of 209 days old, stalest 279. A seven-month-old price was reaching
+  // the customer with nothing on screen saying so.
+
+  test('a fresh price is used', async () => {
+    serve([row(56, 15.0, 'Scarlet & Violet Black Star Promos', 3)]);
+    const out = await pricePokemonCard(CHARIZARD);
+    assert.equal(out.cardmarket_price, 15.0);
+    assert.equal(out.cardmarket_age_days, 3);
+  });
+
+  test('a price past the age limit is REFUSED, not quoted', async () => {
+    serve([row(56, 15.0, 'Scarlet & Violet Black Star Promos', 209)]);
+    const out = await pricePokemonCard(CHARIZARD);
+    assert.equal(out.cardmarket_price, undefined,
+      'a 209-day-old euro price must not reach a customer');
+    assert.equal(getPriceMatchCounts().by_source.pokemontcg.rejected_stale_price, 1,
+      'and the refusal must be counted, not silent');
+  });
+
+  test('an UNDATED price is refused — unknown is not fresh', async () => {
+    const undated = row(56, 15.0, 'Scarlet & Violet Black Star Promos');
+    delete undated.cardmarket.updatedAt;
+    serve([undated]);
+    const out = await pricePokemonCard(CHARIZARD);
+    assert.equal(out.cardmarket_price, undefined);
+  });
+
+  test('the LINK survives even when the price is refused', async () => {
+    // A Cardmarket product URL does not go stale. Only the number is refused,
+    // so the operator can still open the right page.
+    const stale = row(56, 15.0, 'Scarlet & Violet Black Star Promos', 400);
+    stale.cardmarket.url = 'https://prices.pokemontcg.io/cardmarket/svp-56';
+    serve([stale]);
+    const out = await pricePokemonCard(CHARIZARD);
+    assert.equal(out.cardmarket_price, undefined);
+    assert.equal(out.cardmarket_product_url, 'https://prices.pokemontcg.io/cardmarket/svp-56');
+  });
+});
+
+describe('priceAgeDays', () => {
+  test('parses the YYYY/MM/DD stamp pokemontcg.io uses', () => {
+    const now = Date.parse('2026-08-24T12:00:00Z');
+    assert.equal(priceAgeDays('2026/08/24', now), 0);
+    assert.equal(priceAgeDays('2026/07/01', now), 54);
+    assert.equal(priceAgeDays('2025/11/18', now), 279);
+  });
+
+  test('no stamp and an unparseable stamp are both null', () => {
+    assert.equal(priceAgeDays(null), null);
+    assert.equal(priceAgeDays(''), null);
+    assert.equal(priceAgeDays('not a date'), null);
   });
 });

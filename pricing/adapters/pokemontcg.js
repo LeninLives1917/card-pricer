@@ -40,6 +40,26 @@ const NAME = 'pokemontcg.io';
 /** Counter key. Deliberately not NAME — /api/health reads this as a source label. */
 const SOURCE = 'pokemontcg';
 
+/**
+ * How many days old is an upstream price stamp? null when there is no stamp at
+ * all, which is treated as stale — an undated price cannot be shown to be
+ * fresh, and "we do not know" must not read as "it is fine".
+ *
+ * pokemontcg.io stamps as "YYYY/MM/DD".
+ */
+export function priceAgeDays(updatedAt, now = Date.now()) {
+  if (!updatedAt) return null;
+  const t = Date.parse(String(updatedAt).replace(/\//g, '-'));
+  if (!Number.isFinite(t)) return null;
+  return Math.floor((now - t) / 86400000);
+}
+
+/**
+ * Matches the catalogue staleness gate already used elsewhere, so client and
+ * server mean the same thing by "stale" and there is one number to argue about.
+ */
+export const CM_MAX_AGE_DAYS = Number(process.env.CM_MAX_PRICE_AGE_DAYS || 21);
+
 // Was 5. The gate rejects a page that does not contain the requested number,
 // so a short page turns a correct card into no price at all. Widening the
 // page is the cheap half of the coverage the gate costs.
@@ -657,14 +677,53 @@ export async function pricePokemonCard(card) {
 
         const cmTrend = cmPrices.trendPrice;
 
-        if (cmPrice) {
+        // STALENESS GATE.
+        //
+        // pokemontcg.io is now part of Scrydex, and its Cardmarket pipeline
+        // stopped being maintained. Measured 24 Aug 2026 on 16 random catalogue
+        // cards: freshest 54 days, MEDIAN 209, stalest 279, and 16 of 16 past
+        // our own 21-day catalogue staleness gate. Their TCGplayer feed still
+        // updates daily; only the euro side is frozen. Scrydex does not carry
+        // Cardmarket at all, so this is not going to recover.
+        //
+        // Why that mattered so much: routes/price.js overwrites this number
+        // with the live TCGGO one ONLY when TCGGO succeeds. On a rate limit, a
+        // 403 or a network blip the overwrite is skipped and this stands — so a
+        // seven-month-old price was quoted to a customer with nothing on screen
+        // saying so. Exactly the silent-degradation shape CLAUDE.md is built
+        // around.
+        //
+        // The API hands us updatedAt on every card, so this is free to check.
+        // An absent price costs nothing; a stale one costs the difference.
+        const cmAgeDays = priceAgeDays(d.cardmarket?.updatedAt);
+        const cmStale = cmAgeDays === null || cmAgeDays > CM_MAX_AGE_DAYS;
+
+        if (cmPrice && !cmStale) {
           prices.cardmarket_price = cmPrice;
           prices.cardmarket_trend = cmTrend;
           prices.cardmarket_source = 'pokemontcg.io';
-          console.log(`[PRICE] Cardmarket from API: lowest=${cmPrice}€, trend=${cmTrend}€ (${d.name} ${d.set?.name} #${d.number})`);
+          prices.cardmarket_age_days = cmAgeDays;
+          console.log(`[PRICE] Cardmarket from API: lowest=${cmPrice}€, trend=${cmTrend}€ (${d.name} ${d.set?.name} #${d.number}) [${cmAgeDays}d old]`);
+        } else if (cmPrice) {
+          // Counted, not silent. If this is the whole catalogue then the euro
+          // fallback is gone and TCGGO is a single point of failure — which is
+          // a thing to know, not a thing to discover during a show.
+          countPriceMatch(SOURCE, 'rejected_stale_price', {
+            age_days: cmAgeDays,
+            max_age_days: CM_MAX_AGE_DAYS,
+            card: `${d.set?.id}-${d.number}`,
+          });
+          console.log(
+            `[PRICE] Cardmarket REJECTED as stale: ${cmPrice}€ is ` +
+            `${cmAgeDays === null ? 'undated' : cmAgeDays + ' days'} old ` +
+            `(max ${CM_MAX_AGE_DAYS}) — ${d.name} ${d.set?.name} #${d.number}`,
+          );
         }
 
         if (d.cardmarket?.url) {
+          // The LINK is still good even when the price is not: a Cardmarket
+          // product URL does not go stale, and the resolver caches it. Only the
+          // number is refused.
           prices.cardmarket_product_url = d.cardmarket.url;
         }
       }
