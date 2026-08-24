@@ -99,16 +99,30 @@ describe('the condition filter tracks the grade', () => {
   });
 });
 
-describe('the condition scale did not reprice anything', () => {
-  test('each renamed grade kept the multiplier it always had', () => {
-    // The rename attaches each number to the Cardmarket grade it was already
-    // filtering for. If these move, buy prices move, and that was never the
-    // intent of a naming fix.
-    assert.equal(CONDITION_MULTIPLIERS.NM, 1.00);
-    assert.equal(CONDITION_MULTIPLIERS.GD, 0.85, 'was called LP');
-    assert.equal(CONDITION_MULTIPLIERS.LP, 0.70, 'was called MP');
-    assert.equal(CONDITION_MULTIPLIERS.PL, 0.50, 'was called HP');
-    assert.equal(CONDITION_MULTIPLIERS.PO, 0.30, 'was called DMG');
+describe('the condition scale', () => {
+  // RETIRED, deliberately: this suite used to assert that the NM/LP/MP ->
+  // Cardmarket rename kept every multiplier where it was, because a naming fix
+  // must not move money. That was the right invariant for that change.
+  //
+  // On 24 Aug 2026 the numbers were repriced ON PURPOSE, against two
+  // independent measurements (a 397-ladder TCGplayer condition curve and a
+  // 9,237-card Cardmarket lowPrice/lowPriceExPlus ratio). The old values were
+  // operator estimates and were too generous on every played grade. The
+  // provenance lives in pricing/conditions.js; the values are pinned in
+  // tests/regression/price-route-condition-drift.spec.js so there is exactly
+  // one place asserting them.
+  //
+  // What survives here is the ORDERING, which no measurement can be allowed to
+  // invert: a worse card is never worth more.
+  test('the scale is strictly decreasing, whatever the values are', () => {
+    const order = ['MT', 'NM', 'EX', 'GD', 'LP', 'PL', 'PO'];
+    for (let i = 1; i < order.length; i += 1) {
+      const better = CONDITION_MULTIPLIERS[order[i - 1]];
+      const worse = CONDITION_MULTIPLIERS[order[i]];
+      assert.ok(worse <= better,
+        `${order[i]} (${worse}) must not be worth more than ${order[i - 1]} (${better})`);
+    }
+    assert.equal(CONDITION_MULTIPLIERS.NM, 1.00, 'NM is the definitional anchor');
   });
 
   test('EX is the one genuinely new grade, between NM and GD', () => {

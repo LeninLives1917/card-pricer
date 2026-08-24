@@ -63,11 +63,18 @@ test('SCORE_WEIGHTS hoisted from inline scoreCandidate', () => {
 });
 
 test('CONDITION_MULTIPLIERS + applyCondition skips graded', () => {
-  assert.equal(CONDITION_MULTIPLIERS.NM, 1.0);
-  assert.equal(CONDITION_MULTIPLIERS.HP, 0.5);
+  assert.equal(CONDITION_MULTIPLIERS.NM, 1.0, 'NM is the definitional anchor');
+
+  // The subject here is the GRADED SKIP, not any particular multiplier — the
+  // values are measured and are pinned once, in
+  // price-route-condition-drift.spec.js. Reading the table rather than
+  // hardcoding a number keeps a re-measurement from breaking a test about
+  // something else, which is exactly what happened on 24 Aug 2026.
+  const hp = CONDITION_MULTIPLIERS.HP;
+  assert.ok(hp > 0 && hp < 1, 'HP must penalise');
 
   // graded skips the multiplier entirely — V2_AUDIT §2.
-  assert.equal(applyCondition(100, 'HP', false).price, 50);
+  assert.equal(applyCondition(100, 'HP', false).price, Math.round(100 * hp * 100) / 100);
   assert.equal(applyCondition(100, 'HP', true).price, 100);
   // Graded multiplier reads as 1.0 even when condition would penalise.
   assert.equal(applyCondition(100, 'HP', true).multiplier, 1.0);

@@ -83,15 +83,44 @@ describe('price route — every grade the picker offers is priced differently', 
     }
   });
 
-  test('the exact values that were wrong in production', () => {
-    // Pinned individually, because "they differ" would pass on any descending
-    // set of numbers. These are the values the shop pays against.
-    assert.equal(CONDITION_MULTIPLIERS.NM, 1.00);
-    assert.equal(CONDITION_MULTIPLIERS.EX, 0.92, 'was priced at 1.00 in production');
-    assert.equal(CONDITION_MULTIPLIERS.GD, 0.85, 'was priced at 1.00 in production');
-    assert.equal(CONDITION_MULTIPLIERS.LP, 0.70, 'was priced at 0.85 in production');
-    assert.equal(CONDITION_MULTIPLIERS.PL, 0.50, 'was priced at 1.00 in production');
-    assert.equal(CONDITION_MULTIPLIERS.PO, 0.30, 'was priced at 1.00 in production');
+  // THE one place the multiplier values are pinned. Other suites assert
+  // ordering or behaviour and read the table; duplicating the numbers is how a
+  // re-measurement breaks three unrelated tests, which happened once already.
+  //
+  // These are MEASURED, not chosen — full provenance in pricing/conditions.js.
+  // Two independent sources, 24 Aug 2026: a 397-ladder TCGplayer condition
+  // curve via JustTCG, and a 9,237-card Cardmarket lowPrice/lowPriceExPlus
+  // ratio from our own stored EU data. Changing a number here without a new
+  // measurement behind it is the thing this test exists to stop.
+  test('the measured multipliers', () => {
+    assert.equal(CONDITION_MULTIPLIERS.NM, 1.00, 'definitional anchor');
+    assert.equal(CONDITION_MULTIPLIERS.EX, 0.84, 'between TP NM and TP LP');
+    assert.equal(CONDITION_MULTIPLIERS.GD, 0.68, 'TP Lightly Played, measured median');
+    assert.equal(CONDITION_MULTIPLIERS.LP, 0.58, 'between TP LP and TP MP');
+    assert.equal(CONDITION_MULTIPLIERS.PL, 0.40, 'between TP MP and TP HP');
+    assert.equal(CONDITION_MULTIPLIERS.PO, 0.30, 'TP HP / DMG');
+  });
+
+  test('the EUR cross-check brackets the played grades', () => {
+    // 9,237 cards where Cardmarket actually lists a sub-EX copy put the
+    // cheapest played listing at a median of 0.35-0.48 of the cheapest EX+
+    // one. LP and PL must straddle that band, or the TCGplayer-to-Cardmarket
+    // scale mapping has drifted away from the euro market it is meant to model.
+    assert.ok(CONDITION_MULTIPLIERS.LP > 0.48,
+      'LP sits above the EUR played band — it is a light grade');
+    assert.ok(CONDITION_MULTIPLIERS.PL < 0.48,
+      'PL sits inside or below the EUR played band');
+    assert.ok(CONDITION_MULTIPLIERS.PL >= 0.30,
+      'PL must not fall below PO territory');
+  });
+
+  test('legacy grades track the Cardmarket grade they alias', () => {
+    // cardmarket-html.js maps MP/HP/DMG to codes 5/6/7 — the same codes as
+    // LP/PL/PO. If the multiplier does not follow, the label filters for one
+    // grade and prices as another, which is the defect the rename fixed.
+    assert.equal(CONDITION_MULTIPLIERS.MP, CONDITION_MULTIPLIERS.LP);
+    assert.equal(CONDITION_MULTIPLIERS.HP, CONDITION_MULTIPLIERS.PL);
+    assert.equal(CONDITION_MULTIPLIERS.DMG, CONDITION_MULTIPLIERS.PO);
   });
 });
 
