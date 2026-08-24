@@ -222,19 +222,22 @@ async function handlePrice(req, res) {
           pricing.cardmarket.verified = true;
           pricing.cardmarket.note = `Live NM from TCGGO${rd.avg30 ? ' · 30d avg: ' + rd.avg30.toFixed(2) + '€' : ''}`;
         }
+        // An explicit field list here silently DROPPED every new field the
+        // adapter learned to capture — available_items, cardmarket_id,
+        // match_evidence, set. That matters twice over: the UI cannot show
+        // them, and pricing/snapshot-writer.js reads this object, so the price
+        // history would have accumulated rows with no supply data in them,
+        // which is the one column the whole exercise exists for.
+        //
+        // Adding a field to an adapter should not require remembering to add it
+        // in a second place. Everything the adapter returns is carried, and the
+        // few names below are pinned only because callers depend on them.
         pricing.rapidapi_cm = {
+          ...rd,
           price: rd.price,
           lowest_nm: rd.lowest_nm,
           avg7: rd.avg7,
           avg30: rd.avg30,
-          lowest_de: rd.lowest_de,
-          lowest_fr: rd.lowest_fr,
-          lowest_es: rd.lowest_es,
-          lowest_it: rd.lowest_it,
-          graded_psa10: rd.graded_psa10,
-          graded_psa9: rd.graded_psa9,
-          tcgplayer_market: rd.tcgplayer_market,
-          image: rd.image,
           source: 'rapidapi_cm'
         };
         if (!pricing.reference_image && rd.image) {
