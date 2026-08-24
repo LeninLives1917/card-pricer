@@ -13,6 +13,8 @@ import { quoteLeadLimiter } from '../middleware/rate-limit.js';
 import { buildCardmarketUrl, fetchCardmarketPrice, resolveCardmarketProductUrl, withCardmarketFilters }
   from '../../../pricing/adapters/cardmarket-html.js';
 import { CONDITION_MULTIPLIERS } from '../../../pricing/conditions.js';
+import { recordSnapshot } from '../../../pricing/snapshot-writer.js';
+import { supabase } from '../_clients.js';
 import { priceMagicCard } from '../../../pricing/adapters/scryfall.js';
 import { pricePokemonCard } from '../../../pricing/adapters/pokemontcg.js';
 import { fetchJustTCGPrice } from '../../../pricing/adapters/justtcg.js';
@@ -361,6 +363,14 @@ async function handlePrice(req, res) {
       pricing.reference_image = await resolveImageFallback(card);
     }
     priceCacheSet(cacheKey, pricing);
+
+    // Start the price history. Deliberately NOT awaited and deliberately after
+    // the cache write: a snapshot is bookkeeping and must never sit between a
+    // priced card and the operator holding it. recordSnapshot swallows its own
+    // errors; the void is explicit so a future reader does not "fix" it into an
+    // await.
+    void recordSnapshot(card, pricing, { supabase });
+
     res.json(pricing);
   } catch (err) {
     console.error('Pricing error:', err.message);

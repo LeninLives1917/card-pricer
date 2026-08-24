@@ -23,6 +23,7 @@ import { getTextEntryCounts } from '../../../infra/observability/text-entry-coun
 import { reconcileEnv } from '../../../infra/observability/env-reconcile.js';
 import { setResolutionState } from '../../../pricing/set-resolve.js';
 import { urlStoreState } from '../../../pricing/adapters/cardmarket-html.js';
+import { snapshotState } from '../../../pricing/snapshot-writer.js';
 import { isEnabled as rectifyEnabled } from '../../../pricing/card-rectify.js';
 import { getFastPathMode } from '../../../pricing/fast-path-mode.js';
 
@@ -167,6 +168,15 @@ export async function buildHealthPayload(deps = {}) {
     // exactly like one that works and simply never hits. `entries: null` means
     // NEVER LOADED, which is not the same as loaded-and-empty.
     cardmarket_urls: cardmarketUrlCheck((deps.urlStore ?? urlStoreState)()),
+    // The price history. ADVISORY — a snapshot is bookkeeping and must never
+    // degrade the service.
+    //
+    // Worth reporting because the table sat empty for weeks while looking
+    // perfectly healthy, and because a writer that silently stops is
+    // indistinguishable from a shop that priced nothing. write_rate is null
+    // until something is priced, so "never asked" stays distinct from "asked
+    // and always failed".
+    price_history: priceHistoryWriterCheck((deps.snapshots ?? snapshotState)()),
     // Reported because it was previously unverifiable from outside the box:
     // the only way to know whether rectification was on in production was to
     // trust that someone had set it. Informational, not a failure — health
@@ -576,5 +586,34 @@ export function cardmarketUrlCheck(s) {
         : s.write_failed > 0
           ? 'the store loaded but cannot be WRITTEN — resolutions will not survive a restart'
           : `${s.entries} cards known, ${served} served from disk this boot`),
+  };
+}
+
+/**
+ * Price-history writer. Advisory: never sets `degraded`.
+ *
+ * The counters answer a question the row count alone cannot: is the writer
+ * running and failing, or simply not being asked? Those need different fixes,
+ * and conflating them is how card_price_snapshots stayed at zero rows without
+ * anyone noticing.
+ */
+export function priceHistoryWriterCheck(s) {
+  const attempted = s?.attempted ?? 0;
+  const failed = s?.failed ?? 0;
+  return {
+    ok: failed === 0,
+    attempted,
+    written: s?.written ?? 0,
+    write_rate: s?.write_rate ?? null,
+    tracked_today: s?.tracked_today ?? 0,
+    skipped_same_day: s?.skipped_same_day ?? 0,
+    skipped_no_key: s?.skipped_no_key ?? 0,
+    skipped_no_data: s?.skipped_no_data ?? 0,
+    failed,
+    detail: attempted === 0
+      ? 'no card priced yet this boot — nothing to record'
+      : failed > 0
+        ? `${failed} of ${attempted} snapshot writes FAILED — history is not accumulating`
+        : `${s.written} of ${attempted} priced cards recorded, ${s.tracked_today} distinct cards today`,
   };
 }
