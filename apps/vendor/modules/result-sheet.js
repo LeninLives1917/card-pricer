@@ -61,10 +61,26 @@ export function renderResultSheet() {
   const card = entry.card || {};
   const cm = entry.cardmarket || {};
   const bp = entry.buy_price || {};
+  // `mv` is the CHEAPEST ENGLISH NEAR MINT listing — a Near Mint reference
+  // price, whatever condition the card on the counter is actually in.
   const mv = entry.market_value || bp.market_value || cm.price || cm.trend || 0;
   const buy = entry.custom_buy ?? bp.suggested ?? 0;
   const markup = parseFloat(getSetting('sellMarkup', '110')) || 110;
-  const sell = entry.custom_sell ?? Math.round(mv * (markup / 100) * 100) / 100;
+
+  // WHAT THE CARD IN HAND IS WORTH, which is not the same number.
+  //
+  // The buy price was condition-adjusted all along and the SELL price was not:
+  // sell = mv * markup, off the Near Mint reference. So a Played Gengar bought
+  // at EUR 50.40 (210 * 0.40 * 0.60) was listed at EUR 231 — the Near Mint
+  // asking price for a card that is visibly not Near Mint. Buying correctly and
+  // then pricing the shelf wrong is the same defect in the opposite direction,
+  // and it is the one a customer sees.
+  //
+  // Both sides now work off the adjusted value. Near Mint is unaffected: the
+  // multiplier is 1.00 and every number is identical to before.
+  const condMult = Number.isFinite(entry.condition_multiplier) ? entry.condition_multiplier : 1;
+  const adjusted = Math.round(mv * condMult * 100) / 100;
+  const sell = entry.custom_sell ?? Math.round(adjusted * (markup / 100) * 100) / 100;
 
   const isPending = !!entry._pending;
   // Dual-image header: user's scan (if any) + catalogue reference. For
@@ -150,7 +166,15 @@ export function renderResultSheet() {
     gradeRow('BGS 10', gs.bgs10),
     gradeRow('CGC 10', gs.cgc10),
   ].filter(Boolean).join('');
-  const gradedBlock = gradedRows
+  // GRADED COMPS ARE A NEAR MINT QUESTION.
+  //
+  // "PSA 10 = 73x raw" is true of a pristine copy and meaningless for the
+  // Excellent card on the counter — it will not grade 10, so the multiple is
+  // not available to it. Once the operator marks the card down, the comps stop
+  // being a decision they are making, so the block goes away rather than
+  // sitting there as the most eye-catching number on a sheet it no longer
+  // applies to.
+  const gradedBlock = (gradedRows && (condition === 'NM' || condition === 'MT'))
     ? `<div style="margin-top:var(--p-2); padding:var(--p-2); border:1px solid var(--line); border-radius:6px; font-size:12px;">
          <div style="display:flex; justify-content:space-between; align-items:baseline; margin-bottom:6px;">
            <strong style="font-size:11px; letter-spacing:.04em; text-transform:uppercase; opacity:.8;">Graded — eBay sold</strong>
@@ -218,8 +242,15 @@ export function renderResultSheet() {
         <div class="sheet-price-val figure">€${isPending ? '…' : Number(buy).toFixed(2)}</div>
       </div>
       <div class="sheet-price">
-        <div class="sheet-price-label">Market</div>
-        <div class="sheet-price-val figure">€${isPending ? '…' : Number(mv).toFixed(2)}</div>
+        <!-- SAY WHAT THE NUMBER IS. "Market" could be a trend, an average or an
+             ask; this one is specifically the cheapest English Near Mint
+             listing, which is the price the Cardmarket link opens on. -->
+        <div class="sheet-price-label">${condMult === 1 ? 'NM lowest' : 'This card'}</div>
+        <div class="sheet-price-val figure">€${isPending ? '…' : Number(condMult === 1 ? mv : adjusted).toFixed(2)}</div>
+        ${!isPending && condMult !== 1 ? `
+          <div style="font-size:10px; opacity:.7; margin-top:2px; line-height:1.3;">
+            NM lowest €${Number(mv).toFixed(2)} × ${condMult.toFixed(2)}
+          </div>` : ''}
         <!-- WHICH SOURCE SAID SO. The server has computed price_source on every
              price all along and no surface displayed it, so a price that is
              wrong by 37x (Charizard ex SVP 56: EUR 561.50 shown against ~EUR 15
