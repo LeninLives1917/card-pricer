@@ -200,21 +200,41 @@ export function chooseTcggoCandidate(candidates, card) {
   // worse. Two rows that disagree about the price are not one product seen
   // twice — they are a data conflict we cannot adjudicate, so they stay as
   // separate candidates and the ambiguity rule below refuses.
-  const priceSignature = (item) => {
+  // The signature is THE PRICE WE WOULD QUOTE, not the whole payload. If the
+  // choice between two rows cannot change the answer, it is not an ambiguity.
+  //
+  // Comparing every field was too strict and cost real coverage. Measured on
+  // Gengar FO 5: two rows, same cardmarket_id 273866, the SAME lowest_nm of
+  // 210, and avg30 149.83 vs 149.47 with available_items 271 vs 267 — scrape
+  // noise on one product, which a full-payload comparison refused outright.
+  //
+  // Comparing only the id was too loose and produced a confidently wrong price
+  // (Base Charizard #4, EUR 10.46 against a EUR 2,475 average). Quoting the
+  // same number either way is the line between the two.
+  const quotedPrice = (item) => {
     const cm = item?.prices?.cardmarket ?? {};
-    return [cm.lowest_near_mint ?? 'x', cm['30d_average'] ?? 'x', cm.available_items ?? 'x'].join('|');
+    const p = cm.lowest_near_mint || cm['7d_average'] || cm['30d_average'];
+    return Number.isFinite(p) && p > 0 ? p : null;
   };
+  /** Within 2%: scrape timing, not a different product. */
+  const samePrice = (a, b) => {
+    if (a === null && b === null) return true;
+    if (a === null || b === null) return false;
+    return Math.abs(a - b) <= Math.max(a, b) * 0.02;
+  };
+
   const deduped = [];
   const seenProduct = new Map();
   for (const item of sameNumber) {
     const pid = item?.cardmarket_id;
     if (pid != null) {
-      const sig = priceSignature(item);
+      const price = quotedPrice(item);
       const prior = seenProduct.get(pid);
-      // Same id AND same numbers: genuinely the same product listed twice.
-      if (prior === sig) continue;
-      // Same id, different numbers: keep both and let the gate refuse.
-      if (prior === undefined) seenProduct.set(pid, sig);
+      // Same id and the same answer: one product seen twice.
+      if (prior !== undefined && samePrice(prior, price)) continue;
+      // Same id, DIFFERENT answer: a data conflict. Keep both so the gate
+      // refuses rather than picking whichever came first.
+      if (prior === undefined) seenProduct.set(pid, price);
     }
     deduped.push(item);
   }

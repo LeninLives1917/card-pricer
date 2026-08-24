@@ -291,11 +291,42 @@ describe('duplicate ids that DISAGREE are a conflict, not a duplicate', () => {
     assert.equal(r.considered, 1);
   });
 
-  test('a differing available_items alone is enough to keep both', () => {
-    // Supply is the field the price history exists to record. Two rows that
-    // disagree about it cannot be averaged into one without inventing data.
-    const r = chooseTcggoCandidate([base('a', 275, 275, 97), base('b', 275, 275, 12)], ASK);
+  test('scrape noise on one product still collapses', () => {
+    // Measured on Gengar FO 5: same cardmarket_id 273866, the SAME lowest_nm
+    // of 210, avg30 149.83 vs 149.47, available_items 271 vs 267. Comparing
+    // the whole payload refused this outright and cost real coverage — the
+    // rows quote the same number, so the choice cannot change the answer.
+    const g = (avg30, avail) => ({
+      name: 'Gengar', card_number: '5', cardmarket_id: 273866,
+      episode: { name: 'Fossil', code: 'FO', cards_printed_total: 62 },
+      prices: { cardmarket: { lowest_near_mint: 210, '30d_average': avg30, available_items: avail } },
+    });
+    const r = chooseTcggoCandidate([g(149.83, 271), g(149.47, 267)], {
+      name: 'Gengar', set_name: 'Fossil', set_code: 'FO', card_number: '5',
+    });
+    assert.equal(r.reason, 'set_confirmed');
+    assert.equal(r.considered, 1);
+    assert.equal(r.item.prices.cardmarket.lowest_near_mint, 210);
+  });
+
+  test('a price difference beyond scrape noise keeps both', () => {
+    const r = chooseTcggoCandidate([base('a', 275, 275, 97), base('b', 400, 400, 97)], ASK);
     assert.equal(r.considered, 2);
     assert.equal(r.item, null);
+  });
+
+  test('two rows with DIFFERENT ids are never collapsed', () => {
+    // Base Set Blastoise #2 has two genuine products (cmid 291582 and 660226,
+    // EUR 625 and EUR 635 averages) — different printings, not scrape noise.
+    const b = (cmid, nm) => ({
+      name: 'Blastoise', card_number: '2', cardmarket_id: cmid,
+      episode: { name: 'Base', code: 'BS', cards_printed_total: 102 },
+      prices: { cardmarket: { lowest_near_mint: nm, '30d_average': nm } },
+    });
+    const r = chooseTcggoCandidate([b(291582, 625.22), b(660226, 595.99)], {
+      name: 'Blastoise', set_name: 'Base', set_code: 'BS', card_number: '2',
+    });
+    assert.equal(r.considered, 2);
+    assert.equal(r.item, null, 'two real printings must be an honest refusal');
   });
 });
