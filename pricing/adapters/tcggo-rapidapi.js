@@ -13,6 +13,7 @@ import { axios } from '../../apps/server/_clients.js';
 import { PKM_SET_NAMES } from '../set-aliases.js';
 import { countPriceMatch } from '../../infra/observability/price-match-counters.js';
 import { normaliseCardNumber } from '../card-number.js';
+import { getUsdToEur } from '../fx.js';
 
 const NAME = 'tcggo-rapidapi';
 
@@ -273,6 +274,77 @@ export function chooseTcggoCandidate(candidates, card) {
 
 
 /**
+ * eBay SOLD graded prices for one card.
+ *
+ * WHY A SECOND REQUEST
+ *
+ * The search endpoint returns prices.cardmarket only. The single-card endpoint
+ * /pokemon/cards/{id} additionally returns prices.ebay, and that block is the
+ * only genuine SOLD data available to this project:
+ *
+ *     ebay.graded.psa["10"] = { median_price: 8867.63, sample_size: 1 }
+ *
+ * eBay's own Browse API has no sold filter — it returns active listings, which
+ * is what produced the EUR 2.28 "sold median" incident recorded in CLAUDE.md.
+ * Sold data there needs the Marketplace Insights API, which is a restricted
+ * application. This is a median of completed sales with the sample size
+ * attached, which is strictly better than anything we had.
+ *
+ * THE SAMPLE SIZE IS NOT DECORATION. A median of one sale is an anecdote, not a
+ * price, and a PSA 10 comp is exactly where a single optimistic result does the
+ * most damage. It is carried through to the UI so nobody reads "PSA 10:
+ * EUR 8,000" without also seeing that it rests on one sale.
+ *
+ * USD. Converted at the same rate as every other dollar figure in the app.
+ *
+ * Costs one extra request per card, so it is gated on value by the caller —
+ * a PSA 10 comp on a EUR 0.02 common is noise nobody asked for.
+ *
+ * Never throws: this is an enrichment, and it must not be able to fail a price.
+ */
+export async function fetchTcggoGradedSold(tcggoId, apiKey = process.env.RAPIDAPI_KEY) {
+  if (!tcggoId || !apiKey) return null;
+  try {
+    const resp = await axios.get(`https://${TCGGO_HOST}/pokemon/cards/${tcggoId}`, {
+      headers: tcggoHeaders(apiKey),
+      timeout: 8000,
+    });
+    const eb = resp.data?.data?.prices?.ebay;
+    const graded = eb?.graded;
+    if (!graded) return null;
+
+    const rate = getUsdToEur();
+    const usd = String(eb.currency || 'USD').toUpperCase() === 'USD';
+    const pick = (co, grade) => {
+      const g = graded?.[co]?.[String(grade)];
+      if (!g || !Number.isFinite(g.median_price)) return null;
+      return {
+        eur: Math.round((usd ? g.median_price * rate : g.median_price) * 100) / 100,
+        usd: usd ? g.median_price : null,
+        // Never dropped. See above.
+        sample_size: Number.isFinite(g.sample_size) ? g.sample_size : null,
+      };
+    };
+
+    const out = {
+      psa10: pick('psa', 10),
+      psa9: pick('psa', 9),
+      bgs10: pick('bgs', 10),
+      cgc10: pick('cgc', 10),
+      source: 'ebay_sold_via_tcggo',
+      currency_note: usd ? `converted from USD at ${rate}` : null,
+    };
+    // All four empty means the card has no graded sales at all — an absence
+    // worth reporting as absence rather than as an empty object.
+    return (out.psa10 || out.psa9 || out.bgs10 || out.cgc10) ? out : null;
+  } catch (err) {
+    const status = err.response?.status;
+    if (!status) console.warn(`[TCGGO-GRADED] ${err.name}: ${err.message}`);
+    return null;
+  }
+}
+
+/**
  * Legacy V1 entrypoint — kept exported for the /api/price route's import
  * shape. V1 server.js:fetchRapidAPICardmarketPrice. Returns the V1 shape
  * with all the fields /api/price expects (lowest_nm, avg7, graded_psa10,
@@ -453,6 +525,10 @@ export async function fetchRapidAPICardmarketPrice(card) {
       // Cardmarket link is built from our own identity, so without this there
       // is no way — in a log, in /api/health, or on the result sheet — to see
       // that the price and the link are talking about different cards.
+      // The upstream row id, so the caller can ask /pokemon/cards/{id} for the
+      // eBay SOLD graded block. Not fetched here: it is a second request and
+      // only worth spending on cards valuable enough to grade.
+      tcggo_id: best.id ?? null,
       requested_number: reqNum,
       // How the set was confirmed, not a score. A score could not be read back
       // to mean anything; 'code' / 'total' / 'name' / null says exactly what

@@ -13,6 +13,7 @@ import { quoteLeadLimiter } from '../middleware/rate-limit.js';
 import { buildCardmarketUrl, fetchCardmarketPrice, resolveCardmarketProductUrl, withCardmarketFilters }
   from '../../../pricing/adapters/cardmarket-html.js';
 import { CONDITION_MULTIPLIERS } from '../../../pricing/conditions.js';
+import { fetchTcggoGradedSold } from '../../../pricing/adapters/tcggo-rapidapi.js';
 import { recordSnapshot } from '../../../pricing/snapshot-writer.js';
 import { supabase } from '../_clients.js';
 import { priceMagicCard } from '../../../pricing/adapters/scryfall.js';
@@ -28,6 +29,13 @@ const router = express.Router();
 // V1 /api/price body, extracted to a shared helper so both the auth'd
 // vendor path and the public V2 quote path share identical pricing logic.
 // See S8.5 fix below.
+/**
+ * Below this, a PSA 10 comparison is not a decision the operator is making.
+ * Grading costs money and months; a graded comp on a bulk common is noise
+ * that also costs a request. Tunable without a deploy.
+ */
+const GRADED_MIN_EUR = Number(process.env.GRADED_MIN_EUR || 5);
+
 async function handlePrice(req, res) {
   try {
     const { card } = req.body;
@@ -365,6 +373,31 @@ async function handlePrice(req, res) {
     if (!pricing.reference_image) {
       pricing.reference_image = await resolveImageFallback(card);
     }
+    // GRADED COMPS — eBay sold medians beside the raw price.
+    //
+    // A second request per card, so it is spent only where the answer could
+    // change a decision: grading costs money and takes months, and a PSA 10
+    // comp on a EUR 0.02 common is noise. GRADED_MIN_EUR is the floor.
+    //
+    // Awaited, unlike the snapshot, because the operator is looking at this
+    // number — but it never throws and a null simply means no graded sales.
+    const rawEur = Number(
+      pricing.rapidapi_cm?.price ?? pricing.cardmarket?.price ?? 0,
+    );
+    const tcggoId = pricing.rapidapi_cm?.tcggo_id ?? null;
+    if (tcggoId && rawEur >= GRADED_MIN_EUR && !card.graded) {
+      const graded = await fetchTcggoGradedSold(tcggoId).catch(() => null);
+      if (graded) {
+        pricing.graded_sold = graded;
+        // The multiple is what the operator actually reads: is this worth
+        // grading at all? Carried explicitly so the UI does not re-derive it
+        // and disagree.
+        if (graded.psa10?.eur && rawEur > 0) {
+          pricing.graded_sold.psa10_multiple = Math.round((graded.psa10.eur / rawEur) * 10) / 10;
+        }
+      }
+    }
+
     priceCacheSet(cacheKey, pricing);
 
     // Start the price history. Deliberately NOT awaited and deliberately after

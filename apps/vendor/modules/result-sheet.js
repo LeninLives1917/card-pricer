@@ -118,6 +118,48 @@ export function renderResultSheet() {
        </div>`
     : '';
 
+  // GRADED COMPS, beside the raw price.
+  //
+  // These are eBay SOLD medians, which is the first genuine sold data this app
+  // has ever had: eBay's own Browse API has no sold filter, so the block lower
+  // down is asking prices and is labelled as such.
+  //
+  // THE SAMPLE SIZE IS ALWAYS SHOWN. A PSA 10 median of one sale is an anecdote,
+  // and it is precisely where a single optimistic result does the most damage —
+  // someone reading "PSA 10 EUR 8,158" without "1 sale" beside it would send a
+  // card away for grading on the strength of one auction. n is not a footnote
+  // here, it is half the number.
+  const gs = entry.graded_sold || {};
+  const gradeRow = (label, g) => {
+    if (!g?.eur) return '';
+    const n = g.sample_size;
+    const thin = n != null && n < 3;
+    return `<div style="display:flex; justify-content:space-between; gap:8px; align-items:baseline;">
+        <span style="opacity:.75;">${escapeHtml(label)}</span>
+        <span>
+          <strong class="figure">€${Number(g.eur).toFixed(2)}</strong>
+          <span style="font-size:10px; opacity:.7; margin-left:4px; ${thin ? 'color:#d99a2b;' : ''}">
+            ${n == null ? '' : n === 1 ? '1 sale' : `${n} sales`}
+          </span>
+        </span>
+      </div>`;
+  };
+  const gradedRows = [
+    gradeRow('PSA 10', gs.psa10),
+    gradeRow('PSA 9', gs.psa9),
+    gradeRow('BGS 10', gs.bgs10),
+    gradeRow('CGC 10', gs.cgc10),
+  ].filter(Boolean).join('');
+  const gradedBlock = gradedRows
+    ? `<div style="margin-top:var(--p-2); padding:var(--p-2); border:1px solid var(--line); border-radius:6px; font-size:12px;">
+         <div style="display:flex; justify-content:space-between; align-items:baseline; margin-bottom:6px;">
+           <strong style="font-size:11px; letter-spacing:.04em; text-transform:uppercase; opacity:.8;">Graded — eBay sold</strong>
+           ${gs.psa10_multiple ? `<span style="font-size:11px; opacity:.8;">PSA 10 = ${gs.psa10_multiple}× raw</span>` : ''}
+         </div>
+         ${gradedRows}
+       </div>`
+    : '';
+
   // eBay — ACTIVE LISTINGS, and labelled as such.
   //
   // eBay's Browse API has no sold filter: it returns what people are ASKING,
@@ -161,6 +203,7 @@ export function renderResultSheet() {
           ${escapeHtml(card.set_name || '')}${card.set_code ? ' · ' + escapeHtml((card.set_code || '').toUpperCase()) : ''}${card.card_number ? ' · #' + escapeHtml(card.card_number) : ''}${card.rarity ? ' · ' + escapeHtml(card.rarity) : ''}
         </div>
         ${trendBlock}
+        ${gradedBlock}
         ${ebayBlock}
         <div style="margin-top:var(--p-2); display:flex; gap:var(--p-1); align-items:center;">
           ${conditionBtn}
