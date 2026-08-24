@@ -491,6 +491,13 @@ export async function fetchRapidAPICardmarketPrice(card) {
       rarity: best.rarity,
       image: best.image || null,
       tcggo_url: best.tcggo_url || null,
+      // ENGLISH Near Mint. The field carries no language suffix, which an
+      // earlier reading took to mean "any language" — measured false on 24 Aug
+      // 2026: on 10 of 17 sampled cards this value is ABOVE the cheapest
+      // _DE/_FR/_ES/_IT figure, which is impossible for a cross-language
+      // minimum. _DE/_FR/_ES/_IT are the other four Cardmarket languages;
+      // unsuffixed is English. That is what makes it safe to show beside a
+      // link filtered with language=1.
       lowest_nm: cm.lowest_near_mint || null,
       lowest_de: cm.lowest_near_mint_DE || null,
       lowest_fr: cm.lowest_near_mint_FR || null,

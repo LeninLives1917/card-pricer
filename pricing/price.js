@@ -252,12 +252,32 @@ export async function priceCard(verifiedCard, opts = {}) {
     cardmarket: {
       // Already filtered to ENGLISH (language=1) and this card's condition.
       //
-      // The operator asked for the cheapest English Near Mint. Cardmarket
-      // will not let us READ it — Cloudflare answers any server-side fetch
-      // with a 403 "Just a moment" interstitial, verified with a browser
-      // user-agent — and the TCGGO API has no English field at all, only
-      // _DE/_FR/_ES/_IT. But nothing stops us handing over the exact page
-      // with the filters already applied.
+      // The operator asked for the cheapest English Near Mint, and that is
+      // what the price beside this link now is.
+      //
+      // CORRECTION, 24 Aug 2026. This comment used to claim "the TCGGO API has
+      // no English field at all, only _DE/_FR/_ES/_IT". That was a wrong
+      // inference from the field names, and it mattered: it implied the
+      // headline price might be a cheap foreign-language copy while the link
+      // filtered to English, so price and link would disagree.
+      //
+      // MEASURED on 17 cards carrying both an unsuffixed and a
+      // language-specific price. If lowest_near_mint were "any language" it
+      // could never exceed the cheapest language-specific figure. It does, on
+      // 10 of the 17:
+      //
+      //     Latias dv1-9        base EUR 32.50   FR 8.40   IT 4.00
+      //     Tornadus-EX bw9-98  base EUR 18.00   IT 7.00
+      //     Swampert ex1-13     base EUR 35.00   IT 19.99
+      //
+      // So the unsuffixed field is a distinct language subset, and since
+      // _DE/_FR/_ES/_IT are the other four major Cardmarket languages, it is
+      // English. Price and link agree.
+      //
+      // Cardmarket still cannot be READ directly — Cloudflare answers any
+      // server-side fetch with a 403 "Just a moment" interstitial, verified
+      // with a browser user-agent — but nothing stops us handing over the exact
+      // page with the filters already applied.
       url: cmLinks.best_url,
       url_kind: cmLinks.best_url_kind,
       product_url: cmLinks.product_url_filtered,
