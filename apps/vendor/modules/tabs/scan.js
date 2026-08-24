@@ -236,6 +236,14 @@ async function startTextEntry() {
     // rather than an error. Any caller that has NOT been updated still lands
     // in the no-match branch and shows an error row: a question degrades to
     // "couldn't price it", never to a wrong price.
+    // MULTI — the line is more than one card run together. Show the split so
+    // the operator can fix the paste, rather than an error they have to work
+    // out for themselves.
+    if (r.ok && r.body?.resolution?.status === 'multi') {
+      state.currentResults.push(makeErrorRow(row, r.body.resolution.question));
+      continue;
+    }
+
     if (r.ok && r.body?.resolution?.status === 'ambiguous' && r.body.resolution.candidates?.length) {
       state.currentResults.push({
         card: { name: row.name || row.raw, set_code: row.set_code || '', card_number: row.card_number || '' },

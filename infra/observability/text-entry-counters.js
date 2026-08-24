@@ -63,6 +63,10 @@ const LOOKUP_OUTCOMES = [
   'skipped_unreliable',
   /** A non-English language was stated and the catalogue cannot answer for it. */
   'rejected_unsupported_lang',
+  /** The line was more than one card run together; reported as a split. */
+  'multi_card_line',
+  /** More than one real card fits the line; candidates were returned. */
+  'ambiguous',
 ];
 
 /** Outcomes for resolving the typed set code, if one was typed at all. */

@@ -556,6 +556,28 @@ async function manualIdentifyCore(
       }
     }
 
+    // TWO OR MORE CARDS ON ONE LINE. Reported with the split already worked
+    // out and each piece resolved, so the operator sees what it found rather
+    // than an error to diagnose. Returned as cards:[] like ambiguity, so an
+    // un-updated caller shows a row it cannot price instead of a wrong one.
+    if (r.status === 'multi' && r.pieces?.length) {
+      const named = r.pieces
+        .map((p) => (p.card_id ? (CARD_DB.get(p.card_id)?.name ?? p.text) : p.text))
+        .join(' + ');
+      console.log(`[MANUAL-PKM] "${text}" is ${r.pieces.length} cards: ${named}`);
+      countTextEntry(source, 'multi_card_line');
+      return {
+        cards: [],
+        resolution: {
+          ...envelopeFor(r),
+          shape: r.shape,
+          pieces: r.pieces,
+          question: `This looks like ${r.pieces.length} cards run together: ${named}. `
+            + 'Put each on its own line.',
+        },
+      };
+    }
+
     if (r.status === 'ambiguous' && r.candidates.length) {
       console.log(`[MANUAL-PKM] Raw line "${text}" is ambiguous: `
         + `${r.candidates.length} candidates (${r.reason})`);
