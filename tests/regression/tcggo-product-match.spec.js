@@ -16,7 +16,7 @@ import { test, describe, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { axios } from '../../apps/server/_clients.js';
-import { fetchRapidAPICardmarketPrice } from '../../pricing/adapters/tcggo-rapidapi.js';
+import { fetchRapidAPICardmarketPrice, SET_EVIDENCE_KINDS } from '../../pricing/adapters/tcggo-rapidapi.js';
 import { normaliseCardNumber } from '../../pricing/card-number.js';
 import {
   getPriceMatchCounts,
@@ -132,7 +132,15 @@ describe('TCGGO product match gate', () => {
     serve([priced('56', 15.2, 'Scarlet & Violet Black Star Promos')]);
     const out = await fetchRapidAPICardmarketPrice(CHARIZARD_SVP_56);
     assert.equal(out.requested_number, '56');
-    assert.ok(out.match_score >= 60, 'score must include the mandatory number match');
+    // Was `match_score >= 60`. A number could not be read back to mean
+    // anything — 90 told you nothing about WHY this product was chosen.
+    // match_evidence names the corroboration: 'code', 'total', 'name', or null.
+    // Read from the adapter, not copied here: an inline list went stale the
+    // moment 'name_exact' was added.
+    assert.ok(
+      SET_EVIDENCE_KINDS.includes(out.match_evidence),
+      `the result must say what tied this price to this card (got ${out.match_evidence})`,
+    );
   });
 
   test('zero upstream results is an absent card, not a match failure', async () => {

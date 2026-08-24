@@ -24,6 +24,7 @@ import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import { axios, supabase } from './_clients.js';
 import { getWithRetry } from '../../pricing/pokemontcg-client.js';
+import { TCGGO_HOST } from '../../pricing/adapters/tcggo-rapidapi.js';
 import {
   bulkSaveCardPrices,
   snapshotCardPrices,
@@ -919,11 +920,19 @@ export async function importUnreliableSetsFromTCGGO() {
 
     while (hasMore) {
       try {
-        const resp = await axios.get('https://pokemon-tcg-api.p.rapidapi.com/cards/search', {
-          params: { search: setName, per_page: 50, page },
+        // The SUBSCRIBED listing. This was pointing at the provider's free
+        // listing (100/day) while the plan sat on the other one, so a catalogue
+        // top-up would exhaust the free quota and then 403 — and, because the
+        // price path shared that quota, take live pricing down with it.
+        //
+        // per_page is not honoured upstream (tested: per_page, limit and
+        // page_size are all ignored, the page is always 20), so it is dropped
+        // rather than left in as a claim the API does not keep.
+        const resp = await axios.get(`https://${TCGGO_HOST}/pokemon/cards`, {
+          params: { search: setName, page },
           headers: {
             'X-RapidAPI-Key': apiKey,
-            'X-RapidAPI-Host': 'pokemon-tcg-api.p.rapidapi.com',
+            'X-RapidAPI-Host': TCGGO_HOST,
             'Accept': 'application/json'
           },
           timeout: 15000

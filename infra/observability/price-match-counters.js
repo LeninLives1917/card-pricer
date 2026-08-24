@@ -44,6 +44,28 @@ const OUTCOMES = [
   'rejected_no_number_read',
   /** upstream returned zero candidates. Not a match failure — an absent card. */
   'no_candidates',
+  /**
+   * Several printings share the requested number and nothing corroborated which
+   * SET it is. Added 24 Aug 2026: the number gate alone let a Charizard #4 be
+   * priced from Celebrations (EUR 165) instead of Base Set (EUR 380) whenever
+   * set_name happened to be absent. Refusing costs a price; guessing cost 2.3x.
+   */
+  'rejected_set_unconfirmed',
+  /**
+   * Priced, but only one printing carried the number so the set was never
+   * actually confirmed. Held SEPARATE from 'matched' so a healthy-looking match
+   * rate can never quietly include unverified ones — the distinction this
+   * project keeps having to re-learn.
+   */
+  'matched_set_unverified',
+  /**
+   * The adapter threw something that was NOT an upstream failure — our own bug.
+   * Separate outcome because the catch blocks used to return null for
+   * everything, making a ReferenceError indistinguishable from "this card has
+   * no price upstream". If this is ever non-zero, a code path is broken and the
+   * missing prices are ours, not the vendor's.
+   */
+  'adapter_error',
 ];
 
 const bySource = new Map();
