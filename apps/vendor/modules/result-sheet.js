@@ -363,7 +363,12 @@ async function reprice() {
 // ============================================================
 
 function buildCardmarketUrl(card, cm) {
-  let cmUrl = card.cardmarket_url || cm.url || cm.product_url || cm.filtered_url || '';
+  // cm.url FIRST, because the server now puts the best available link there
+  // and it is already filtered to English (language=1) and this card's
+  // condition. card.cardmarket_url is the raw pokemontcg redirect — it lands
+  // on the right page but with no filters at all, which is the thing the
+  // operator asked for.
+  let cmUrl = cm.url || cm.product_url || cm.filtered_url || card.cardmarket_url || '';
   if (cmUrl && !cmUrl.startsWith('http')) cmUrl = 'https://www.cardmarket.com' + cmUrl;
   if (!cmUrl && card.name) {
     const gameSlug =

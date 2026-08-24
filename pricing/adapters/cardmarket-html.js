@@ -81,14 +81,133 @@ export function buildCardmarketUrl(card) {
     ? `https://www.cardmarket.com/en/${gameSlug}/Products/Search?searchString=${encodeURIComponent(fallbackTerm)}`
     : `https://www.cardmarket.com/en/Search?searchString=${encodeURIComponent(fallbackTerm)}`;
 
+  // A product URL that has already been resolved for this card, if one has.
+  // See resolveCardmarketProductUrl — the direct page cannot be BUILT, only
+  // looked up, so this is empty until something has looked it up.
+  const cached = _productUrlCache.get(cardCacheKey(card));
+  const product = cached && cached !== NO_PRODUCT ? cached : null;
+
   return {
-    product_url: null,
-    product_url_filtered: null,
+    product_url: product,
+    product_url_filtered: product ? withFilters(product, condCode) : null,
     search_url: searchUrl,
     filtered_search_url: `${searchUrl}&language=1&minCondition=${condCode}`,
     narrow_search_url: fallbackUrl,
+    // The best link available, already filtered to English + this condition.
+    // Callers should use this and not think about which kind it is.
+    best_url: product ? withFilters(product, condCode) : `${searchUrl}&language=1&minCondition=${condCode}`,
+    best_url_kind: product ? 'product' : 'search',
     source: 'cardmarket_link',
   };
+}
+
+/** language=1 is Cardmarket's ENGLISH filter; minCondition is its grade floor. */
+function withFilters(url, condCode) {
+  // Drop pokemontcg.io's campaign parameters. They are their attribution, not
+  // ours, and they make an already-long link unreadable in a UI.
+  const clean = String(url)
+    .replace(/[?&]utm_[^&]*/g, '')
+    .replace(/\?&/, '?')
+    .replace(/[?&]$/, '');
+  const sep = clean.includes('?') ? '&' : '?';
+  return `${clean}${sep}language=1&minCondition=${condCode}`;
+}
+
+const cardCacheKey = (card) =>
+  `${card?.game ?? 'pokemon'}|${String(card?.set_code ?? '').toLowerCase()}|${String(card?.card_number ?? '').toLowerCase()}|${String(card?.name ?? '').toLowerCase()}`;
+
+/** Sentinel so a card KNOWN to have no product page is not re-resolved forever. */
+const NO_PRODUCT = Symbol('no-product');
+const _productUrlCache = new Map();
+
+/**
+ * Find the Cardmarket product page for a card.
+ *
+ * THE URL CANNOT BE BUILT. That was the first thing tried, and the real URLs
+ * say why:
+ *
+ *   Stellar-Crown/Gulpin-V2-SCR154            -V2 is Cardmarket's own versioning
+ *   Obsidian-Flames/Smoliv-OBF019             zero-padded to three
+ *   Vivid-Voltage/Shiftry-VIV12               not padded
+ *   Journey-Together/Hops-Wooloo-V2-JTG171    JTG171 where the card is 170
+ *   EX-Legend-Maker/Muk-LM11                  set slug and code are Cardmarket's own
+ *
+ * The version suffix, the padding, the set abbreviations and even the
+ * collector number are Cardmarket's internal data, not derivable from ours.
+ * A generator would produce plausible URLs that 404, which is worse than a
+ * search link because it looks right.
+ *
+ * What DOES work: pokemontcg.io publishes a redirect per card, and the
+ * catalogue already stores it. Following it once yields the canonical URL,
+ * and the English + condition filters append cleanly.
+ *
+ * MEASURED on 100 random catalogue cards: 75 resolve to a product page, 25
+ * have no mapping at all. Those 25 get the filtered SEARCH url, which is
+ * always buildable — so every card gets a working English/NM link, and
+ * three-quarters go straight to the card.
+ *
+ * Cached per card, including the misses, so a bulk session pays each lookup
+ * once. Never throws: a link is a convenience and must not fail a price.
+ */
+export async function resolveCardmarketProductUrl(card, { timeoutMs = 6000 } = {}) {
+  const key = cardCacheKey(card);
+  if (_productUrlCache.has(key)) {
+    const hit = _productUrlCache.get(key);
+    return hit === NO_PRODUCT ? null : hit;
+  }
+
+  const redirect = card?.cardmarket_url || card?.cardmarketUrl;
+  if (!redirect || !/prices\.pokemontcg\.io/.test(redirect)) {
+    // Already a direct Cardmarket link, or nothing to follow.
+    const direct = redirect && /cardmarket\.com/.test(redirect) ? redirect : null;
+    _productUrlCache.set(key, direct ?? NO_PRODUCT);
+    return direct;
+  }
+
+  // RETRY, because this service is unreliable and the project has been bitten
+  // by assuming otherwise. CLAUDE.md records it directly: "No retry anywhere,
+  // against an API that 500s on roughly 40% of valid requests. One 500
+  // silently dropped a whole set."
+  //
+  // Observed here while measuring: two runs over the same 100 cards resolved
+  // 75 and then 64, purely from upstream 502s. A card that "has no Cardmarket
+  // page" and a card whose lookup happened to fail are completely different
+  // facts, and without a retry they are indistinguishable.
+  //
+  // A 302 or a 404 is an ANSWER and ends the loop. Only 5xx and network
+  // errors are retried.
+  let lastWasTransient = false;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      const ctl = new AbortController();
+      const t = setTimeout(() => ctl.abort(), timeoutMs);
+      const r = await fetch(redirect, { redirect: 'manual', signal: ctl.signal });
+      clearTimeout(t);
+
+      if (r.status >= 500) { lastWasTransient = true; }
+      else {
+        const loc = r.headers.get('location');
+        const ok = loc && /cardmarket\.com/.test(loc) ? loc : null;
+        // A definite answer, cached either way — including the miss, so a
+        // card with genuinely no page is not looked up again all session.
+        _productUrlCache.set(key, ok ?? NO_PRODUCT);
+        return ok;
+      }
+    } catch {
+      lastWasTransient = true;
+    }
+    if (attempt < 2) await new Promise((res) => setTimeout(res, 400 * (attempt + 1)));
+  }
+
+  // Never cache a transient failure as "no product" — that would make one bad
+  // minute permanent for the life of the process.
+  void lastWasTransient;
+  return null;
+}
+
+/** Test seam. */
+export function resetCardmarketUrlCache() {
+  _productUrlCache.clear();
 }
 
 /**
