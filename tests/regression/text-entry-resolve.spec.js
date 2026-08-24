@@ -373,3 +373,58 @@ describe('alphanumeric collector numbers keep the catalogue\'s own casing', () =
     assert.deepEqual(broken, [], 'these resolved to ids the catalogue does not hold');
   });
 });
+
+describe("the operator's run-together paste", () => {
+  // 17 lines, pasted verbatim. Before this, ALL 17 returned no_interpretation.
+  const BLOCK = ['ril017192', 'mewswssh223', 'res002025', 'chisvp030', 'gya028203',
+    'pik027078', 'chi179167guz143147', 'yve118182', 'chasm195', 'lux47122', 'ded57214',
+    'scr065', 'galswsh283', 'zacswsh135', 'hisgg01gg70', 'tor124198', 'tin127193'];
+
+  test('every line now produces an answer — resolved, a question, or a split', () => {
+    const dead = BLOCK
+      .map((l) => [l, resolveTypedLine(l, deps)])
+      .filter(([, r]) => r.status === 'need_more' || r.status === 'not_found')
+      .map(([l, r]) => `${l}: ${r.reason}`);
+    assert.deepEqual(dead, [], 'these lines produced nothing at all');
+  });
+
+  test('the specific cards, read out of the catalogue', () => {
+    for (const [line, id] of [
+      ['gya028203', 'swsh7-28'],      // Gyarados V, Evolving Skies
+      ['pik027078', 'pgo-27'],        // Pikachu, Pokemon GO
+      ['chasm195', 'smp-SM195'],      // Charizard-GX, SM promo
+      ['lux47122', 'xy9-47'],         // Luxray BREAK, BREAKpoint
+      ['galswsh283', 'swshp-SWSH283'],// Galarian Zapdos
+      ['hisgg01gg70', 'swsh12pt5gg-GG01'], // Hisuian Voltorb, GG01 of GG70
+      ['tin127193', 'sv2-127'],       // Ting-Lu ex, Paldea Evolved
+      ['mewswssh223', 'swshp-SWSH223'], // Mewtwo V — badge typo repaired
+    ]) {
+      const r = resolveTypedLine(line, deps);
+      assert.equal(r.status, 'resolved', `${line}: ${r.reason}`);
+      assert.equal(r.card_id, id, line);
+    }
+  });
+
+  test('TWO CARDS IN ONE LINE are split, with each piece resolved', () => {
+    const r = resolveTypedLine('chi179167guz143147', deps);
+    assert.equal(r.status, 'multi');
+    assert.equal(r.pieces.length, 2);
+    assert.deepEqual(r.pieces.map((p) => p.text), ['chi179167', 'guz143147']);
+    assert.ok(r.pieces.every((p) => p.status === 'resolved'), 'both pieces should resolve');
+  });
+
+  test('but a line that IS one card is never split', () => {
+    // "hisgg01gg70" has the same letters-digits-letters-digits shape as the
+    // two-card line above. Splitting on shape got it wrong; the split runs
+    // last, only on lines that failed to resolve whole.
+    const r = resolveTypedLine('hisgg01gg70', deps);
+    assert.equal(r.status, 'resolved');
+    assert.equal(r.card_id, 'swsh12pt5gg-GG01');
+  });
+
+  test('an ambiguous compact line asks rather than picking', () => {
+    const r = resolveTypedLine('chisvp030', deps);
+    assert.equal(r.status, 'ambiguous');
+    assert.ok(r.candidates.length > 1);
+  });
+});

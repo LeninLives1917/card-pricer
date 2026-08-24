@@ -289,11 +289,17 @@ export function resolveLine(line, { cardDb, nameIndex, nameNumberIndex }) {
  * @param {{cardDb, nameIndex, nameNumberIndex, tokenise?}} deps
  * @returns {object} a resolveLine result, plus {shape, interpretation, tried}
  */
-export function resolveTypedLine(raw, deps) {
+export function resolveTypedLine(raw, deps, opts = {}) {
+
   const tokenise = deps.tokenise ?? _tokeniseLine;
   const { interpretations } = tokenise(raw);
 
   if (!interpretations.length) {
+    // A line the tokeniser cannot read AT ALL is the strongest signal that it
+    // is not one card. "chi179167guz143147" produces no reading, because no
+    // single card has two names and two numbers in it.
+    const split = trySplit(raw, deps, opts, 0);
+    if (split) return split;
     return {
       status: 'need_more', card_id: null, confidence: 'low',
       reason: 'no_interpretation', candidates: [], matched_name: null,
@@ -362,6 +368,23 @@ export function resolveTypedLine(raw, deps) {
     return { ...best, tried, outranked: rivals.map((r) => r.shape + ':' + r.card_id) };
   }
 
+  // TWO OR MORE CARDS IN ONE TOKEN, tried LAST and only after the line has
+  // failed to resolve as a single card.
+  //
+  // "chi179167guz143147" is chi 179/167 and guz 143/147 with nothing between
+  // them. But "hisgg01gg70" has the same shape — letters, digits, letters,
+  // digits — and is ONE card: Hisuian Voltorb GG01 out of GG70, where the
+  // second group is the printed total. Splitting on shape alone got that
+  // wrong, which is the cascade's mistake again: deciding from the token when
+  // only the catalogue knows.
+  //
+  // So the order does the deciding. If it resolves as one card, it is one
+  // card. Only a line the catalogue cannot make sense of whole is offered as
+  // a split, with the pieces already resolved so the operator sees what it
+  // found rather than an error to diagnose.
+  const split = trySplit(raw, deps, opts, tried);
+  if (split) return split;
+
   // A question beats a bare miss: candidates tell the operator what the system
   // was looking at, a "not found" tells them nothing.
   const out = firstAmbiguous ?? firstNotFound;
@@ -370,4 +393,36 @@ export function resolveTypedLine(raw, deps) {
 
 // Imported lazily-by-default so this module stays usable with an injected
 // tokeniser in tests (mock.module is banned; injection is the seam).
-import { tokeniseLine as _tokeniseLine } from './tokenise.js';
+import { tokeniseLine as _tokeniseLine, splitRunTogetherCards as _splitRunTogetherCards } from './tokenise.js';
+
+/**
+ * Offer a line as several cards, when and only when it cannot be one.
+ *
+ * "chi179167guz143147" is chi 179/167 and guz 143/147 with nothing between
+ * them. But "hisgg01gg70" has the SAME SHAPE — letters, digits, letters,
+ * digits — and is one card: Hisuian Voltorb GG01 out of GG70, where the
+ * second group is the printed total. Splitting on shape alone got that wrong,
+ * which is the cascade's mistake again: deciding from the token when only the
+ * catalogue knows.
+ *
+ * So this runs LAST, on lines that failed to resolve whole, and only returns
+ * a split that actually explains something. Order does the deciding.
+ */
+function trySplit(raw, deps, opts, tried) {
+  if (opts?.noSplit) return null;
+  const pieces = _splitRunTogetherCards(String(raw ?? '').trim());
+  if (pieces.length < 2) return null;
+
+  const resolved = pieces.map((p) => ({ text: p, r: resolveTypedLine(p, deps, { noSplit: true }) }));
+  if (!resolved.some((x) => x.r.status === 'resolved')) return null;
+
+  return {
+    status: 'multi', card_id: null, confidence: 'low',
+    reason: `line_contains_${pieces.length}_cards`,
+    candidates: [], matched_name: null, name_match: 'none',
+    shape: 'run_together_multi', interpretation: null, tried,
+    pieces: resolved.map(({ text, r }) => ({
+      text, status: r.status, card_id: r.card_id, candidates: r.candidates,
+    })),
+  };
+}

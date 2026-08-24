@@ -239,3 +239,70 @@ describe('a promo badge separated from its number', () => {
     if (i) assert.ok(i.prior < 0.2, `expected a low prior for a name suffix, got ${i.prior}`);
   });
 });
+
+describe('run-together lines, with no separators at all', () => {
+  // A real operator paste. Every one of these produced NOTHING before this
+  // existed — the word-splitter had nothing to split on, so 17 of 17 lines
+  // returned no_interpretation.
+  //
+  // Same problem as "cha 4/102" vs "MEG 172/132" with the spaces removed, so
+  // the same answer: enumerate the splits, let the catalogue decide. Guessing
+  // one split would be the cascade's mistake in a new costume — "lux47122" is
+  // 47/122 or 471/22 and the token does not say which.
+
+  test('digits split into a number and a printed total', () => {
+    const i = tokeniseLine('gya028203').interpretations
+      .find((x) => x.card_number === '028' && x.total === '203');
+    assert.ok(i, 'the 028/203 reading must be offered');
+    assert.equal(i.name, 'gya');
+  });
+
+  test('an uneven split is offered too, ranked below the even one', () => {
+    const all = tokeniseLine('lux47122').interpretations;
+    const right = all.find((x) => x.card_number === '47' && x.total === '122');
+    assert.ok(right, '47/122 must be among the readings');
+    // 471/22 is not impossible, just less likely — it is offered, not excluded.
+    assert.ok(all.some((x) => x.card_number === '471'));
+    assert.ok(right.prior >= all.find((x) => x.card_number === '471').prior);
+  });
+
+  test('a promo badge glued to its number', () => {
+    const i = tokeniseLine('galswsh283').interpretations.find((x) => x.card_number === 'SWSH283');
+    assert.ok(i);
+    assert.equal(i.name, 'gal');
+  });
+
+  test('two alphanumeric groups are number and total, not two cards', () => {
+    // "hisgg01gg70" is Hisuian Voltorb GG01 out of GG70. Splitting it on shape
+    // would make it two cards, which is why the split runs LAST.
+    const i = tokeniseLine('hisgg01gg70').interpretations.find((x) => x.card_number === 'GG01');
+    assert.ok(i, 'GG01 must be read as the collector number');
+    assert.equal(i.name, 'his');
+  });
+
+  test('A MISTYPED BADGE IS REPAIRED, at distance 1, ranked low', () => {
+    // "mewswssh223" is Mewtwo V SWSH223 with an extra S. SWSSH223 matches
+    // nothing, and no amount of catalogue lookup forgives it.
+    const all = tokeniseLine('mewswssh223').interpretations;
+    const repaired = all.find((x) => x.card_number === 'SWSH223');
+    assert.ok(repaired, 'the repaired badge reading must be offered');
+    // It is a CORRECTION, so it must never outrank a literal reading.
+    const literal = all.find((x) => x.card_number === 'SWSSH223');
+    assert.ok(literal && repaired.prior < literal.prior);
+  });
+
+  test('THE CAP MUST NOT EAT THE REPAIR', () => {
+    // The cap was 12 and the repaired reading sat at position 13, so
+    // "mewswssh223" resolved to nothing. A low-confidence reading that is the
+    // ONLY one able to work is exactly what a prior-ordered cap discards.
+    const all = tokeniseLine('mewswssh223').interpretations;
+    assert.ok(all.some((x) => x.card_number === 'SWSH223'),
+      'the repair was truncated out of the list again');
+  });
+
+  test('a normal spaced line is untouched by any of this', () => {
+    const t = top('cha 4/102');
+    assert.equal(t.shape, 'name_only');
+    assert.ok(!String(t.shape).startsWith('compact_'));
+  });
+});
