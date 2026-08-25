@@ -88,6 +88,36 @@ function lowerBound(arr, target) {
 }
 
 /**
+ * The cap on how many names a prefix may return.
+ *
+ * WAS 50, AND IT WAS SILENTLY WRONG. The scan walks a SORTED array, so a cap
+ * truncates ALPHABETICALLY — it does not sample, it drops the tail. The caller
+ * then filters the survivors by collector number and reports
+ * "no_prefix_match_at_that_number", which reads as "the catalogue does not have
+ * that card" when the truth is "we stopped looking at the fiftieth name".
+ *
+ * MEASURED, 25 Aug 2026 — prefixes fronting more than 50 distinct names:
+ *
+ *     tea   144 names ->  94 dropped  (167 cards)  every Team Rocket's /
+ *                                                  Magma's / Aqua's card
+ *     dar    84 names ->  34 dropped  (104 cards)  Darkrai ex / V / VSTAR
+ *     bla    52 names ->   2 dropped  (  7 cards)  Blaziken V / VMAX
+ *     meg    51 names ->   1 dropped  (  5 cards)  Mega Zygarde ex
+ *
+ * 283 cards unreachable by any three-letter prefix, and the list is precisely
+ * the current chase cards — the whole Destined Rivals Team Rocket's run, in the
+ * set most likely to be carried to a show.
+ *
+ * The cap is a bound on work, not a correctness rule: the caller narrows this
+ * list by (name, number) index lookup straight afterwards, and the largest
+ * bucket in the catalogue is 144. A limit above the largest bucket costs
+ * nothing and cannot truncate. It is kept, rather than removed, so a future
+ * catalogue with a pathological prefix still has a ceiling — but breaching it
+ * is now REPORTED instead of silently changing the answer.
+ */
+const PREFIX_LIMIT = 500;
+
+/**
  * Every normalised catalogue name starting with `prefix`.
  *
  * @param {object} index    from buildNameIndex
@@ -96,18 +126,43 @@ function lowerBound(arr, target) {
  * @returns {string[]} normalised names, in catalogue order
  */
 export function namesWithPrefix(index, prefix, opts = {}) {
-  const { limit = 50, minPrefix = MIN_PREFIX } = opts;
+  const { limit = PREFIX_LIMIT, minPrefix = MIN_PREFIX } = opts;
   const p = normName(prefix);
   if (!p || p.length < minPrefix) return [];
   const { sorted } = index;
   const start = lowerBound(sorted, p);
   const out = [];
+  let truncated = false;
   for (let i = start; i < sorted.length && sorted[i].startsWith(p); i += 1) {
+    if (out.length >= limit) { truncated = true; break; }
     out.push(sorted[i]);
-    if (out.length >= limit) break;
+  }
+  // A truncated bucket means the answer below is computed from part of the
+  // catalogue. Say so rather than letting it read as an absent card.
+  if (truncated) {
+    prefixTruncations += 1;
+    lastTruncatedPrefix = p;
+    console.warn(`[NAME-INDEX] prefix "${p}" exceeded ${limit} names — the list is TRUNCATED `
+      + 'and a "not found" from here may be wrong');
   }
   return out;
 }
+
+let prefixTruncations = 0;
+let lastTruncatedPrefix = null;
+
+/** For /api/health. Non-zero means some answers were computed on a partial list. */
+export function nameIndexState() {
+  return { prefix_truncations: prefixTruncations, last_truncated_prefix: lastTruncatedPrefix, prefix_limit: PREFIX_LIMIT };
+}
+
+/** Test seam. */
+export function _resetNameIndexCounters() {
+  prefixTruncations = 0;
+  lastTruncatedPrefix = null;
+}
+
+export { PREFIX_LIMIT };
 
 /**
  * Resolve typed text to candidate catalogue names, widening only as far as it
