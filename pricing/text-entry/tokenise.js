@@ -69,8 +69,36 @@ const NAME_SUFFIX = new Set([
 ]);
 
 const SET_TOKEN_RX = /^[A-Za-z][A-Za-z0-9-]{1,5}$/;
-const NUM_TOTAL_RX = /^(\d{1,4})\s*\/\s*(\d{1,4})$/;
-const BARE_NUM_RX = /^#?(\d{1,4})$/;
+// COLLECTOR NUMBERS ARE NOT ALWAYS DIGITS.
+//
+// Both of these used to demand pure digits, so a denominator could only ever be
+// typed on a plain numeric card. MEASURED across the whole catalogue on
+// 24 Aug 2026, typing every card as "<3-letter prefix> <number>/<printed total>":
+//
+//     shape             cards   correct
+//     digits           18,849    18,348  (97%)
+//     letters+digits    1,509         0  <- TG19, SV064, GG31, SWSH001, RC5
+//     digits+letter        70         0  <- 189a, alternate arts
+//     single letter        26         0  <- Unown A-Z
+//     other                39         0
+//
+// 1,644 cards — 8% of the catalogue — could not be entered with the very token
+// that makes entry unambiguous. The denominator is what takes name+number from
+// 88.5% to 99.6% catalogue uniqueness, so those cards were being resolved with
+// the weakest available evidence, or not at all.
+//
+// The numerator now accepts an optional letter prefix (TG19), an optional
+// letter suffix (189a), or both. The denominator accepts the same, because
+// subsets number their totals the same way: TG19/TG30, SV064/SV122.
+const NUM_TOTAL_RX = /^([A-Za-z]{0,4}\d{1,4}[a-z]?)\s*\/\s*([A-Za-z]{0,4}\d{1,4})$/i;
+
+// Unown is numbered by LETTER — ex6-F is "Unown F". A bare letter is far too
+// weak to accept on its own (a stray "v" would become a card number), so it is
+// only read as a number when a denominator is present to corroborate it, and
+// never when it is a known name suffix.
+const LETTER_NUM_TOTAL_RX = /^([A-Za-z])\s*\/\s*(\d{1,4})$/;
+
+const BARE_NUM_RX = /^#?(\d{1,4}[a-z]?)$/i;
 /** Promo and subset numbers that run letters into digits: XY03, SWSH063, TG16, GG31, RC5, H12. */
 const ALNUM_NUM_RX = /^([A-Za-z]{1,4})(\d{1,4})$/;
 /** The catalogue's own key form, e.g. sv3pt5-4. */
@@ -114,9 +142,21 @@ export function normaliseSpacing(s) {
     // "4 / 102" and "4/ 102" -> "4/102". Spaces around a slash are never
     // meaningful; a collector number is one thing.
     .replace(/(\d)\s*\/\s*(\d)/g, '$1/$2')
-    // "cha4/102" and "MEG172/132" -> "cha 4/102". A letter run flush against
-    // a numerator is two tokens typed without the space.
-    .replace(/([A-Za-z])(\d{1,4}\/\d{1,4})/g, '$1 $2')
+    // "cha4/102" and "MEG172/132" -> "cha 4/102". A letter run flush against a
+    // numerator is two tokens typed without the space.
+    //
+    // ONLY AT THE START OF THE LINE, and that restriction is the whole point.
+    // Applied everywhere it also split "amp H1/147" into "amp H 1/147" and
+    // "cor TG19/30" into "cor TG 19/30", handing the subset letters to the NAME
+    // and leaving a bare digit as the collector number. Measured: that was
+    // every one of the 1,509 letters+digits cards — H1, TG19, SV064, GG31,
+    // RC5, DP01 — failing to resolve when typed with a denominator.
+    //
+    // Position is what tells them apart. A letter run that OPENS the line is a
+    // name or a set code the operator ran together with the number. A letter
+    // run that follows a word is part of the collector number, because the name
+    // has already been given. An optional leading quantity is stepped over.
+    .replace(/^((?:\d{1,3}\s*x\s+)?)([A-Za-z]{2,})(\d{1,4}\/\d{1,4})/i, '$1$2 $3')
     .replace(/\s+/g, ' ');
 }
 
@@ -346,7 +386,37 @@ export function tokeniseLine(line) {
     if (ck && !catalogueKey && /\d/.test(ck[1])) { catalogueKey = { setId: norm(ck[1]), number: ck[2] }; continue; }
 
     const nt = w.match(NUM_TOTAL_RX);
-    if (nt && number == null) { number = nt[1]; total = nt[2]; continue; }
+    if (nt && number == null) {
+      number = nt[1];
+      // A subset denominator carries the subset's letters (TG19/TG30). The
+      // total is compared against a set's printed card COUNT, so the letters
+      // have to come off or nothing will ever match.
+      total = nt[2].replace(/^[A-Za-z]+/, '');
+      continue;
+    }
+
+    // Unown, numbered by letter. Only accepted alongside a denominator: a bare
+    // letter is far too weak on its own, and the denominator is what
+    // corroborates it.
+    //
+    // NO NAME-SUFFIX GUARD. The first version excluded letters in NAME_SUFFIX
+    // so that "cha v/102" could not be read as a card numbered V — and that
+    // guard made Unown V (ex10-V) unreachable, which is a real card and was
+    // exactly the 1 of 26 letter-numbered cards the catalogue sweep still
+    // missed. Measured: 25/26 with the guard, 26/26 without.
+    //
+    // The catalogue already refuses the bad reading, and more precisely than a
+    // blocklist can. Letter-numbered cards exist in ONE set (ex10, printed
+    // total 115) and are all named Unown, so "cha v/102" has to find a
+    // Charizard numbered V in a 102-card set — there is none, and it declines.
+    // Letting the catalogue arbitrate is the design; a hardcoded exclusion list
+    // was the shortcut that cost a card.
+    const lnt = w.match(LETTER_NUM_TOTAL_RX);
+    if (lnt && number == null) {
+      number = lnt[1].toUpperCase();
+      total = lnt[2];
+      continue;
+    }
 
     if (LANG.has(lw) && lang == null) { lang = lw; continue; }
 
