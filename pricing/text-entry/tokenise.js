@@ -461,9 +461,22 @@ export function tokeniseLine(line) {
     }
   }
 
+  const nameOfWords = (arr) => (arr && arr.length ? arr.join(' ') : null);
+
   if (catalogueKey) {
+    // CARRY THE TYPED NAME. It used to be set to null here, so a line like
+    // "mew 151-6" threw "mew" away, matched the catalogue key at prior 1.0 —
+    // the top rank — and returned Charizard ex with high confidence. The
+    // operator supplied a name and it was discarded, which is the one thing a
+    // resolution-driven parser must never do.
+    //
+    // The name is not used to FIND the card here; the key already does that.
+    // It is carried so the resolver can check the answer against it and refuse
+    // when they disagree. See the catalogue-key corroboration in
+    // text-entry/resolve-line.js.
+    const typedName = nameOfWords(pre.length ? pre : post);
     interpretations.push({
-      ...base, name: null, card_number: catalogueKey.number, total,
+      ...base, name: typedName, card_number: catalogueKey.number, total,
       set_code: catalogueKey.setId, prior: 1.0, shape: 'catalogue_key',
     });
   }

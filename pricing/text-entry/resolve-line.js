@@ -126,8 +126,26 @@ export function resolveLine(line, { cardDb, nameIndex, nameNumberIndex }) {
   // exactly, and there is nothing for the name machinery to add.
   if (!normName(line?.name) && line?.set_code) {
     const setId = resolveSetCode(String(line.set_code)).setId;
-    const id = `${setId}-${num}`;
-    const has = cardDb instanceof Map ? cardDb.has(id) : Object.prototype.hasOwnProperty.call(cardDb || {}, id);
+    // CASE. cleanNum lowercases, but catalogue keys preserve the collector
+    // number's case — swsh12tg-TG19, ex10-V, swsh45sv-SV064. Looking up
+    // "swsh12tg-tg19" missed every one of the 1,646 cards whose number is not
+    // pure digits, which is the whole Trainer Gallery / Shiny Vault / Galarian
+    // Gallery / Unown population. Try the lowercased form first, since that is
+    // what most keys use, then the number exactly as typed.
+    const has1 = (k) => (cardDb instanceof Map
+      ? cardDb.has(k)
+      : Object.prototype.hasOwnProperty.call(cardDb || {}, k));
+    const rawNum = String(line?.card_number ?? '').trim().replace(/\/.*$/, '').replace(/^0+(?=.)/, '');
+    let id = `${setId}-${num}`;
+    let has = has1(id);
+    if (!has && rawNum && rawNum !== num) {
+      const alt = `${setId}-${rawNum}`;
+      if (has1(alt)) { id = alt; has = true; }
+      else {
+        const up = `${setId}-${rawNum.toUpperCase()}`;
+        if (has1(up)) { id = up; has = true; }
+      }
+    }
     if (has) {
       // THE DENOMINATOR REFUTES THE SET CODE, exactly as it refutes a model's
       // set-code guess in set-resolve.js §18.
@@ -200,6 +218,33 @@ export function resolveLine(line, { cardDb, nameIndex, nameNumberIndex }) {
     const widened = resolveTypedName(nameIndex, line?.name, { forcePrefix: true });
     const retry = widened.names.filter((n) => nameNumberIndex.has(n + '|' + num));
     if (retry.length) { plausible = retry; nameMatch = widened.how; }
+  }
+
+  // AN EXACT HIT THAT GOES SOMEWHERE MUST STILL LOOK AROUND.
+  //
+  // The preference above is right when the operator typed a whole name:
+  // "Charizard 4/102" means Charizard, and offering Charizard ex too would
+  // invent an ambiguity they did not have. It is wrong when the typed token is
+  // a three-letter PREFIX that merely happens to also be a card name, because
+  // then the preference is an accident of the catalogue rather than a reading
+  // of the input.
+  //
+  // Measured, whole catalogue:
+  //   "hop 133/159"   -> Hop [Crown Zenith], because "Hop" is a name, so
+  //                      Hop's Rookidee [Journey Together] was never looked at
+  //                      — and BOTH sets have 159 cards with a 133.
+  //   "Venusaur ex 1" -> Venusaur [Pokemon Rumble], because "Venusaur" is a
+  //                      name, so Venusaur ex was never looked at.
+  //
+  // So widen anyway, but only ADD names that have a card at this same number.
+  // A widened name with no card at the number is not a rival and must not
+  // become a question. Where only the exact match survives, the preference is
+  // unchanged and nothing is asked.
+  if (plausible.length && nameHit.how === 'exact') {
+    const widened = resolveTypedName(nameIndex, line?.name, { forcePrefix: true });
+    const rivals = widened.names.filter((n) => !plausible.includes(n)
+      && nameNumberIndex.has(n + '|' + num));
+    if (rivals.length) plausible = plausible.concat(rivals);
   }
 
   if (!plausible.length) {
@@ -381,6 +426,38 @@ export function resolveTypedLine(raw, deps, opts = {}) {
     // Two readings of the same line pointing at DIFFERENT cards on evidence of
     // the same strength is a genuine question, not something to break with a
     // tiebreak nobody can defend.
+    // A SET CODE THAT IS ALSO A NAME PREFIX, where the denominator happens to
+    // corroborate BOTH readings.
+    //
+    // "mew 19/165" — MEW aliases to the 151 set, whose printed total is 165.
+    // Expedition Base Set is ALSO 165. So the denominator agrees with the
+    // set-code reading, which lifts it to rank 5, and it returns
+    // sv3pt5-19 Rattata — a card with no relationship to anything typed. The
+    // rival reading returns ecard1-19 Mew, whose name is exactly what was
+    // typed, and was outranked.
+    //
+    // The corroboration test added for "scr065" asks whether the denominator
+    // agrees with the set. It cannot tell agreement from coincidence when two
+    // sets share a printed total. What distinguishes the readings is that one
+    // of them produced a card whose NAME matches the typed token and the other
+    // did not — direct evidence about the card, versus evidence about a set.
+    //
+    // Measured across the whole catalogue: this is 4 of the 6 remaining wrong
+    // answers in 20,493 lines. Turning them into questions costs 4 asks.
+    const nameRival = rivals.find((r) => r.name_match === 'exact' || r.name_match === 'prefix');
+    if (best.reason === 'set_code_and_number' && nameRival) {
+      const seen = new Set();
+      const candidates = [];
+      for (const r of resolvedAll) {
+        for (const c of r.candidates) if (!seen.has(c.id)) { seen.add(c.id); candidates.push(c); }
+      }
+      return {
+        ...best, status: 'ambiguous', card_id: null, confidence: 'low',
+        reason: 'set_code_or_name', candidates, tried,
+        rival_shapes: resolvedAll.map((r) => r.shape),
+      };
+    }
+
     if (rivals.length && rankOf(rivals[0]) === rankOf(best)) {
       const seen = new Set();
       const candidates = [];

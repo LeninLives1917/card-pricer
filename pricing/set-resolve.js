@@ -251,8 +251,21 @@ export function resolveIdentity(read, cardDb, opts = {}) {
     if (byTotal.length > 1) {
       // Still tied. The set code may break it — but only among sets the printed
       // total already permits, so a wrong hint cannot drag us outside them.
-      const byHint = byTotal.filter((m) => String(byId.get(m)?.ptcgoCode ?? '').toUpperCase() === hint
-        || m.toUpperCase() === hint);
+      // AN ABSENT HINT IS NOT EVIDENCE, and it used to behave like one.
+      //
+      // 25 of 174 sets have ptcgoCode null, which `?? ''` turns into the empty
+      // string — the same value `hint` holds when no set code was typed. So
+      // "" === "" matched, and a set with NO code won a tie-break against a set
+      // that had one.
+      //
+      // Measured: "lic 16/18" returned Lickitung from Southern Islands
+      // (ptcgoCode null) over Lickitung from Detective Pikachu. Both sets have
+      // 18 cards and a Lickitung at 16, so the line is genuinely ambiguous and
+      // the only thing that separated them was an empty string matching itself.
+      const byHint = hint
+        ? byTotal.filter((m) => String(byId.get(m)?.ptcgoCode ?? '').toUpperCase() === hint
+          || m.toUpperCase() === hint)
+        : [];
       if (byHint.length === 1) {
         return mk(byHint[0], 'medium', 'printed_total_then_hint', byTotal);
       }
@@ -266,8 +279,16 @@ export function resolveIdentity(read, cardDb, opts = {}) {
   // No printed total. Fall back to the hint, accepting the set id form too —
   // models return "ME5" (the set id) as often as "PBL" (the display code), and
   // that is a representation mismatch rather than an error.
-  const byHint = matches.filter((m) => String(byId.get(m)?.ptcgoCode ?? '').toUpperCase() === hint
-    || m.toUpperCase() === hint);
+  // Same empty-hint trap as the printed-total branch above, and this one had a
+  // visible signature: a stress sweep found "Espeon 16", "Ampharos 1",
+  // "Deoxys 2", "Wobbuffet 16" and others all landing on a POP Series card
+  // whenever several vintage sets held the same name and number. The POP sets
+  // carry no ptcgoCode, so `?? ''` matched an absent hint and they won every
+  // tie — not because they were likelier, but because they had no code.
+  const byHint = hint
+    ? matches.filter((m) => String(byId.get(m)?.ptcgoCode ?? '').toUpperCase() === hint
+      || m.toUpperCase() === hint)
+    : [];
   if (byHint.length === 1) {
     return mk(byHint[0], 'medium', 'set_code_hint', matches);
   }
