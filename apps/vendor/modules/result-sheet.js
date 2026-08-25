@@ -32,11 +32,16 @@ const CONDITION_LABELS = {
 };
 
 let _currentEntry = null;   // ref into currentResults[0] OR session log entry
-let _ask = 0;               // negotiate input — €
+let _ask = 0;               // negotiate input — €, numeric, for the maths
+// The RAW string as typed. "1." and "0" are valid things to be part-way through
+// typing and both round-trip to something else through Number, so the number
+// alone cannot drive the field's value without eating characters.
+let _askRaw = '';
 
 export function openResultSheet(entry) {
   _currentEntry = entry || null;
   _ask = 0;
+  _askRaw = '';
   const sheet = document.getElementById('resultSheet');
   if (!sheet) return;
   sheet.classList.add('open');
@@ -271,8 +276,9 @@ export function renderResultSheet() {
     <div class="surface" style="display:flex; gap:var(--p-2); align-items:center; margin-top:var(--p-2);">
       <span class="label" style="margin:0;">Seller asks</span>
       <input type="number" inputmode="decimal" step="0.5" min="0" class="figure-input"
-             data-action="ask-input" placeholder="€…" value="${_ask || ''}" style="flex:1; min-width:0;" />
-      <span class="figure" style="font-size:13px; color:${_ask && (sell - _ask) >= 0 ? 'var(--up)' : 'var(--down)'};">
+             data-action="ask-input" placeholder="€…" value="${escapeAttr(_askRaw)}"
+             data-sell="${sell}" style="flex:1; min-width:0;" />
+      <span class="figure" id="askDelta" style="font-size:13px; color:${_ask && (sell - _ask) >= 0 ? 'var(--up)' : 'var(--down)'};">
         ${_ask ? (sell - _ask >= 0 ? '+' : '') + '€' + (sell - _ask).toFixed(2) : '—'}
       </span>
     </div>
@@ -328,12 +334,33 @@ export function wireResultSheet() {
   sheet.addEventListener('input', (ev) => {
     const target = ev.target.closest('[data-action="ask-input"]');
     if (!target) return;
-    _ask = parseFloat(target.value) || 0;
-    renderResultSheet();
-    const next = document.querySelector('[data-action="ask-input"]');
-    if (next) {
-      next.focus();
-      next.setSelectionRange(next.value.length, next.value.length);
+
+    // DO NOT RE-RENDER THE SHEET HERE.
+    //
+    // This used to read parseFloat(value) || 0, re-render the entire sheet, then
+    // re-find the input and restore focus. Three separate faults, all of which
+    // the operator experiences as "the box will not let me type a number":
+    //
+    //   "1."  -> parseFloat gives 1 -> the re-render wrote value="1" -> the
+    //           decimal point was deleted as soon as it was typed, so no price
+    //           with cents could ever be entered.
+    //   "0"   -> 0 is falsy, so `${_ask || ''}` wrote an empty string and the
+    //           field cleared itself.
+    //   setSelectionRange throws outright on input[type=number] in Chrome, so
+    //           every keystroke also raised an uncaught error.
+    //
+    // The field is now left alone while it is being typed into. Only the
+    // derived figure beside it is updated, in place.
+    _askRaw = target.value;
+    _ask = Number.parseFloat(_askRaw);
+    if (!Number.isFinite(_ask) || _ask < 0) _ask = 0;
+
+    const delta = document.getElementById('askDelta');
+    if (delta) {
+      const sell = Number.parseFloat(target.dataset.sell) || 0;
+      const diff = sell - _ask;
+      delta.textContent = _ask ? `${diff >= 0 ? '+' : ''}€${diff.toFixed(2)}` : '—';
+      delta.style.color = _ask && diff >= 0 ? 'var(--up)' : 'var(--down)';
     }
   });
 }
