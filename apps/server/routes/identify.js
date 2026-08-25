@@ -592,6 +592,41 @@ async function manualIdentifyCore(
     // gets the benefit of the better parse even when the catalogue could not
     // finish the job — the remote APIs know about cards this catalogue does
     // not.
+    // A REFUSAL IS AN ANSWER, AND THE LADDER MUST NOT OVERRULE IT.
+    //
+    // Falling through is right when the typed resolver simply ran out of
+    // information — the remote APIs know about cards this catalogue does not.
+    // It is wrong when the resolver actively REFUSED because the evidence
+    // contradicted itself, because the ladder below checks less and will
+    // happily answer anyway.
+    //
+    // Measured live, 25 Aug 2026: "mew 151-6" resolved to Charizard ex in
+    // production AFTER the resolver had been fixed to decline it. The resolver
+    // said "the name Mew is real but there is no Mew at 151-6"; the fall-through
+    // then adopted set_code 151 and number 6, dropped the name, and the ladder
+    // returned Charizard ex with full confidence. The stronger check was
+    // overruled by the weaker one — the same defect shape as
+    // "wel 189a/214" -> Glass Trumpet.
+    //
+    // These reasons mean CONTRADICTED, not unknown. Anything else still falls
+    // through.
+    const REFUSED = new Set([
+      'name_known_but_not_at_that_number',
+      'no_prefix_match_at_that_number',
+      'set_code_contradicts_printed_total',
+      'printed_total_excludes_all',
+      'unique_name_number_total_mismatch',
+    ]);
+    if (r.status === 'not_found' && REFUSED.has(r.reason)) {
+      console.log(`[MANUAL-PKM] "${text}" REFUSED by the typed resolver (${r.reason}) — `
+        + 'not falling through to the remote ladder');
+      countTextEntry(source, 'not_found');
+      return {
+        cards: [],
+        resolution: { ...envelopeFor(r), shape: r.shape, interpretation: r.interpretation },
+      };
+    }
+
     const best = r.interpretation;
     if (best) {
       name = name ?? best.name ?? undefined;
