@@ -39,11 +39,26 @@
 const LANG = new Set(['en', 'de', 'fr', 'es', 'it', 'pt', 'jp', 'ja', 'ko', 'zh', 'ru', 'nl']);
 
 /** Grades as printed on a buy-list. Mapped to pricing/conditions.js downstream. */
+// CARDMARKET'S GRADES, matching pricing/conditions.js and the picker in
+// result-sheet.js. The map predated that move and knew only the old
+// TCGPlayer-shaped vocabulary, so an operator typing "gd" or "pl" — the two
+// grades printed on the buttons they are looking at — got nothing at all.
+//
+// "played" now means PL (Cardmarket's Played) rather than the legacy MP. That
+// IS a repricing: PL is 0.40 where MP is 0.58. It is deliberate — the picker
+// shows PL labelled "Played", so typing the word must not select a different
+// grade from the one that word names. "poor" moves PO from DMG at the same
+// 0.30, so no money changes there.
 const CONDITION = new Map([
-  ['nm', 'NM'], ['mint', 'NM'], ['m', 'NM'],
-  ['lp', 'LP'], ['ex', null], // 'ex' is far more often a name suffix — see below
+  ['nm', 'NM'], ['mint', 'NM'], ['m', 'NM'], ['nearmint', 'NM'],
+  ['ex', null], // 'ex' is far more often a name suffix — see below
+  ['excellent', 'EX'],
+  ['gd', 'GD'], ['good', 'GD'],
+  ['lp', 'LP'], ['light', 'LP'], ['lightplayed', 'LP'],
+  ['pl', 'PL'], ['played', 'PL'],
+  ['po', 'PO'], ['poor', 'PO'],
+  // Legacy names, kept so an older stored line still reads the same grade.
   ['mp', 'MP'], ['hp', 'HP'], ['dmg', 'DMG'], ['damaged', 'DMG'],
-  ['played', 'MP'], ['poor', 'DMG'],
 ]);
 
 /**
@@ -99,8 +114,13 @@ const NUM_TOTAL_RX = /^([A-Za-z]{0,4}\d{1,4}[a-z]?)\s*\/\s*([A-Za-z]{0,4}\d{1,4}
 const LETTER_NUM_TOTAL_RX = /^([A-Za-z])\s*\/\s*(\d{1,4})$/;
 
 const BARE_NUM_RX = /^#?(\d{1,4}[a-z]?)$/i;
-/** Promo and subset numbers that run letters into digits: XY03, SWSH063, TG16, GG31, RC5, H12. */
-const ALNUM_NUM_RX = /^([A-Za-z]{1,4})(\d{1,4})$/;
+/**
+ * Promo and subset numbers that run letters into digits: XY03, SWSH063, TG16,
+ * GG31, RC5, H12 — and with an optional trailing letter for alternate arts,
+ * XY198a / XY200a, which otherwise produce no reading at all without a
+ * denominator.
+ */
+const ALNUM_NUM_RX = /^([A-Za-z]{1,4})(\d{1,4}[a-z]?)$/;
 /** The catalogue's own key form, e.g. sv3pt5-4. */
 const CATALOGUE_KEY_RX = /^([a-z0-9]+(?:pt\d)?[a-z0-9]*)-([A-Za-z0-9]+)$/i;
 const QTY_RX = /^(\d{1,3})\s*x$/i;
@@ -358,7 +378,9 @@ export function tokeniseLine(line) {
   let qty = 1;
   let lang = null;
   let condition = null;
+  let conditionAfterNumber = false;
   let finish = null;
+  let finishAfterNumber = false;
   let number = null;
   let total = null;
   let catalogueKey = null;
@@ -424,8 +446,48 @@ export function tokeniseLine(line) {
     // rare in this shop's input, and as a name suffix it is on ~700 names.
     // Treating it as a grade would re-create the very trap this module exists
     // to remove, from the other direction.
-    if (CONDITION.has(lw) && CONDITION.get(lw) && condition == null) { condition = CONDITION.get(lw); continue; }
-    if (FINISH.has(lw) && finish == null) { finish = FINISH.get(lw); continue; }
+    // CONDITION AND FINISH ARE NOT PART OF THE SEARCH.
+    //
+    // Both used to `continue`, which REMOVED the word from the line. That is
+    // fine for a trailing "nm", which lands in the trailing-context bucket and
+    // is ignored for identity anyway — and catastrophic for a word that is
+    // also the start of a card's name, because the name loses a token and the
+    // card becomes unfindable.
+    //
+    // Measured by a stress sweep, 25 Aug 2026:
+    //   "M Charizard-EX 13/108"  -> the leading M is Mint, the name becomes
+    //                               "Charizard-EX", and all 87 M-prefixed
+    //                               Mega-EX cards are unreachable by their own
+    //                               printed name.
+    //   "rev 216/197"            -> "rev" is a finish word, so Revavroom ex
+    //                               produced ZERO readings. Same for "holo"
+    //                               (Holon's Magneton and 20 others), "nor",
+    //                               "mint", "poor", "played".
+    //
+    // The grade is still READ — the operator's "nm" still reaches the price —
+    // but it no longer decides which card we are looking at. Condition is a
+    // pricing question and can be applied after the card is known; identity
+    // must not depend on it. Falling through to keep() puts a trailing grade
+    // in the trailing bucket exactly as before, and leaves a leading one in
+    // the name where it belongs.
+    // A GRADE AFTER THE NUMBER BEATS ONE BEFORE IT.
+    //
+    // Now that these no longer consume the token, a leading word that is also
+    // part of a name still READS as a grade — and, first-wins, it blocked the
+    // real one: "M Charizard-EX 13/108 lp" reported NM, because the M in the
+    // card's own name claimed the slot before the operator's lp was reached.
+    //
+    // The grade belongs with the price, and the price comes after the card, so
+    // a later mention is the more likely intent.
+    if (CONDITION.has(lw) && CONDITION.get(lw)
+      && (condition == null || (number != null && !conditionAfterNumber))) {
+      condition = CONDITION.get(lw);
+      conditionAfterNumber = number != null;
+    }
+    if (FINISH.has(lw) && (finish == null || (number != null && !finishAfterNumber))) {
+      finish = FINISH.get(lw);
+      finishAfterNumber = number != null;
+    }
 
     keep().push(w);
   }
