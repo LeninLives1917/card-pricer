@@ -4117,7 +4117,7 @@ function extractCardNumber(text) {
   // where LANG is a 2-letter language code (EN, JP, FR, DE, ES, IT, PT, KO, ZH).
   const setLangSlash = cleaned.match(/\b([A-Z]{2,5})\s+(?:EN|JP|FR|DE|ES|IT|PT|KO|ZH)\s+(\d{1,4})\s*\/\s*(\d{1,4})\b/);
   if (setLangSlash) {
-    return { set_code: setLangSlash[1], number: setLangSlash[2], game: 'pokemon' };
+    return { set_code: setLangSlash[1], number: setLangSlash[2], total: setLangSlash[3], game: 'pokemon' };
   }
 
   // Priority 1b: "SET EN NNN" — Pokemon with language code, no slash e.g. MEP EN 066, SVP EN 153
@@ -4129,7 +4129,7 @@ function extractCardNumber(text) {
   // Priority 2: "SET NNN/NNN" — Pokemon with set code prefix e.g. MEG 133/132
   const setSlash = cleaned.match(/\b([A-Z]{2,5})\s+(\d{1,4})\s*\/\s*(\d{1,4})\b/);
   if (setSlash) {
-    return { set_code: setSlash[1], number: setSlash[2], game: 'pokemon' };
+    return { set_code: setSlash[1], number: setSlash[2], total: setSlash[3], game: 'pokemon' };
   }
 
   // Priority 2c: "REG NNN/NNN" — regulation mark + number, no set code
@@ -4138,13 +4138,13 @@ function extractCardNumber(text) {
   // G (SV mid), H (SV late), J (ME era)
   const regSlash = cleaned.match(/\b([D-J])\s+(\d{1,4})\s*\/\s*(\d{1,4})\b/);
   if (regSlash) {
-    return { reg_mark: regSlash[1], number: `${regSlash[2]}/${regSlash[3]}`, game: 'pokemon' };
+    return { reg_mark: regSlash[1], number: `${regSlash[2]}/${regSlash[3]}`, total: regSlash[3], game: 'pokemon' };
   }
 
   // Priority 3: "NNN/NNN" — Pokemon/Magic standard without set code
   const slash = cleaned.match(/\b(\d{1,4})\s*\/\s*(\d{1,4})\b/);
   if (slash) {
-    return { number: `${slash[1]}/${slash[2]}`, game: 'pokemon' };
+    return { number: `${slash[1]}/${slash[2]}`, total: slash[2], game: 'pokemon' };
   }
 
   // Priority 4: "SET NNN" — set code + number without slash e.g. TWM 200
@@ -4157,7 +4157,7 @@ function extractCardNumber(text) {
   // pokemontcg.io uses set id "swsh12pt5gg" for GG cards
   const gg = cleaned.match(/\b(GG\d{1,3})\s*\/\s*(GG\d{1,3})\b/);
   if (gg) {
-    return { set_code: 'CZGG', number: gg[1], game: 'pokemon' };
+    return { set_code: 'CZGG', number: gg[1], total: gg[2].replace(/^GG/, ''), game: 'pokemon' };
   }
 
   // Priority 5b: SWSH promos — SWSH020, SWSH066, etc.

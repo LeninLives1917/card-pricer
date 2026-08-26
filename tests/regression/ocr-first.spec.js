@@ -102,9 +102,11 @@ function tinyImageBuffer() {
 // extractCardNumber — V1 parser parity
 // =============================================================================
 
-test('S15 extractCardNumber: SET EN NNN/NNN (DRI EN 204/182) → DRI 204', () => {
+test('S15 extractCardNumber: SET EN NNN/NNN (DRI EN 204/182) → DRI 204/182', () => {
   const r = extractCardNumber('DRI EN 204/182');
-  assert.deepEqual(r, { set_code: 'DRI', number: '204', game: 'pokemon' });
+  // `total` added 26 Aug 2026 — the denominator was captured and discarded.
+  // See the block at the end of this file for why it is the field that matters.
+  assert.deepEqual(r, { set_code: 'DRI', number: '204', total: '182', game: 'pokemon' });
 });
 
 test('S15 extractCardNumber: SM211 promo no-slash → number=SM211', () => {
@@ -549,4 +551,43 @@ test('S15: readSetCodeFromImage exported as pure function', async () => {
   // Empty input → {error}; never throws.
   const r = await mod.readSetCodeFromImage({});
   assert.equal(typeof r.error, 'string');
+});
+
+// ---------------------------------------------------------------------------
+// THE PRINTED TOTAL, added 26 Aug 2026.
+//
+// Every slash pattern in extractCardNumber CAPTURED the denominator and then
+// discarded it. That field is what the whole typed-entry effort turned on:
+// across the catalogue a number alone identifies 6.8% of cards uniquely,
+// number + printed total identifies 46.0%, and the total is what REFUTES a
+// misread set code.
+//
+// It matters more for OCR than for typing, because OCR errors are SYSTEMATIC.
+// A real photograph of Marnie's Scrafty reads:
+//
+//     DRI EN
+//     133/182
+//
+// DRI is Destined Rivals (sv10) and 182 is its printed size. If OCR turns the
+// I into a 1, "DR1 EN 133/182" returns set_code "EN" with no complaint — and
+// only the total can catch that.
+
+test('OCR parse: a real modern strip keeps set code, number AND total', () => {
+  // Captured from photos/Pokmeon test photos/20260805_125650.jpg,
+  // ground truth sv10-133.
+  assert.deepEqual(extractCardNumber('DRI EN 133/182'),
+    { set_code: 'DRI', number: '133', total: '182', game: 'pokemon' });
+});
+
+test('OCR parse: every slash shape carries the total', () => {
+  assert.equal(extractCardNumber('MEG 133/132').total, '132');
+  assert.equal(extractCardNumber('133/182').total, '182');
+  assert.equal(extractCardNumber('D 025/195').total, '195');
+  assert.equal(extractCardNumber('GG31/GG70').total, '70', 'subset letters come off the total');
+});
+
+test('OCR parse: a shape with no denominator does not invent one', () => {
+  // "never asked" must stay distinguishable from "asked and got nothing".
+  assert.equal(extractCardNumber('TWM 200').total, undefined);
+  assert.equal(extractCardNumber('SM211').total, undefined);
 });
