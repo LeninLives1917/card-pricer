@@ -26,7 +26,10 @@
 //   v3.3 — frame gate + framing reticle (modules/frame-gate.js, new).
 //   v3.4 — price provenance shown on the result sheet.
 //   v3.5 — frame gate demoted to advisory; it never went green on live frames.
-const CACHE_VERSION = 'cardpricer-v3.5';
+//   v3.6 — the gate reads the RETICLE instead of hunting for the card, which
+//          is what it could never do; opt-in hands-free capture on top of it
+//          (modules/scan-loop.js, new).
+const CACHE_VERSION = 'cardpricer-v3.6';
 
 const SHELL = [
   '/',

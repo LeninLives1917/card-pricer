@@ -460,11 +460,11 @@ async function submitManualEntry() {
 // looking, not by inference. A cached module served an OLD scanner UI on a
 // NEW deploy and cost an entire debugging round — the same lesson as the
 // key_present field on /api/health.
-const SCANNER_BUILD = 'v3.5-gate-advisory';
+const SCANNER_BUILD = 'v3.6-reticle-gate';
 
 // Upload tally. Shown to the operator, because "sent" with nothing arriving
 // on the laptop is precisely the failure this mode shipped with.
-const _scannerCounts = { captured: 0, sent: 0, failed: 0, inflight: 0 };
+const _scannerCounts = { captured: 0, sent: 0, failed: 0, inflight: 0, unwatched: 0 };
 
 function showScannerMode() {
   const root = document.getElementById('tab-scan');
@@ -474,15 +474,21 @@ function showScannerMode() {
     <div class="surface" style="margin:var(--p-3) 0;">
       <div class="display" style="font-size:18px; margin-bottom:var(--p-2);">Phone connected</div>
       <div id="scannerCamWrap" style="position:relative; border-radius:10px; overflow:hidden; background:#000; display:none;">
+        <!-- object-fit is contain, not cover. The reticle defines the region
+             the frame gate analyses, so the box on screen and the box in the
+             sensor frame must be the same rectangle. Under cover the browser
+             crops the overflow, the two diverge, and the operator lines the
+             card up against a rectangle nothing is grading. -->
         <video id="scannerVideo" playsinline autoplay muted
-               style="width:100%; display:block; max-height:60vh; object-fit:cover;"></video>
+               style="width:100%; display:block; max-height:60vh; object-fit:contain;"></video>
         <div id="scannerFlash" style="position:absolute; inset:0; background:#fff; opacity:0; pointer-events:none; transition:opacity 120ms;"></div>
-        <!-- Framing reticle. Card aspect is 63x88mm (1:1.4); filling this box
-             puts the most pixels on the collector number, which is the field
-             costing ~30% of failures. -->
-        <div id="scannerReticle" style="position:absolute; left:50%; top:50%; transform:translate(-50%,-50%);
-             width:62%; aspect-ratio:63/88; border:3px solid rgba(255,255,255,.5); border-radius:10px;
-             pointer-events:none; transition:border-color 120ms, box-shadow 120ms;"></div>
+        <!-- Framing reticle. Card aspect is 63x88mm; filling this box puts the
+             most pixels on the collector number, the field behind ~30% of
+             failures. POSITIONED FROM JS (capture.reticleRect + containedBox),
+             not from CSS percentages — a percentage of the element is not a
+             percentage of the sensor frame, and the gate reads the sensor. -->
+        <div id="scannerReticle" style="position:absolute; border:3px solid rgba(255,255,255,.5);
+             border-radius:10px; pointer-events:none; transition:border-color 120ms, box-shadow 120ms;"></div>
         <div id="scannerHint" style="position:absolute; left:0; right:0; bottom:10px; text-align:center;
              font-size:15px; font-weight:600; color:#fff; text-shadow:0 1px 4px rgba(0,0,0,.8); pointer-events:none;"></div>
       </div>
@@ -494,6 +500,8 @@ function showScannerMode() {
       <div style="margin-top:var(--p-3); display:flex; gap:var(--p-2); align-items:center;">
         <button class="btn primary" id="scannerShutter"
                 style="flex:1; justify-content:center; padding:18px 0; font-size:16px;">Capture</button>
+        <button class="btn" id="scannerAuto" style="padding:18px 14px;"
+                aria-pressed="false" title="Fire the shutter automatically when a card is framed and sharp">Auto</button>
         <button class="btn" id="scannerTorch" style="display:none; padding:18px 14px;" aria-label="Toggle torch">Light</button>
       </div>
       <div id="scannerStatus" style="font-size:11px; color:var(--paper-300); margin-top:var(--p-2); min-height:14px;"></div>
@@ -505,14 +513,16 @@ function showScannerMode() {
 
   const video    = document.getElementById('scannerVideo');
   const camWrap  = document.getElementById('scannerCamWrap');
-  const flash    = document.getElementById('scannerFlash');
+  // (the flash element is looked up inside signal(), where it is used)
   const shutter  = document.getElementById('scannerShutter');
   const torchBtn = document.getElementById('scannerTorch');
   const status   = document.getElementById('scannerStatus');
   const fallback = document.getElementById('scannerFallback');
   const fbMsg    = document.getElementById('scannerFallbackMsg');
+  const autoBtn  = document.getElementById('scannerAuto');
 
   let _gateCounts = null;
+  let _autoOn = false;
 
   const renderStatus = (extra) => {
     if (!status) return;
@@ -522,37 +532,88 @@ function showScannerMode() {
     // is indistinguishable from a camera that is not working.
     if (_gateCounts && _gateCounts.analysed) {
       const g = _gateCounts;
-      const rejected = g.blurry + g.clipped + g.too_small;
+      const rejected = g.blurry + g.empty;
       if (rejected) bits.push(`${rejected} frames rejected`);
     }
     if (c.inflight) bits.push(`${c.inflight} sending`);
     if (c.failed) bits.push(`${c.failed} FAILED`);
+    // NOT the same thing as failed, and much easier to miss. See send().
+    if (c.unwatched) bits.push(`${c.unwatched} WITH NOBODY WATCHING`);
     status.textContent = (extra ? extra + ' — ' : '') + bits.join(' · ');
   };
 
   // Fire-and-forget: the upload must never gate the next capture. This is
   // the whole point of the mode — shoot the stack at the operator's pace,
   // let the network catch up behind them.
-  const send = (dataUrl) => {
+  //
+  // WHAT `ok` MEANS HERE, AND WHAT IT DOES NOT.
+  //
+  // In scanner mode the phone POSTs to /api/room/:id/scan and the LAPTOP does
+  // the identifying. The phone is never told what the card was — there is no
+  // return channel for that — so `ok: true` means "the room accepted the
+  // bytes" and nothing more. It is true when the laptop's tab has been closed
+  // for an hour.
+  //
+  // The room says so in the same response: `listeners` is the number of
+  // subscribers on the SSE stream. This code used to ignore it and count the
+  // upload as sent, which means the operator could shoot a whole box into a
+  // ring buffer with the counter reading "47 sent" and be told nothing. That
+  // is the failure the confirmation flash is supposed to prevent, and the
+  // flash was firing on the shutter tap, before the request had even left.
+  //
+  // So: confirm on the RESPONSE, and only when somebody was listening.
+  const send = (dataUrl, { auto = false } = {}) => {
     _scannerCounts.captured++;
     _scannerCounts.inflight++;
     renderStatus();
     uploadRawScanToRoom(dataUrl)
       .then((r) => {
-        if (r && r.ok) _scannerCounts.sent++;
-        else {
+        if (!r || !r.ok) {
           _scannerCounts.failed++;
+          signal('bad');
           console.warn('[SCANNER] upload rejected:', r);
+          return;
         }
+        _scannerCounts.sent++;
+        // `listeners` is absent on older servers. Absent is not zero — an
+        // unknown must not be reported as a confirmed nobody, so it takes
+        // the benefit of the doubt and is counted separately.
+        if (r.listeners === 0) {
+          _scannerCounts.unwatched++;
+          signal('bad');
+          renderStatus('NOBODY IS RECEIVING — check the laptop');
+          return;
+        }
+        signal('good');
       })
       .catch((e) => {
         _scannerCounts.failed++;
+        signal('bad');
         console.warn('[SCANNER] upload threw:', e);
       })
       .finally(() => {
         _scannerCounts.inflight--;
         renderStatus();
       });
+  };
+
+  // The "move on to the next card" cue. Deliberately fired from the response
+  // rather than from the shutter: a flash the instant the operator taps
+  // confirms only that the phone took a picture, which is the one part
+  // nobody doubts.
+  //
+  // Two distinguishable cues, because one cue that fires either way is
+  // decoration. Long buzz and a red wash means stop and look.
+  const signal = (kind) => {
+    const flashEl = document.getElementById('scannerFlash');
+    if (flashEl) {
+      flashEl.style.background = kind === 'good' ? '#fff' : '#ff5c5c';
+      flashEl.style.opacity = kind === 'good' ? '0.75' : '0.55';
+      setTimeout(() => { flashEl.style.opacity = '0'; }, kind === 'good' ? 120 : 320);
+    }
+    if (navigator.vibrate) {
+      try { navigator.vibrate(kind === 'good' ? 15 : [40, 60, 40]); } catch { /* unsupported */ }
+    }
   };
 
   const setMode = (label) => {
@@ -621,26 +682,49 @@ function showScannerMode() {
     // against 68.6% overall. A soft frame is not a hard card, it is a frame
     // that should never have been sent.
     const gate = await import('../frame-gate.js');
+    const loop = await import('../scan-loop.js');
     const reticle = document.getElementById('scannerReticle');
     const hintEl = document.getElementById('scannerHint');
     const gcanvas = document.createElement('canvas');
     let lastVerdict = null;
+    let prevRoi = null;
     const stabilise = gate.createStabiliser();
+    const autoFire = loop.createAutoFire();
 
     const COLOURS = { green: '#3ddc84', amber: '#ffb020', red: '#ff5c5c' };
 
+    // Lay the reticle over where `contain` actually paints the frame, which is
+    // not the element — it is letterboxed inside it.
+    function placeReticle() {
+      if (!reticle || !video.videoWidth) return;
+      const box = capture.containedBox(video.clientWidth, video.clientHeight,
+        video.videoWidth, video.videoHeight);
+      const r = capture.reticleRect(video.videoWidth, video.videoHeight);
+      reticle.style.left = `${box.left + r.x * box.width}px`;
+      reticle.style.top = `${box.top + r.y * box.height}px`;
+      reticle.style.width = `${r.w * box.width}px`;
+      reticle.style.height = `${r.h * box.height}px`;
+    }
+    window.addEventListener('resize', placeReticle);
+    window.addEventListener('orientationchange', placeReticle);
+
     function analyse() {
       if (!video.videoWidth || document.hidden) return;
-      const S = gate.ANALYSIS_SIZE;
-      const scale = Math.min(1, S / Math.max(video.videoWidth, video.videoHeight));
-      const w = Math.max(8, Math.round(video.videoWidth * scale));
-      const h = Math.max(8, Math.round(video.videoHeight * scale));
-      if (gcanvas.width !== w) { gcanvas.width = w; gcanvas.height = h; }
-      const ctx = gcanvas.getContext('2d', { willReadFrequently: true });
-      ctx.drawImage(video, 0, 0, w, h);
-      const v = stabilise(gate.gateFrame(ctx.getImageData(0, 0, w, h)));
-      _gateCounts = gate.getGateCounts();
+      placeReticle();
+
+      // Grade the box the operator is filling, not a card hunted for in the
+      // whole frame. locateCard's bounding box spans the table and the hand
+      // on any real frame, which is why the original gate never went green
+      // and had to be demoted to advisory.
+      const roiImg = capture.drawReticle(video, gcanvas);
+      if (!roiImg) return;
+      const delta = gate.sceneDelta(prevRoi, roiImg);
+      prevRoi = roiImg;
+
+      const v = stabilise(gate.gateReticle(roiImg));
+      _gateCounts = gate.getReticleCounts();
       lastVerdict = v;
+
       const colour = v.locked ? COLOURS.green : (v.state === 'red' ? COLOURS.red : COLOURS.amber);
       if (reticle) {
         reticle.style.borderColor = colour;
@@ -648,43 +732,52 @@ function showScannerMode() {
       }
       // One word, never a number. Nobody reads a variance score over a table.
       if (hintEl) hintEl.textContent = v.locked ? 'Ready' : v.hint;
-      // Raw numbers on screen. The thresholds were fitted to photographs and
-      // are unproven on live video — this is how they get calibrated from real
-      // frames instead of from another guess.
       const dbg = document.getElementById('scannerGateDebug');
       if (dbg) {
-        dbg.textContent = `sharp ${Math.round(v.sharpness)} · fill ${v.fill.toFixed(2)}`
-          + ` · ${v.clipped ? 'CLIPPED' : 'framed'} · ${v.state}`;
+        const a = autoFire.counts();
+        dbg.textContent = `sharp ${Math.round(v.sharpness)} · detail ${v.detail.toFixed(2)}`
+          + ` · ${v.state}${_autoOn ? ` · auto ${a.fired}/${a.frames}` : ''}`;
       }
+
+      if (!_autoOn) return;
+      // Auto-fire decides on its own state machine, not on the reticle lock:
+      // going green is cheap to get wrong when a human then presses a button
+      // and expensive to get wrong when the shutter fires itself.
+      const d = autoFire({ state: v.state, sceneDelta: delta, now: Date.now() });
+      if (d.fire) grab({ auto: true });
     }
+
     const gateTimer = setInterval(analyse, 120);
     window.addEventListener('pagehide', () => clearInterval(gateTimer));
 
-    const grab = () => {
-      // ADVISORY, NOT BLOCKING.
+    const grab = (opts = {}) => {
+      // The gate is ADVISORY for a manual tap and DECIDING for auto-fire.
       //
-      // The gate shipped blocking and never went green on real frames. The
-      // cause is locateCard: it takes the bounding box of ALL gradient energy,
-      // which on the plain-background synthetic tests is the card and on a real
-      // camera frame is the table, the operator's hand, and everything else in
-      // shot — so the box spans the frame and reads as permanently clipped.
-      //
-      // Thresholds fitted to 51 downscaled photographs were never validated
-      // against live video, and blocking capture on an unvalidated gate is
-      // worse than no gate: it stops the operator working. The reticle still
-      // advises, the verdict is still attached to the upload, but the shutter
-      // always fires.
+      // It shipped blocking, never went green on real frames, and was demoted
+      // — the cause was locateCard, now routed around rather than repaired
+      // (see frame-gate.js). The new thresholds are still unvalidated against
+      // live video, so the same rule stands: a tap always fires. Auto-fire is
+      // opt-in, and it is the only thing the gate is allowed to gate.
       const dataUrl = capture.captureFrame(video);
       if (!dataUrl) { renderStatus('no frame — hold still'); return; }
-      // Visual confirmation only; the viewfinder never stops, so the next
-      // card can be shot immediately.
-      if (flash) {
-        flash.style.opacity = '0.75';
-        setTimeout(() => { flash.style.opacity = '0'; }, 120);
-      }
-      if (navigator.vibrate) { try { navigator.vibrate(15); } catch { /* unsupported */ } }
-      send(dataUrl);
+      send(dataUrl, opts);
     };
+
+    // The Auto toggle. DEFAULT OFF, deliberately: the last gate that decided
+    // anything on unvalidated thresholds stopped the operator working, and
+    // this one's DETAIL_MIN has no measurement behind it at all — there are no
+    // photographs of an empty table in the benchmark set, so the negative
+    // class is unmeasured. It earns its default when fired/identified says so.
+    if (autoBtn) {
+      autoBtn.addEventListener('click', () => {
+        _autoOn = !_autoOn;
+        autoFire.reset();
+        autoBtn.classList.toggle('primary', _autoOn);
+        autoBtn.setAttribute('aria-pressed', String(_autoOn));
+        if (shutter) shutter.textContent = _autoOn ? 'Capture (auto on)' : 'Capture';
+        renderStatus(_autoOn ? 'auto — hold a card in the box' : 'auto off');
+      });
+    }
 
     if (shutter) shutter.addEventListener('click', grab);
     // Tapping the preview shoots too — faster than reaching for the button.

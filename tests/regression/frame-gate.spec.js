@@ -196,12 +196,27 @@ test('the gate is ADVISORY — it must never block the shutter', async () => {
   //
   // Blocking capture on an unvalidated gate is worse than no gate: it stops
   // the operator working. Advise, tag the upload, always fire the shutter.
+  // AUTO-FIRE (scan-loop.js) is the one thing the gate is allowed to decide,
+  // and it is opt-in for exactly this reason. The invariant is therefore
+  // sharper than "the gate never blocks": the MANUAL TAP is never gated, and
+  // hands-free mode starts off.
   const { readFileSync } = await import('node:fs');
   const src = readFileSync(new URL('../../apps/vendor/modules/tabs/scan.js', import.meta.url), 'utf8');
-  assert.match(src, /ADVISORY, NOT BLOCKING/,
-    'the gate must stay advisory until its thresholds are validated on live frames');
+
+  assert.match(src, /ADVISORY for a manual tap/,
+    'the gate must stay advisory for the shutter until validated on live frames');
   assert.doesNotMatch(src, /tap again to force/,
     'a force-to-capture path means the gate is blocking again');
+
+  // The tap path must not consult a verdict at all. Reading the body of grab()
+  // is what catches a future edit that adds "if (!lastVerdict.locked) return".
+  const grab = src.slice(src.indexOf('const grab ='), src.indexOf('// The Auto toggle'));
+  assert.ok(grab.length > 0, 'grab() not found — this guard has gone stale');
+  assert.doesNotMatch(grab, /lastVerdict|\.locked|state === 'green'/,
+    'the manual shutter must fire without asking the gate');
+
+  assert.match(src, /let _autoOn = false/,
+    'hands-free capture must default OFF while its thresholds are unmeasured');
 });
 
 test('the live numbers are shown, so thresholds get calibrated not guessed', async () => {

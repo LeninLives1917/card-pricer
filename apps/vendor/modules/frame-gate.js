@@ -203,3 +203,126 @@ export function createStabiliser({ stableFrames = STABLE_FRAMES } = {}) {
     return { ...verdict, locked: false, run: 0 };
   };
 }
+
+// ---------------------------------------------------------------------------
+// GATING THE RETICLE INSTEAD OF HUNTING FOR THE CARD.
+//
+// gateFrame() above shipped BLOCKING and never went green on real frames, so
+// it was demoted to advisory (scan.js, the `grab` comment). The cause is
+// locateCard: it takes the bounding box of ALL gradient energy, which on a
+// clean synthetic test is the card and on a real camera frame is the table,
+// the operator's hand and the rest of the room. The box spans the frame, and
+// a box that spans the frame is by definition clipped. Permanently red.
+//
+// The fix is not a better card finder. It is to stop looking for the card.
+//
+// The operator is already being shown a reticle and told to fill it. That
+// makes the region of interest KNOWN — it is the box on screen, not something
+// to be recovered from pixels. Cropping to it turns "where is the card"
+// (unsolved, and the reason the gate is off) into "is this fixed box in
+// focus" (sharpness, which is the measured predictor: median Laplacian
+// variance 585 on correct reads against 241 on failures, docs/V3_BENCHMARK.md
+// §19).
+//
+// So locateCard is not repaired below. It is routed around.
+//
+// THRESHOLDS HERE ARE UNVALIDATED, and that is the whole reason auto-fire
+// ships defaulted OFF. The last gate was fitted to 51 downscaled photographs,
+// never checked against live video, and blocking on it stopped the operator
+// working. DETAIL_MIN in particular has no measurement behind it at all —
+// there are no photographs of an empty table in the benchmark set, so the
+// negative class is unmeasured. It is a starting point with a counter
+// attached. Nobody should trust it until fired_identified_rate says so.
+
+/**
+ * Fraction of ROI pixels carrying real detail before we believe a card is
+ * present. A card fills the reticle with art, text and a border; a bare table
+ * does not.
+ *
+ * This is a DENSITY, not a bounding box. Nothing here localises anything, so
+ * the failure that killed locateCard — one stray gradient stretching the box
+ * across the frame — has no way to occur.
+ */
+export const DETAIL_MIN = 0.06;
+
+/** Per-pixel gradient magnitude counted as detail rather than sensor noise. */
+export const DETAIL_FLOOR = 12;
+
+const roiCounts = { analysed: 0, green: 0, blurry: 0, empty: 0 };
+export function getReticleCounts() { return { ...roiCounts }; }
+export function resetReticleCounts() { for (const k of Object.keys(roiCounts)) roiCounts[k] = 0; }
+
+/**
+ * Share of pixels whose gradient magnitude clears an absolute floor.
+ *
+ * The floor is absolute rather than relative to the frame's own mean, which
+ * is deliberate: a relative threshold on a flat frame promotes sensor noise
+ * to "detail" and reports a confident card on a picture of nothing. That is
+ * the same shape as the bug in locateCard, and it is guarded there too.
+ */
+export function detailDensity(img, { floor = DETAIL_FLOOR } = {}) {
+  const { data, width: w, height: h } = img;
+  if (w < 3 || h < 3) return 0;
+  let hits = 0, n = 0;
+  for (let y = 1; y < h - 1; y++) {
+    for (let x = 1; x < w - 1; x++) {
+      const i = (y * w + x) * 4;
+      const gx = lum(data, i + 4) - lum(data, i - 4);
+      const gy = lum(data, i + w * 4) - lum(data, i - w * 4);
+      if (Math.abs(gx) + Math.abs(gy) >= floor) hits++;
+      n++;
+    }
+  }
+  return n ? hits / n : 0;
+}
+
+/**
+ * Mean absolute luma difference between two equally-sized ROIs, 0..1.
+ *
+ * Used to notice that the card was swapped. Auto-fire re-arms when the card
+ * LEAVES, and an operator who slides the next card in without lifting the
+ * last one never produces a gap — so "the scene changed" is the second way
+ * back to armed. Without it that operator scans one card and then nothing,
+ * which is a stall the counters would show as silence rather than as failure.
+ */
+export function sceneDelta(a, b) {
+  if (!a || !b || a.width !== b.width || a.height !== b.height) return 1;
+  const A = a.data, B = b.data;
+  let sum = 0, n = 0;
+  // Every 4th pixel: this runs on every frame and the figure only needs to be
+  // good enough to separate "same card" from "different card".
+  for (let i = 0; i < A.length; i += 16) {
+    sum += Math.abs(lum(A, i) - lum(B, i));
+    n++;
+  }
+  return n ? (sum / n) / 255 : 1;
+}
+
+/**
+ * The verdict for one reticle-cropped region.
+ *
+ * @param {{data: Uint8ClampedArray, width: number, height: number}} roi
+ * @returns {{state:'green'|'amber'|'red', hint:string, sharpness:number, detail:number}}
+ */
+export function gateReticle(roi, opts = {}) {
+  const sharpMin = opts.sharpnessMin ?? SHARPNESS_MIN;
+  const detailMin = opts.detailMin ?? DETAIL_MIN;
+
+  roiCounts.analysed++;
+  const detail = detailDensity(roi, opts);
+  const sharp = sharpness(roi);
+  const base = { sharpness: sharp, detail };
+
+  // Presence first. "Hold still" is noise when there is nothing to hold still
+  // on, and a blur reading taken off a bare table means nothing anyway.
+  if (detail < detailMin) {
+    roiCounts.empty++;
+    return { ...base, state: 'red', hint: 'Fill the box with the card' };
+  }
+  if (sharp < sharpMin) {
+    roiCounts.blurry++;
+    return { ...base, state: 'amber', hint: 'Hold still' };
+  }
+  roiCounts.green++;
+  return { ...base, state: 'green', hint: 'Ready' };
+}

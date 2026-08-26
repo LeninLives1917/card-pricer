@@ -166,3 +166,79 @@ export function hasTorch() {
   if (!track || typeof track.getCapabilities !== 'function') return false;
   try { return !!track.getCapabilities()?.torch; } catch { return false; }
 }
+
+// ---------------------------------------------------------------------------
+// RETICLE GEOMETRY.
+//
+// The reticle is not decoration once the gate reads it: it defines the region
+// the frame gate analyses, so where it sits on screen and where it sits in the
+// sensor frame have to be the same rectangle. They are not the same rectangle
+// by default.
+//
+// The preview is laid out `width:100%; max-height:60vh`, so the element almost
+// never has the sensor's aspect ratio. Under `object-fit: cover` the browser
+// scales the frame up and crops the overflow, which means a box drawn at 62%
+// of the ELEMENT covers some other fraction of the SOURCE — and the gate would
+// grade a different rectangle from the one the operator is filling. The
+// operator would be lining the card up against a lie.
+//
+// So the preview is `contain` and the geometry below is derived from the
+// source frame, not the element. Contain letterboxes onto a black wrapper,
+// which costs nothing visually and means the operator sees exactly what the
+// sensor sees — worth having on its own for a scanner.
+
+/** Card aspect: 63mm x 88mm. */
+export const CARD_ASPECT = 63 / 88;
+
+/** Share of the source frame's short axis the reticle spans. */
+export const RETICLE_FILL = 0.78;
+
+/**
+ * The reticle as a rectangle of the SOURCE frame, in fractions.
+ *
+ * The LARGEST card-shaped box that fits inside `fill` of both axes, which is
+ * the whole point — every pixel the reticle does not cover is sensor
+ * resolution not spent on the collector number, and the number is the field
+ * behind roughly 30% of failures.
+ *
+ * Sizing against the short axis instead looks equivalent and is not: in
+ * portrait it produces a box spanning 44% of the height where 61% fits, and
+ * quietly throws away a third of the card's pixels.
+ *
+ * The aspect is true in PIXELS. A box given as an independent fraction of
+ * each axis is card-shaped at exactly one sensor aspect ratio and skewed at
+ * every other, which is not a thing anyone would notice by looking.
+ */
+export function reticleRect(vidW, vidH, { fill = RETICLE_FILL } = {}) {
+  if (!vidW || !vidH) return { x: 0, y: 0, w: 1, h: 1 };
+  const pxH = Math.min(vidH * fill, (vidW * fill) / CARD_ASPECT);
+  const pxW = pxH * CARD_ASPECT;
+  const w = pxW / vidW, h = pxH / vidH;
+  return { x: (1 - w) / 2, y: (1 - h) / 2, w, h };
+}
+
+/**
+ * Where `object-fit: contain` actually paints the frame inside the element.
+ * Returns CSS pixels, so the reticle overlay can be laid onto the letterboxed
+ * video rather than onto the element that contains it.
+ */
+export function containedBox(elW, elH, vidW, vidH) {
+  if (!vidW || !vidH || !elW || !elH) return { left: 0, top: 0, width: elW || 0, height: elH || 0 };
+  const scale = Math.min(elW / vidW, elH / vidH);
+  const width = vidW * scale, height = vidH * scale;
+  return { left: (elW - width) / 2, top: (elH - height) / 2, width, height };
+}
+
+/** Draw the reticle region of the live frame into a canvas, for analysis. */
+export function drawReticle(videoEl, canvas, size = 256) {
+  const vw = videoEl?.videoWidth, vh = videoEl?.videoHeight;
+  if (!vw || !vh) return null;
+  const r = reticleRect(vw, vh);
+  const sx = Math.round(r.x * vw), sy = Math.round(r.y * vh);
+  const sw = Math.max(8, Math.round(r.w * vw)), sh = Math.max(8, Math.round(r.h * vh));
+  const dw = Math.max(8, Math.round(size * CARD_ASPECT)), dh = size;
+  if (canvas.width !== dw) { canvas.width = dw; canvas.height = dh; }
+  const ctx = canvas.getContext('2d', { willReadFrequently: true });
+  ctx.drawImage(videoEl, sx, sy, sw, sh, 0, 0, dw, dh);
+  return ctx.getImageData(0, 0, dw, dh);
+}
