@@ -31,6 +31,7 @@ import {
   GLYPH_W, GLYPH_H, BAND_LEFT, BAND_RIGHT, bandForSet,
   binarise, segmentGlyphs, selectNumberRun,
   normaliseGlyph, averageGlyphs, matchScore, readGlyphs,
+  scoreNumberRun, CORNERS,
 } from '../../pricing/ocr-first/glyphs.js';
 
 /** Paint a strip: `bars` are [x0,x1,y0,y1] rectangles of ink. */
@@ -179,5 +180,70 @@ describe('readGlyphs reports how sure it was', () => {
   test('no templates means no reading, not a guess', () => {
     const bin = binarise(strip(60, 24, [[6, 12, 4, 19]]));
     assert.equal(readGlyphs(bin, {}), null);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// FINDING THE BAND WITHOUT KNOWING THE ERA.
+//
+// bandForSet() needs a set id, which is circular for reading — the set id is
+// what we are trying to work out. scoreNumberRun/findNumberBand scan both
+// corners instead and let the card say which one holds the number.
+//
+// Still only 2 of 9 across eras. The rules below are the ones that survived
+// three attempts, and each assertion pins a specific failure so the next
+// attempt does not walk back into it.
+
+describe('scoring a candidate number run', () => {
+  const box = (x0, w, h, base) => ({ x0, x1: x0 + w - 1, y0: base - h + 1, y1: base, w, h });
+
+  test('a run of even digits on a baseline scores', () => {
+    const run = [box(0, 8, 20, 24), box(12, 8, 20, 24), box(24, 8, 20, 24)];
+    assert.ok(scoreNumberRun(run, 30) > 0);
+  });
+
+  test('LENGTH is weighted — a slice must not beat the whole', () => {
+    // Attempt 1 had no length term, so any 3-glyph slice of a 7-glyph number
+    // scored better than the number (a shorter window has a tighter baseline)
+    // and every card returned exactly 3 glyphs.
+    const seven = Array.from({ length: 7 }, (_, i) => box(i * 12, 8, 20, 24));
+    const three = seven.slice(0, 3);
+    assert.ok(scoreNumberRun(seven, 30) > scoreNumberRun(three, 30),
+      'the correct run is the longest valid one');
+  });
+
+  test('a slash does not break the run', () => {
+    // In this italic face "/" is taller than the digits and descends below the
+    // baseline. Tight evenness rejects it and splits the number in two.
+    const withSlash = [
+      box(0, 8, 20, 24), box(12, 8, 20, 24), box(24, 8, 20, 24),
+      box(36, 4, 26, 27),
+      box(44, 8, 20, 24), box(56, 8, 20, 24), box(68, 8, 20, 24),
+    ];
+    assert.ok(scoreNumberRun(withSlash, 30) > 0, 'the separator must survive');
+  });
+
+  test('a narrow tall digit is not mistaken for a separator', () => {
+    // Attempt 3 classified "narrow and tall" as a slash — but a "1" is narrow
+    // and tall, so "11/105" read as three separators and was rejected.
+    const ones = [box(0, 4, 20, 24), box(8, 4, 20, 24), box(16, 4, 22, 25),
+      box(24, 8, 20, 24), box(36, 8, 20, 24), box(48, 8, 20, 24)];
+    assert.ok(scoreNumberRun(ones, 30) > 0, '11/105 must not be rejected');
+  });
+
+  test('furniture is refused', () => {
+    assert.equal(scoreNumberRun([], 30), 0);
+    assert.equal(scoreNumberRun([box(0, 8, 20, 24), box(12, 8, 20, 24)], 30), 0, 'two glyphs is not a number');
+    // A wildly uneven run: a tall box beside small text.
+    assert.equal(scoreNumberRun([box(0, 8, 28, 30), box(12, 8, 6, 24), box(24, 8, 6, 24)], 30), 0);
+    // Widely spaced glyphs are separate things, not one number.
+    assert.equal(scoreNumberRun([box(0, 8, 20, 24), box(60, 8, 20, 24), box(120, 8, 20, 24)], 30), 0);
+  });
+
+  test('there are exactly two corners to search', () => {
+    assert.equal(CORNERS.length, 2);
+    for (const c of CORNERS) assert.ok(c.x + c.w <= 1 && c.y + c.h <= 1);
+    assert.ok(CORNERS.some((c) => c.x < 0.5) && CORNERS.some((c) => c.x >= 0.5),
+      'one per side — a card prints its number in one or the other');
   });
 });

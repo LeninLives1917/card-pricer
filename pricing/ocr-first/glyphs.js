@@ -50,7 +50,45 @@
 //   - the catalogue is a free labelled training set — 20,313 cards carry an
 //     image URL and the collector number is in the card's own id
 //
-// NOT SOLVED — FINDING THE BAND:
+// FINDING THE BAND WITHOUT KNOWING THE ERA — the right idea, still unfinished.
+//
+// bandForSet() takes a set id and returns a corner, which is circular for
+// anything but training: the set id is what we are trying to work out. Reading
+// an unseen card cannot begin by knowing where its era printed the number. So
+// findNumberBand() scans BOTH corners at several thresholds and lets the card
+// say which one holds a number-shaped run of glyphs.
+//
+// That fixed the blob problem — a corner is small enough to threshold sensibly,
+// where the full-width strip merged into one 2199x339 mass — but locating the
+// run is still only 2 of 9 across eras. Three scoring rules were tried and each
+// failed differently; they are recorded so nobody repeats them:
+//
+//   1. Evenness of height and baseline, no length term. Rejected the "/" (in
+//      this italic face it is taller than the numerals and descends below the
+//      baseline), which SPLIT "133/182" into two 3-glyph runs — and with no
+//      length term the 3-glyph slice scored BETTER than the whole, because a
+//      shorter window has a tighter baseline. Every card returned exactly 3
+//      glyphs. 0 of 9.
+//
+//   2. Add a length term. Correct and necessary, but not sufficient: 2 of 9.
+//
+//   3. Classify the slash explicitly as "narrow and tall". Worse — a "1" is
+//      narrow and tall too, so "11/105" read as three separators and was
+//      rejected outright. Back to 0 of 9.
+//
+// Current rule is loose tolerances plus a length weight: 2 of 9. base1 and neo4
+// land exactly; sv10, xy5 and sv1 find a partial run; swsh12 and sm10 find
+// nothing.
+//
+// The pattern across all three attempts is that every constraint tight enough
+// to exclude furniture also excludes a legitimate glyph somewhere in the
+// catalogue. That says the discriminator should not be geometry alone — the
+// templates themselves are the missing signal, and they cannot be built until
+// the band is found. Breaking that circle is the actual task: bootstrap
+// templates from the sets where the band IS found reliably (base1, neo4 style
+// layouts), then use those templates to locate the band on the rest.
+//
+// OLDER NOTES — fixed-fraction bands:
 //   - fixed fractions tuned on sv10 miss on base1, neo4, ex10 and sv1: the
 //     glyph counts come back 2, 1, and 10 against expected 5, 6, 7
 //   - scanning the whole bottom strip instead does not rescue it. At full
@@ -289,5 +327,123 @@ export function selectNumberRun(boxes, opts = {}) {
     else { if (cur.length > best.length) best = cur; cur = [ok[i]]; }
   }
   if (cur.length > best.length) best = cur;
+  return best;
+}
+
+// ---------------------------------------------------------------------------
+// FIND THE NUMBER, THEN READ IT.
+//
+// bandForSet() above takes a set id and returns a corner — which is circular
+// for anything except training, because the set id is what we are trying to
+// work out. Reading a card we have never seen cannot start by knowing where its
+// era printed the number.
+//
+// So scan instead. There are only two candidate corners, the number is the
+// largest run of same-height glyphs down there, and the card itself says which
+// corner it is in. No era knowledge, no layout table.
+//
+// This also fixes the failure that stopped the previous attempt. Binarising the
+// WHOLE bottom strip merged everything into one 2199x339 blob, because the
+// strip spans artwork, borders and several text runs at different contrasts. A
+// corner is small enough to threshold sensibly, and trying a few thresholds per
+// corner costs nothing.
+
+/** The two places a collector number is ever printed. */
+export const CORNERS = Object.freeze([
+  { name: 'bottom-left', x: 0.02, y: 0.900, w: 0.44, h: 0.075 },
+  { name: 'bottom-right', x: 0.54, y: 0.885, w: 0.44, h: 0.080 },
+]);
+
+/**
+ * Does this glyph run look like a collector number?
+ *
+ * Scored without templates, because scoring is what tells us WHERE to point the
+ * templates. A number is 3-9 characters of even height sitting on one baseline,
+ * evenly spaced, none of them much wider than they are tall. Illustrator
+ * credits are longer and lower-contrast; a set-code box is one tall rectangle;
+ * a rarity symbol is isolated.
+ */
+export function scoreNumberRun(run, bandHeight) {
+  if (!run || run.length < 3 || run.length > 9) return 0;
+
+  // TOLERANCES WIDE ENOUGH TO HOLD A SLASH, and no attempt to classify one.
+  //
+  // Two earlier versions failed here and both are worth recording.
+  //
+  // Tight evenness rejected the "/" — in this italic face it is taller than the
+  // numerals and descends below the baseline — which SPLIT "133/182" into two
+  // separate 3-glyph runs. Every card came back with exactly 3 glyphs.
+  //
+  // Special-casing a separator as "narrow and tall" was worse: a "1" is narrow
+  // and tall too, so "11/105" was read as three separators and rejected
+  // outright. 2 of 9 became 0 of 9.
+  //
+  // So measure the whole run loosely rather than trying to name its parts. The
+  // baseline is the reliable signal — digits and a slash all sit on one — and
+  // height varies more than expected across a real print run.
+  const hs = run.map((b) => b.h).sort((a, b) => a - b);
+  const medH = hs[Math.floor(hs.length / 2)];
+  if (medH < bandHeight * 0.18) return 0;
+  if (!run.every((b) => b.h >= medH * 0.55 && b.h <= medH * 1.6)) return 0;
+
+  const bases = run.map((b) => b.y1);
+  const baseSpread = Math.max(...bases) - Math.min(...bases);
+  if (baseSpread > medH * 0.55) return 0;
+
+  const gaps = run.slice(1).map((b, i) => b.x0 - run[i].x1);
+  if (gaps.some((g) => g > medH * 0.9)) return 0;
+
+  const aspectOk = run.filter((b) => b.w <= medH * 1.3).length / run.length;
+  if (aspectOk < 0.7) return 0;
+
+  // LENGTH MATTERS. Any 3-glyph slice of a 7-glyph number is itself a valid run
+  // and scores better on a tighter baseline, so without weighting length the
+  // shortest window always wins. The correct run is the longest valid one.
+  return run.length * (medH / bandHeight) * aspectOk * (1 - baseSpread / (medH + 1));
+}
+
+
+
+/**
+ * Locate the collector number by scanning both corners at several thresholds.
+ *
+ * @param {Buffer} buffer  a rectified card
+ * @returns {{corner, bin, run, score, threshold, inverted}|null}
+ */
+export async function findNumberBand(buffer, opts = {}) {
+  const scale = opts.scale ?? 4;
+  const meta = await sharp(buffer).metadata();
+  if (!meta.width || !meta.height) return null;
+
+  let best = null;
+  for (const corner of CORNERS) {
+    const rect = {
+      left: Math.round(corner.x * meta.width),
+      top: Math.round(corner.y * meta.height),
+      width: Math.round(corner.w * meta.width),
+      height: Math.round(corner.h * meta.height),
+    };
+    if (rect.width < 10 || rect.height < 8) continue;
+    const { data, info } = await sharp(buffer).extract(rect)
+      .resize({ width: rect.width * scale, kernel: 'lanczos3' })
+      .greyscale().normalise().raw().toBuffer({ resolveWithObject: true });
+
+    for (const threshold of (opts.thresholds ?? [100, 130, 160, 190])) {
+      const bin = binarise({ data, width: info.width, height: info.height }, threshold);
+      const boxes = segmentGlyphs(bin, { minHeight: Math.round(info.height * 0.15) });
+      if (boxes.length < 3) continue;
+      // Every contiguous window, so a number sitting beside furniture is still
+      // found — the run does not have to be the whole corner.
+      for (let i = 0; i < boxes.length; i += 1) {
+        for (let n = 3; n <= Math.min(9, boxes.length - i); n += 1) {
+          const run = boxes.slice(i, i + n);
+          const score = scoreNumberRun(run, info.height);
+          if (score > (best?.score ?? 0)) {
+            best = { corner: corner.name, bin, run, score, threshold, inverted: bin.inkIsDark };
+          }
+        }
+      }
+    }
+  }
   return best;
 }

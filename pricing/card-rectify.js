@@ -236,12 +236,28 @@ async function detectQuad(cv, buffer) {
 /**
  * Rectify a card photograph to a canonical CARD_W x CARD_H face.
  *
+ * THE OUTPUT SIZE IS NOW OPTIONAL, and the default is unchanged.
+ *
+ * 600x840 is sized for the pHash pipeline, where a small canonical face is the
+ * point. It is actively harmful for reading text off the card: a 4000x2252
+ * phone photo carries roughly 1800px of card detail, and warping straight to
+ * 600 wide throws most of it away BEFORE any OCR sees it — leaving a
+ * photograph at lower resolution than a clean catalogue render, which is
+ * 733x1024. Measured 26 Aug 2026: reading the number off clean renders scores
+ * 9/12, off rectified photographs 30/64, and this is the difference.
+ *
+ * Callers that want to read the card pass a larger size. Nothing else changes,
+ * so the fast path and its measured 40.5% top-1 are untouched.
+ *
  * @param {Buffer} buffer  Raw image bytes.
+ * @param {{width?: number, height?: number}} [opts]  Output face size.
  * @returns {Promise<Buffer|null>}  Rectified buffer, or null when OpenCV is
  *   unavailable or no card quad was found. Never throws.
  */
-export async function rectifyCard(buffer) {
+export async function rectifyCard(buffer, opts = {}) {
   if (!buffer || !buffer.length) return null;
+  const outW = Math.max(64, Math.round(opts.width ?? CARD_W));
+  const outH = Math.max(64, Math.round(opts.height ?? CARD_H));
 
   const cv = await loadCv();
   if (!cv) return null;
@@ -270,14 +286,14 @@ export async function rectifyCard(buffer) {
 
     dstMat = new cv.Mat();
     srcTri = cv.matFromArray(4, 1, cv.CV_32FC2, src);
-    dstTri = cv.matFromArray(4, 1, cv.CV_32FC2, [0, 0, CARD_W, 0, CARD_W, CARD_H, 0, CARD_H]);
+    dstTri = cv.matFromArray(4, 1, cv.CV_32FC2, [0, 0, outW, 0, outW, outH, 0, outH]);
     M = cv.getPerspectiveTransform(srcTri, dstTri);
 
-    cv.warpPerspective(srcMat, dstMat, M, new cv.Size(CARD_W, CARD_H),
+    cv.warpPerspective(srcMat, dstMat, M, new cv.Size(outW, outH),
       cv.INTER_LINEAR, cv.BORDER_CONSTANT, new cv.Scalar(0, 0, 0, 255));
 
     return await sharp(Buffer.from(dstMat.data), {
-      raw: { width: CARD_W, height: CARD_H, channels: 4 },
+      raw: { width: outW, height: outH, channels: 4 },
     }).removeAlpha().png().toBuffer();
   } catch {
     return null;
