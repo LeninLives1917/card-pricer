@@ -154,10 +154,31 @@ describe('honest refusals', () => {
     assert.equal(r.status, 'not_found');
   });
 
-  test('a two-letter prefix asks for more rather than guessing', () => {
-    const r = line('ch', '4', '102');
+  test('a two-letter prefix asks for more when it is the only evidence', () => {
+    // SUPERSEDED IN PART, 26 Aug 2026. This used to refuse a two-letter prefix
+    // outright, denominator or not. The minimum exists so a very short prefix
+    // cannot return an unusable candidate list — reasoning that holds only
+    // when the prefix is the ONLY evidence.
+    //
+    // It also had a cost: normName strips punctuation BEFORE the length check,
+    // so a three-character prefix of a punctuated name normalises to two and
+    // was rejected. All 25 Lt. Surge's cards, plus Ho-Oh, Mr. Mime, the N's
+    // family and Wo-Chien, were unreachable by a three-letter prefix.
+    //
+    // With no denominator the floor is unchanged.
+    const r = line('ch', '4', '');
     assert.equal(r.status, 'need_more');
     assert.equal(r.reason, 'name_prefix_too_short');
+  });
+
+  test('...but a denominator is evidence enough to allow two letters', () => {
+    // (number, total) is 99.6% unique across the catalogue, and two-character
+    // buckets are small: median 10 names, largest 165. So the pair does the
+    // work and the prefix only has to narrow it.
+    assert.equal(line('ch', '4', '102').card_id, 'base1-4');
+    assert.equal(line('pi', '58', '102').card_id, 'base1-58');
+    // And where two letters genuinely do not settle it, it still asks.
+    assert.equal(line('ch', '2', '102').status, 'ambiguous');
   });
 
   test('no number at all is refused', () => {

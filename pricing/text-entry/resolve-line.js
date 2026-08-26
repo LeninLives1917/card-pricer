@@ -184,7 +184,25 @@ export function resolveLine(line, { cardDb, nameIndex, nameNumberIndex }) {
     return none('not_found', 'set_code_and_number_not_in_catalogue');
   }
 
-  const nameHit = resolveTypedName(nameIndex, line?.name);
+  // A PUNCTUATED NAME LOSES CHARACTERS BEFORE THE LENGTH CHECK.
+  //
+  // normName strips non-alphanumerics, so a three-character prefix of a
+  // punctuated name normalises to two and is rejected as too short. Measured:
+  // "Lt. 6/132" -> "lt", and all 25 Lt. Surge's cards became unreachable by a
+  // three-letter prefix. Same for "Ho-" (Ho-Oh), "Mr." (Mr. Mime), "N's" (the
+  // whole growing N's family) and "Wo-" (Wo-Chien).
+  //
+  // The minimum exists so a very short prefix does not return an unusable
+  // candidate list. That reasoning holds only when the prefix is the ONLY
+  // evidence. With a printed total the list is filtered by (number, total),
+  // which is 99.6% unique across the catalogue, so two characters is plenty —
+  // and two-character buckets are small anyway: median 10 names, largest 165.
+  //
+  // So the floor drops to 2 only when a denominator was typed. Without one it
+  // is unchanged, and a bare "Ho- 111" still asks for more.
+  const hasDenominator = printedTotalOf(line?.total ? `${num}/${line.total}` : line?.card_number) != null;
+  const nameHit = resolveTypedName(nameIndex, line?.name,
+    hasDenominator ? { minPrefix: 2 } : undefined);
   if (nameHit.how === 'too_short') {
     return none('need_more', 'name_prefix_too_short');
   }
@@ -470,6 +488,43 @@ export function resolveTypedLine(raw, deps, opts = {}) {
         rival_shapes: resolvedAll.map((r) => r.shape),
       };
     }
+    // A SECOND CARD HIDING IN THE TRAILING CONTEXT.
+    //
+    // "fly 7/25 syl 86/191" is two cards with a space between them. The first
+    // resolves cleanly, everything after it lands in `extras`, and the line
+    // returns Flying Pikachu VMAX at high confidence — with Sylveon silently
+    // discarded. Measured by a stress sweep: 389 of 400 such lines dropped
+    // the second card, and the operator is given no sign it happened.
+    //
+    // The glued form ("cha4/102bla2/102") is already caught, because it fails
+    // to resolve whole and reaches trySplit. This one never fails, so it never
+    // reaches it. Hitting space instead of Enter is at least as likely as
+    // typing no separator at all.
+    //
+    // Trailing context is usually legitimate — "nm", "rev holo", "psa 10", a
+    // price. What distinguishes a card is that it RESOLVES as one. Asking the
+    // resolver is a stronger test than any pattern: a grade or a price does
+    // not name a card, so it cannot resolve to one.
+    const extras = best.interpretation?.extras;
+    if (!opts?.noSplit && extras && /\d/.test(extras)) {
+      const rest = resolveTypedLine(extras, deps, { noSplit: true });
+      if (rest.status === 'resolved') {
+        const head = String(raw ?? '');
+        const cut = head.lastIndexOf(extras);
+        const firstText = (cut > 0 ? head.slice(0, cut) : head).trim();
+        return {
+          status: 'multi', card_id: null, confidence: 'low',
+          reason: 'line_contains_2_cards',
+          candidates: [], matched_name: null, name_match: 'none',
+          shape: 'spaced_multi', interpretation: best.interpretation, tried,
+          pieces: [
+            { text: firstText, status: best.status, card_id: best.card_id, candidates: best.candidates },
+            { text: extras, status: rest.status, card_id: rest.card_id, candidates: rest.candidates },
+          ],
+        };
+      }
+    }
+
     return { ...best, tried, outranked: rivals.map((r) => r.shape + ':' + r.card_id) };
   }
 
