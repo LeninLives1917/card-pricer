@@ -31,12 +31,122 @@ import { supabase } from '../_clients.js';
 
 const router = express.Router();
 
-// In-memory rooms (V1 fallback): { roomId: { listeners: Set<res>, history: Array<msgString> } }
+// In-memory rooms (V1 fallback): { roomId: { listeners, history, bytes, seenAt } }
 // Kept for Supabase-down failsafe and for tests that don't seed Postgres.
+//
+// ── INCIDENT, 27 Aug 2026: THIS OOM-KILLED THE INSTANCE ────────────────────
+//
+// The buffer held 500 messages per room and each message carries the FULL
+// base64 image. It was bounded by COUNT, and a count bound on variable-size
+// items is not a bound at all — it is a bound on a number that has nothing to
+// do with the resource being consumed.
+//
+//     ~470 KB per scan (1600px preview grab)  x500 = 235 MB per room
+//     ~5 MB per scan   (full-sensor still)    x500 = 2.5 GB per room
+//
+// 235 MB on top of ~136 MB of resident catalogue is most of a 512 MB Starter,
+// so one operator working through a box was enough. The full-sensor still
+// shipped hours before the alert made it ten times worse, and would exceed a
+// 2 GB Standard on a single room — which is why upgrading the instance would
+// not have fixed this.
+//
+// Two further faults in the same six lines:
+//
+//   - only the last 50 are ever served (slice(-50) below), so 450 of the 500
+//     were unreachable by any code path. Ninety percent of the memory was not
+//     a tradeoff, it was waste.
+//   - rooms were never evicted. rooms.clear() is a test-only hook, so every
+//     pair code ever used kept its buffer for the life of the process.
+//
+// Now bounded by BYTES, capped per room and globally, with idle rooms evicted
+// and every eviction counted.
+
+/** Never serve more than this, so never retain more than this. */
+const HISTORY_MAX = 50;
+
+/** Per-room byte budget for retained scan messages. */
+const ROOM_BYTES_MAX = 12 * 1024 * 1024;
+
+/** Global ceiling across all rooms — the per-room cap alone bounds nothing. */
+const TOTAL_BYTES_MAX = 64 * 1024 * 1024;
+
+/** A room with no listeners and no traffic for this long is gone. */
+const ROOM_IDLE_MS = 30 * 60 * 1000;
+
 const rooms = new Map();
+let totalBytes = 0;
+
+const roomStats = {
+  evicted_idle: 0, evicted_pressure: 0, dropped_oversize: 0, trimmed: 0,
+};
+export function roomMemoryStats() {
+  return { ...roomStats, rooms: rooms.size, bytes: totalBytes };
+}
+
+/** Exported for tests: eviction cannot be exercised without seeding rooms. */
+export function _getRoom(id) { return getRoom(id); }
+
 function getRoom(id) {
-  if (!rooms.has(id)) rooms.set(id, { listeners: new Set(), history: [] });
-  return rooms.get(id);
+  if (!rooms.has(id)) rooms.set(id, { listeners: new Set(), history: [], bytes: 0, seenAt: Date.now() });
+  const r = rooms.get(id);
+  r.seenAt = Date.now();
+  return r;
+}
+
+/**
+ * Add a message to a room's history under a byte budget.
+ *
+ * Exported so the bound is testable directly. A single message larger than the
+ * whole room budget is DROPPED rather than admitted-then-trimmed: admitting it
+ * would evict every other entry to make room for one item nothing asked for.
+ *
+ * @returns {'stored'|'dropped_oversize'}
+ */
+export function pushBounded(room, msg, {
+  maxItems = HISTORY_MAX, maxBytes = ROOM_BYTES_MAX,
+} = {}) {
+  const size = Buffer.byteLength(msg, 'utf8');
+  if (size > maxBytes) {
+    roomStats.dropped_oversize++;
+    return 'dropped_oversize';
+  }
+  room.history.push(msg);
+  room.bytes += size;
+  totalBytes += size;
+  while (room.history.length > maxItems || room.bytes > maxBytes) {
+    const gone = room.history.shift();
+    if (gone === undefined) break;
+    const freed = Buffer.byteLength(gone, 'utf8');
+    room.bytes -= freed;
+    totalBytes -= freed;
+    roomStats.trimmed++;
+  }
+  return 'stored';
+}
+
+/**
+ * Drop idle rooms, then drop the oldest rooms if the process is still over
+ * the global budget. Runs on write rather than on a timer: a timer keeps a
+ * mostly-idle process awake, and pressure only ever arrives with a write.
+ */
+export function sweepRooms({ now = Date.now(), idleMs = ROOM_IDLE_MS, totalMax = TOTAL_BYTES_MAX } = {}) {
+  for (const [id, r] of rooms) {
+    if (r.listeners.size === 0 && now - r.seenAt > idleMs) {
+      totalBytes -= r.bytes;
+      rooms.delete(id);
+      roomStats.evicted_idle++;
+    }
+  }
+  if (totalBytes <= totalMax) return;
+  // Oldest first. A room someone is actively watching is the last to go, and
+  // it still goes — running out of memory helps nobody.
+  const byAge = [...rooms.entries()].sort((a, b) => a[1].seenAt - b[1].seenAt);
+  for (const [id, r] of byAge) {
+    if (totalBytes <= totalMax) break;
+    totalBytes -= r.bytes;
+    rooms.delete(id);
+    roomStats.evicted_pressure++;
+  }
 }
 
 // Cache pair_code → session row for the lifetime of this process so we
@@ -82,8 +192,11 @@ router.post('/api/room/:id/scan', async (req, res) => {
   // 1. In-memory ring buffer (V1 behaviour, always runs as failsafe).
   const room = getRoom(pairCode);
   const memMsg = JSON.stringify({ type: 'scan', entry: payload, ts });
-  room.history.push(memMsg);
-  if (room.history.length > 500) room.history.shift();
+  // Retain under a byte budget; broadcast regardless. A message too large to
+  // retain is still delivered to whoever is listening right now — dropping it
+  // from the replay buffer must not drop it from the live stream.
+  pushBounded(room, memMsg);
+  sweepRooms();
   for (const client of room.listeners) {
     try { client.write(`data: ${memMsg}\n\n`); } catch (_) {}
   }
@@ -219,7 +332,7 @@ router.get('/api/room/:id/history', async (req, res) => {
   // Fallback: V1 in-memory ring buffer.
   const room = getRoom(pairCode);
   res.json({
-    history: room.history.slice(-50).map((s) => JSON.parse(s)),
+    history: room.history.slice(-HISTORY_MAX).map((s) => JSON.parse(s)),
     source: 'memory',
   });
 });
@@ -227,6 +340,8 @@ router.get('/api/room/:id/history', async (req, res) => {
 // Test hook: clear in-memory state. Not exposed as a route.
 export function _resetForTests() {
   rooms.clear();
+  totalBytes = 0;
+  for (const k of Object.keys(roomStats)) roomStats[k] = 0;
   sessionCache.clear();
   bridge.clearAll();
 }

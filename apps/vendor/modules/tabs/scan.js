@@ -460,7 +460,7 @@ async function submitManualEntry() {
 // looking, not by inference. A cached module served an OLD scanner UI on a
 // NEW deploy and cost an entire debugging round — the same lesson as the
 // key_present field on /api/health.
-const SCANNER_BUILD = 'v3.7-camera-controls';
+const SCANNER_BUILD = 'v3.8-capped-still';
 
 // Upload tally. Shown to the operator, because "sent" with nothing arriving
 // on the laptop is precisely the failure this mode shipped with.

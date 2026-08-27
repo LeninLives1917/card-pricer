@@ -31,7 +31,9 @@
 //          (modules/scan-loop.js, new).
 //   v3.7 — focus/exposure control and full-sensor stills, both of which the
 //          web already exposed and V3 had stopped asking for.
-const CACHE_VERSION = 'cardpricer-v3.7';
+//   v3.8 — stills capped at STILL_MAX_EDGE. The uncapped full-sensor still
+//          from v3.7 OOM-killed the server via the room replay buffer.
+const CACHE_VERSION = 'cardpricer-v3.8';
 
 const SHELL = [
   '/',

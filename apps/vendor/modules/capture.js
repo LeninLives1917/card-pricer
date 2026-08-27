@@ -345,19 +345,56 @@ export async function focusAt(x, y) {
  * the benchmark back, and this cannot beat it. What it does is stop the LIVE
  * path being worse than the benchmark, which at a 1600px cap it currently is.
  *
+ * WHICH IS ALSO WHY IT IS CAPPED. The first version of this returned whatever
+ * takePhoto() produced — up to 12 MP, around 5 MB once base64'd. That is ten
+ * times the old payload, for detail the measurement says is not used, and it
+ * OOM-killed the production instance within hours by way of the room replay
+ * buffer (see apps/server/routes/room.js). STILL_MAX_EDGE puts the card at
+ * roughly the benchmark's own ~1800px and stops there. Sending more than the
+ * pipeline has ever been measured to use is cost with no evidence behind it.
+ *
  * Falls back to the canvas grab, and records which path ran.
  */
+export const STILL_MAX_EDGE = 2400;
+
 export async function captureStill(videoEl, opts = {}) {
   const t = track();
   if (t && typeof window !== 'undefined' && typeof window.ImageCapture === 'function') {
     try {
       const blob = await new window.ImageCapture(t).takePhoto();
-      const url = await blobToDataUrl(blob);
+      const url = await downscaleBlob(blob, opts.maxEdge ?? STILL_MAX_EDGE, opts.quality ?? 0.85);
       if (url) { control.still = true; return url; }
     } catch { /* fall through — several devices advertise it and then throw */ }
   }
   control.still = false;
   return captureFrame(videoEl, opts);
+}
+
+/**
+ * Decode a still and re-encode it at no more than `maxEdge` on the long side.
+ *
+ * Returns null rather than the original on failure. Handing back an
+ * unbounded image because the resize failed is exactly the invisible fallback
+ * that caused the incident — the caller would get a working photo and no
+ * indication the cap had been skipped.
+ */
+async function downscaleBlob(blob, maxEdge, quality) {
+  if (!blob) return null;
+  let bmp = null;
+  try {
+    bmp = await createImageBitmap(blob);
+    const scale = Math.min(1, maxEdge / Math.max(bmp.width, bmp.height));
+    const w = Math.max(1, Math.round(bmp.width * scale));
+    const h = Math.max(1, Math.round(bmp.height * scale));
+    const c = document.createElement('canvas');
+    c.width = w; c.height = h;
+    c.getContext('2d', { alpha: false }).drawImage(bmp, 0, 0, w, h);
+    return c.toDataURL('image/jpeg', quality);
+  } catch {
+    return null;
+  } finally {
+    if (bmp && typeof bmp.close === 'function') { try { bmp.close(); } catch { /* ignore */ } }
+  }
 }
 
 function blobToDataUrl(blob) {
