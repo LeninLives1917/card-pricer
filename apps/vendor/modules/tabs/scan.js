@@ -460,7 +460,7 @@ async function submitManualEntry() {
 // looking, not by inference. A cached module served an OLD scanner UI on a
 // NEW deploy and cost an entire debugging round — the same lesson as the
 // key_present field on /api/health.
-const SCANNER_BUILD = 'v3.6-reticle-gate';
+const SCANNER_BUILD = 'v3.7-camera-controls';
 
 // Upload tally. Shown to the operator, because "sent" with nothing arriving
 // on the laptop is precisely the failure this mode shipped with.
@@ -664,6 +664,13 @@ function showScannerMode() {
     setMode('LIVE CAMERA (no confirm step)');
     renderStatus('ready');
 
+    // Ask for continuous focus and exposure metered on the centre of the
+    // frame, where the reticle has put the card. V1 did this and the V3
+    // rewrite dropped it, so until now every frame was shot on whatever
+    // autofocus decided about a flat glossy object on a textured table.
+    // Optional everywhere, counted everywhere — see cameraReport().
+    await capture.applyCameraControls();
+
     if (torchBtn && capture.hasTorch()) {
       let on = false;
       torchBtn.style.display = 'inline-flex';
@@ -735,8 +742,14 @@ function showScannerMode() {
       const dbg = document.getElementById('scannerGateDebug');
       if (dbg) {
         const a = autoFire.counts();
+        // Which controls the phone actually honoured. A control that silently
+        // does nothing is worse than no control: it produces an operator who
+        // believes the camera is locked. '?' is never-asked, not refused.
+        const cam = capture.cameraReport();
+        const flag = (v2) => (v2 === null ? '?' : v2 ? 'y' : 'n');
         dbg.textContent = `sharp ${Math.round(v.sharpness)} · detail ${v.detail.toFixed(2)}`
-          + ` · ${v.state}${_autoOn ? ` · auto ${a.fired}/${a.frames}` : ''}`;
+          + ` · ${v.state}${_autoOn ? ` · auto ${a.fired}/${a.frames}` : ''}`
+          + ` · af${flag(cam.focus)} ae${flag(cam.exposure)} still${flag(cam.still)}`;
       }
 
       if (!_autoOn) return;
@@ -758,9 +771,15 @@ function showScannerMode() {
       // (see frame-gate.js). The new thresholds are still unvalidated against
       // live video, so the same rule stands: a tap always fires. Auto-fire is
       // opt-in, and it is the only thing the gate is allowed to gate.
-      const dataUrl = capture.captureFrame(video);
-      if (!dataUrl) { renderStatus('no frame — hold still'); return; }
-      send(dataUrl, opts);
+      // Full-sensor still where the device offers one; the preview grab is
+      // capped at 1600px, which is LOWER than the benchmark photographs the
+      // pipeline was measured on. Falls back automatically and records which
+      // path ran, so a device that quietly refuses is visible rather than
+      // just slightly worse.
+      capture.captureStill(video).then((dataUrl) => {
+        if (!dataUrl) { renderStatus('no frame — hold still'); return; }
+        send(dataUrl, opts);
+      });
     };
 
     // The Auto toggle. DEFAULT OFF, deliberately: the last gate that decided
@@ -780,8 +799,17 @@ function showScannerMode() {
     }
 
     if (shutter) shutter.addEventListener('click', grab);
-    // Tapping the preview shoots too — faster than reaching for the button.
-    if (camWrap) camWrap.addEventListener('click', grab);
+    // Tapping the preview shoots — faster than reaching for the button. In
+    // hands-free mode there is nothing to shoot manually, so the same tap
+    // becomes tap-to-focus, which is the control most likely to rescue a card
+    // autofocus has given up on.
+    if (camWrap) camWrap.addEventListener('click', (e) => {
+      if (!_autoOn) return grab();
+      const r = camWrap.getBoundingClientRect();
+      if (!r.width || !r.height) return;
+      capture.focusAt((e.clientX - r.left) / r.width, (e.clientY - r.top) / r.height)
+        .then((ok) => renderStatus(ok ? 'refocusing…' : 'this camera has no tap-to-focus'));
+    });
     // Volume-key shutters surface as keydown on some Android browsers.
     window.addEventListener('keydown', (e) => {
       if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); grab(); }

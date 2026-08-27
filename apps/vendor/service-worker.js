@@ -29,7 +29,9 @@
 //   v3.6 — the gate reads the RETICLE instead of hunting for the card, which
 //          is what it could never do; opt-in hands-free capture on top of it
 //          (modules/scan-loop.js, new).
-const CACHE_VERSION = 'cardpricer-v3.6';
+//   v3.7 — focus/exposure control and full-sensor stills, both of which the
+//          web already exposed and V3 had stopped asking for.
+const CACHE_VERSION = 'cardpricer-v3.7';
 
 const SHELL = [
   '/',

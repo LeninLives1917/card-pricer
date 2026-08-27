@@ -242,3 +242,129 @@ export function drawReticle(videoEl, canvas, size = 256) {
   ctx.drawImage(videoEl, sx, sy, sw, sh, 0, 0, dw, dh);
   return ctx.getImageData(0, 0, dw, dh);
 }
+
+// ---------------------------------------------------------------------------
+// CAMERA CONTROL — asking the phone for the things it already offers.
+//
+// This app asks for a rear camera at 1920x1080 and nothing else. V1 had
+// tap-to-focus and pinch zoom (public/index.html ~3712-3750); the V3 rewrite
+// dropped both and never replaced them. So every frame is shot on whatever
+// autofocus and autoexposure decide, on a subject that is flat, close, often
+// glossy, and sitting on a textured table — which is close to the worst case
+// for a continuous-AF heuristic tuned for faces and scenery.
+//
+// This matters for a question bigger than itself. "Would a native app be more
+// reliable" is largely a question about camera control, and it cannot be
+// answered while the web path is asking for none. Everything below is a
+// standard MediaStreamTrack capability, already shipping in Chrome on Android.
+//
+// EVERY CONTROL IS OPTIONAL AND EVERY OUTCOME IS COUNTED. Support varies by
+// device and by Android version, and a control that silently does nothing is
+// worse than no control — it produces an operator who believes the camera is
+// locked. `cameraReport()` says what was asked for and what actually took.
+
+const control = {
+  // null until asked, so "never attempted" stays distinguishable from
+  // "attempted and refused" — a 0 rate and a null rate mean different things.
+  focus: null, exposure: null, zoom: null, still: null,
+};
+export function cameraReport() { return { ...control }; }
+export function resetCameraReport() { for (const k of Object.keys(control)) control[k] = null; }
+
+/**
+ * Which focus/exposure constraints are worth applying, given what the track
+ * says it supports. Pure, so the decision is testable without a camera.
+ *
+ * `continuous` rather than `manual`: the operator slides cards under a fixed
+ * phone, so the subject distance barely changes but does change, and a manual
+ * lock set on card one is wrong by card ten. Continuous with a centre point of
+ * interest keeps it re-focusing on the card rather than on the table edge or a
+ * hand entering the frame.
+ */
+export function focusConstraints(caps) {
+  if (!caps) return [];
+  const out = [];
+  const modes = caps.focusMode || [];
+  if (modes.includes('continuous')) out.push({ focusMode: 'continuous' });
+  else if (modes.includes('single-shot')) out.push({ focusMode: 'single-shot' });
+  const exp = caps.exposureMode || [];
+  if (exp.includes('continuous')) out.push({ exposureMode: 'continuous' });
+  // The card is dead centre by construction — the reticle put it there — so
+  // metering and focusing anywhere else is measuring the table.
+  if (caps.pointsOfInterest) out.push({ pointsOfInterest: [{ x: 0.5, y: 0.5 }] });
+  return out;
+}
+
+function track() {
+  const t = _stream?.getVideoTracks?.()[0];
+  return t && typeof t.getCapabilities === 'function' ? t : null;
+}
+
+/** Apply the focus/exposure constraints this device actually supports. */
+export async function applyCameraControls() {
+  const t = track();
+  if (!t) { control.focus = false; control.exposure = false; return false; }
+  let caps;
+  try { caps = t.getCapabilities(); } catch { control.focus = false; return false; }
+  const advanced = focusConstraints(caps);
+  control.focus = advanced.some((c) => 'focusMode' in c);
+  control.exposure = advanced.some((c) => 'exposureMode' in c);
+  if (!advanced.length) return false;
+  try { await t.applyConstraints({ advanced }); return true; }
+  catch { control.focus = false; control.exposure = false; return false; }
+}
+
+/**
+ * Re-focus on a point, as a fraction of the frame. Tap-to-focus, which V1 had.
+ * Falls back to nudging continuous AF, which on several devices is the only
+ * way to make it re-converge on a subject it has already given up on.
+ */
+export async function focusAt(x, y) {
+  const t = track();
+  if (!t) return false;
+  try {
+    const caps = t.getCapabilities();
+    if (!caps?.pointsOfInterest) return false;
+    await t.applyConstraints({ advanced: [{ pointsOfInterest: [{ x, y }] }] });
+    return true;
+  } catch { return false; }
+}
+
+/**
+ * Grab a still at the SENSOR's resolution rather than the preview's.
+ *
+ * captureFrame() draws the <video>, so it is capped by the preview stream —
+ * 1080p, about 2 MP. ImageCapture.takePhoto() returns the full still, often
+ * 12 MP. The reticle covers roughly three quarters of the frame, so that is
+ * the difference between ~840px of card width and ~2300px.
+ *
+ * WORTH KNOWING WHAT THIS CAN AND CANNOT BUY. The 64 benchmark photographs are
+ * already full-resolution originals (4000x2252) and still yield a readable
+ * collector number on only 30 of them — and rectifying them to 1800x2520
+ * changed that number by exactly zero. So resolution is not what is holding
+ * the benchmark back, and this cannot beat it. What it does is stop the LIVE
+ * path being worse than the benchmark, which at a 1600px cap it currently is.
+ *
+ * Falls back to the canvas grab, and records which path ran.
+ */
+export async function captureStill(videoEl, opts = {}) {
+  const t = track();
+  if (t && typeof window !== 'undefined' && typeof window.ImageCapture === 'function') {
+    try {
+      const blob = await new window.ImageCapture(t).takePhoto();
+      const url = await blobToDataUrl(blob);
+      if (url) { control.still = true; return url; }
+    } catch { /* fall through — several devices advertise it and then throw */ }
+  }
+  control.still = false;
+  return captureFrame(videoEl, opts);
+}
+
+function blobToDataUrl(blob) {
+  return new Promise((resolve) => {
+    const fr = new FileReader();
+    fr.onload = () => resolve(fr.result);
+    fr.onerror = () => resolve(null);
+    fr.readAsDataURL(blob);
+  });
+}

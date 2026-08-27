@@ -14,7 +14,10 @@ import {
   gateReticle, detailDensity, sceneDelta, DETAIL_MIN, SHARPNESS_MIN,
   resetReticleCounts, getReticleCounts,
 } from '../../apps/vendor/modules/frame-gate.js';
-import { reticleRect, containedBox, CARD_ASPECT } from '../../apps/vendor/modules/capture.js';
+import {
+  reticleRect, containedBox, CARD_ASPECT,
+  focusConstraints, cameraReport, resetCameraReport,
+} from '../../apps/vendor/modules/capture.js';
 
 /** An RGBA region. `paint(x,y)` returns the grey level. */
 function roi(w, h, paint) {
@@ -272,5 +275,69 @@ describe('containedBox places the overlay on the video, not the element', () => 
   test('a zero-sized frame degrades rather than dividing by zero', () => {
     const b = containedBox(400, 600, 0, 0);
     for (const k of ['left', 'top', 'width', 'height']) assert.ok(Number.isFinite(b[k]), k);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// CAMERA CONTROL.
+//
+// This app asked the phone for a rear camera and torch, and nothing else. V1
+// had tap-to-focus and pinch zoom; the V3 rewrite dropped both. That matters
+// beyond itself: "would a native app be more reliable" is largely a question
+// about camera control, and it cannot be answered while the web path asks for
+// none of the controls the web already exposes.
+
+describe('focusConstraints asks only for what the device offers', () => {
+  test('a device with everything gets continuous focus, exposure and a centre point', () => {
+    const c = focusConstraints({
+      focusMode: ['manual', 'single-shot', 'continuous'],
+      exposureMode: ['manual', 'continuous'],
+      pointsOfInterest: true,
+    });
+    assert.deepEqual(c.find((x) => 'focusMode' in x), { focusMode: 'continuous' });
+    assert.deepEqual(c.find((x) => 'exposureMode' in x), { exposureMode: 'continuous' });
+    assert.deepEqual(c.find((x) => 'pointsOfInterest' in x).pointsOfInterest, [{ x: 0.5, y: 0.5 }]);
+  });
+
+  test('continuous is preferred over manual', () => {
+    // The operator slides cards under a fixed phone: the subject distance
+    // barely changes but does change, so a manual lock set on card one is
+    // wrong by card ten.
+    const c = focusConstraints({ focusMode: ['manual', 'continuous'] });
+    assert.deepEqual(c[0], { focusMode: 'continuous' });
+  });
+
+  test('single-shot is taken when continuous is absent', () => {
+    assert.deepEqual(focusConstraints({ focusMode: ['single-shot'] }), [{ focusMode: 'single-shot' }]);
+  });
+
+  test('manual alone is not used at all', () => {
+    assert.deepEqual(focusConstraints({ focusMode: ['manual'] }), []);
+  });
+
+  test('a device offering nothing is asked for nothing, never guessed at', () => {
+    // applyConstraints with an unsupported advanced constraint is not an
+    // error on every device — some accept it and ignore it, which is how a
+    // camera comes to look locked while focusing on the table.
+    for (const caps of [null, undefined, {}, { focusMode: [] }]) {
+      assert.deepEqual(focusConstraints(caps), []);
+    }
+  });
+});
+
+describe('cameraReport distinguishes never-asked from refused', () => {
+  test('it starts null, not false', () => {
+    resetCameraReport();
+    const r = cameraReport();
+    for (const k of ['focus', 'exposure', 'still']) {
+      assert.equal(r[k], null, `${k} must be null before anything is attempted`);
+    }
+  });
+
+  test('it is a copy, so a caller cannot corrupt the record', () => {
+    resetCameraReport();
+    const r = cameraReport();
+    r.focus = 'tampered';
+    assert.equal(cameraReport().focus, null);
   });
 });
