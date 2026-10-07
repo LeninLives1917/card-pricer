@@ -18,8 +18,9 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
  * @param {() => number} args.getCreditPct
  * @param {(path:string, opts:object)=>Promise<{ok:boolean,status:number,body:any}>} args.request
  * @param {() => void} args.unlockResults       Called after successful submit.
+ * @param {() => object|null} [args.getMeta]    Whole-list quote metadata (prices date).
  */
-export function bindLeadGate({ getResults, getCashPct, getCreditPct, request, unlockResults }) {
+export function bindLeadGate({ getResults, getMeta, getCashPct, getCreditPct, request, unlockResults }) {
   const submitBtn = document.getElementById('leadSubmit');
   if (!submitBtn) return;
 
@@ -39,15 +40,27 @@ export function bindLeadGate({ getResults, getCashPct, getCreditPct, request, un
     }
 
     const all = getResults() || [];
-    const priced = all.filter((r) => r && !r.error && r.card);
+    const priced = all.filter((r) => r && !r.error && !r.byHand && !r.ask && r.card);
+    // Lines the quote could not price, and questions still open, go to the shop
+    // to price by hand. A list where nothing priced is still a lead.
+    const unpriced = all
+      .filter((r) => r && (r.byHand || r.ask))
+      .map((r) => ({
+        line: r.line || null,
+        name: r.card?.name || null,
+        set_code: r.card?.set_code || null,
+        card_number: r.card?.card_number || null,
+        reason: r.ask ? 'unconfirmed' : r.reason || null,
+        qty: r.qty || r.row?.qty || 1,
+      }));
 
-    if (!priced.length) {
+    if (!priced.length && !unpriced.length) {
       const errCount = all.filter((r) => r?.error).length;
       if (errCount > 0) {
         alert(
           'None of the ' +
             errCount +
-            ' card(s) could be priced. Please check the set codes and card numbers and try again.'
+            ' card(s) could be matched. Please check the names and numbers and try again.'
         );
       } else if (!all.length) {
         alert('Please enter your cards and click "Get my quote" first.');
@@ -71,6 +84,7 @@ export function bindLeadGate({ getResults, getCashPct, getCreditPct, request, un
       cash_offer: it.cash,
       credit_offer: it.credit,
       photo: null,
+      qty: it.qty || 1,
     }));
 
     try {
@@ -85,6 +99,8 @@ export function bindLeadGate({ getResults, getCashPct, getCreditPct, request, un
           cashPct: getCashPct(),
           creditPct: getCreditPct(),
           shop_slug: SHOP_SLUG,
+          unpriced,
+          prices_as_of: getMeta?.()?.pricesAsOf || null,
         },
       });
       if (!r.ok) throw new Error('Server rejected quote');

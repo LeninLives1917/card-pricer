@@ -42,6 +42,11 @@ export const PKM_SET_ALIASES = {
   // so anything already typed still resolves.
   'ME2':  'me2',        'ASC':  'me2pt5',     'ASH':  'me2pt5',
   'POR':  'me3',        'ME3':  'me3',
+  // Measured 7 Oct 2026: typing a Chaos Rising or Pitch Black card by its
+  // printed code failed on 241 of 241 cards, because neither code was here and
+  // "CRI 12/86" was read as the start of a card name instead.
+  'CRI':  'me4',        'ME4':  'me4',        'PBL':  'me5',
+  'ME5':  'me5',        '30C':  'me55',
   'SVP':  'svp',        'MEP':  'mep',
   'SSH':  'swsh1',      'RCL':  'swsh2',      'DAA':  'swsh3',
   'VIV':  'swsh4',      'BST':  'swsh5',      'CRE':  'swsh6',
@@ -94,6 +99,9 @@ export const PKM_SET_NAMES = {
   'me2':  'Phantasmal Flames',
   'me2pt5': 'Ascended Heroes',
   'me3':  'Perfect Order',
+  'me4':  'Chaos Rising',
+  'me5':  'Pitch Black',
+  'me55': '30th Celebration',
   'svp':  'SV Black Star Promos',
   'mep':  'Mega Evolution Promos',
   'swshp': 'Sword & Shield Promos',

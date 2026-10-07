@@ -18,6 +18,24 @@ import { Sentry } from '../../../infra/observability/sentry-server.js';
 
 const router = express.Router();
 
+/**
+ * Cards per lead. Was 20, inherited from the one-card-at-a-time quote page;
+ * the whole-list quote (routes/quote-batch.js) takes up to 1,000 lines, and a
+ * lead that silently kept the first 20 would hand the shop a wrong total.
+ */
+export const MAX_LEAD_CARDS = 1000;
+
+const qtyOf = (c) => Math.max(1, Math.min(99, Number(c?.qty) || 1));
+const qtyLabel = (c) => (qtyOf(c) > 1 ? `${qtyOf(c)} &times; ` : '');
+
+/** Lines the quote could not price, which the shop prices by hand. */
+function byHandRowsHtml(list) {
+  return list.map((u) => `<tr>
+        <td style="padding:6px 8px; border-bottom:1px solid #eee;">${escapeHtml(u.name || u.line || 'Unknown')}${u.set_code ? ' <span style="color:#888;">(' + escapeHtml(u.set_code) + ')</span>' : ''}${u.card_number ? ' <span style="color:#888;">#' + escapeHtml(u.card_number) + '</span>' : ''}</td>
+        <td style="padding:6px 8px; border-bottom:1px solid #eee; color:#888;">${escapeHtml(u.line || '')}</td>
+      </tr>`).join('');
+}
+
 function escapeHtml(s) {
   return String(s || '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
@@ -53,13 +71,18 @@ export async function handleQuoteLead(body, req, deps = {}) {
   } = deps;
 
   const { email, name, newsletter, cards, totals, cashPct, creditPct, shop_slug } = body || {};
-  if (!email || !cards || !Array.isArray(cards) || !cards.length) {
+  const byHand = Array.isArray(body?.unpriced) ? body.unpriced.filter(Boolean).slice(0, MAX_LEAD_CARDS) : [];
+  const hasCards = Array.isArray(cards) && cards.length > 0;
+  // A list where nothing could be priced is still a lead: those are exactly
+  // the cards the shop has to look at.
+  if (!email || (!hasCards && !byHand.length)) {
     return { status: 400, body: { error: 'email and cards required' } };
   }
   if (!EMAIL_RE.test(email)) {
     return { status: 400, body: { error: 'invalid email' } };
   }
-  const trimmed = cards.slice(0, 20);
+  const trimmed = hasCards ? cards.slice(0, MAX_LEAD_CARDS) : [];
+  const cardCount = trimmed.reduce((n, c) => n + qtyOf(c), 0) + byHand.length;
 
   let shop = null;
   if (shop_slug && supabaseClient) {
@@ -82,7 +105,7 @@ export async function handleQuoteLead(body, req, deps = {}) {
     const credit = (c.credit_offer ?? 0).toFixed(2);
     const mv = (c.market_value ?? 0).toFixed(2);
     return `<tr>
-        <td style="padding:8px; border-bottom:1px solid #eee;">${escapeHtml(c.name || 'Unknown')}${c.set_code ? ' <span style="color:#888;">(' + escapeHtml(c.set_code) + ')</span>' : ''}</td>
+        <td style="padding:8px; border-bottom:1px solid #eee;">${qtyLabel(c)}${escapeHtml(c.name || 'Unknown')}${c.set_code ? ' <span style="color:#888;">(' + escapeHtml(c.set_code) + ')</span>' : ''}</td>
         <td style="padding:8px; border-bottom:1px solid #eee; text-align:right;">€${mv}</td>
         <td style="padding:8px; border-bottom:1px solid #eee; text-align:right; color:#f59e0b;">€${cash}</td>
         <td style="padding:8px; border-bottom:1px solid #eee; text-align:right; color:#22c55e;">€${credit}</td>
@@ -120,12 +143,14 @@ export async function handleQuoteLead(body, req, deps = {}) {
           </tr></thead>
           <tbody>${rows}</tbody>
           <tfoot><tr style="font-weight:700; background:#fafafa;">
-            <td style="padding:8px;">Totals (${trimmed.length} card${trimmed.length !== 1 ? 's' : ''})</td>
+            <td style="padding:8px;">Totals (${cardCount - byHand.length} card${cardCount - byHand.length !== 1 ? 's' : ''})</td>
             <td style="padding:8px; text-align:right;">€${(totals?.market || 0).toFixed(2)}</td>
             <td style="padding:8px; text-align:right; color:#f59e0b;">€${(totals?.cash || 0).toFixed(2)}</td>
             <td style="padding:8px; text-align:right; color:#22c55e;">€${(totals?.credit || 0).toFixed(2)}</td>
           </tr></tfoot>
         </table>
+        ${byHand.length ? `<p style="margin-top:16px;"><b>We'll price ${byHand.length === 1 ? 'this one' : 'these ' + byHand.length} by hand</b> and include ${byHand.length === 1 ? 'it' : 'them'} in your offer:</p>
+        <table style="width:100%; border-collapse:collapse; margin:8px 0 16px;"><tbody>${byHandRowsHtml(byHand)}</tbody></table>` : ''}
         <p style="font-size:13px; color:#666;">Cash offer: ${cashPct || 55}% of market value. Store credit: ${creditPct || 70}% of market value. Condition-adjusted.</p>
         <p style="margin-top:24px;">Bring your cards to the shop or reply to this email to arrange drop-off. We'll give you a firm offer once we grade condition.</p>
         <p style="color:#888; font-size:12px; margin-top:32px;">${SHOP_NAME}</p>
@@ -136,6 +161,7 @@ export async function handleQuoteLead(body, req, deps = {}) {
         <h3>New quote request</h3>
         <p><b>Email:</b> ${escapeHtml(email)}${name ? ' &middot; <b>Name:</b> ' + escapeHtml(name) : ''}${newsletter ? ' &middot; <b>Newsletter:</b> YES' : ''}</p>
         <p><b>Totals:</b> Market €${(totals?.market || 0).toFixed(2)} &middot; Cash €${(totals?.cash || 0).toFixed(2)} &middot; Credit €${(totals?.credit || 0).toFixed(2)}</p>
+        <p><b>Cards:</b> ${cardCount}${byHand.length ? ` (${byHand.length} to price by hand, listed at the bottom)` : ''}${body?.prices_as_of ? ` &middot; <b>Prices:</b> Cardmarket price guide ${escapeHtml(body.prices_as_of)}` : ''}</p>
         <p style="color:#666; font-size:13px;">${attachments.length} card photo${attachments.length !== 1 ? 's' : ''} attached.</p>
         <table style="width:100%; border-collapse:collapse;">
           <thead><tr><th align="left">#</th><th align="left">Card</th><th align="right">MV</th><th align="right">Cash</th><th align="right">Credit</th></tr></thead>
@@ -145,13 +171,18 @@ export async function handleQuoteLead(body, req, deps = {}) {
             const mv = (c.market_value ?? 0).toFixed(2);
             return `<tr>
               <td style="padding:8px; border-bottom:1px solid #eee; color:#666;">${String(i+1).padStart(2,'0')}</td>
-              <td style="padding:8px; border-bottom:1px solid #eee;">${escapeHtml(c.name || 'Unknown')}${c.set_code ? ' <span style="color:#888;">(' + escapeHtml(c.set_code) + ')</span>' : ''}${c.card_number ? ' <span style="color:#888;">#' + escapeHtml(c.card_number) + '</span>' : ''}${c.condition_estimate ? ' <span style="color:#888;">· ' + escapeHtml(c.condition_estimate) + '</span>' : ''}</td>
+              <td style="padding:8px; border-bottom:1px solid #eee;">${qtyLabel(c)}${escapeHtml(c.name || 'Unknown')}${c.set_code ? ' <span style="color:#888;">(' + escapeHtml(c.set_code) + ')</span>' : ''}${c.card_number ? ' <span style="color:#888;">#' + escapeHtml(c.card_number) + '</span>' : ''}${c.condition_estimate ? ' <span style="color:#888;">· ' + escapeHtml(c.condition_estimate) + '</span>' : ''}</td>
               <td style="padding:8px; border-bottom:1px solid #eee; text-align:right;">€${mv}</td>
               <td style="padding:8px; border-bottom:1px solid #eee; text-align:right; color:#b45309;">€${cash}</td>
               <td style="padding:8px; border-bottom:1px solid #eee; text-align:right; color:#ca8a04;">€${credit}</td>
             </tr>`;
           }).join('')}</tbody>
         </table>
+        ${byHand.length ? `<h4 style="margin-top:20px;">To price by hand (${byHand.length})</h4>
+        <table style="width:100%; border-collapse:collapse;">
+          <thead><tr><th align="left">Card</th><th align="left">Customer typed</th></tr></thead>
+          <tbody>${byHandRowsHtml(byHand)}</tbody>
+        </table>` : ''}
       </div>`;
 
   // S12 (F6): capture the inserted row's id so the response can return a
@@ -167,15 +198,26 @@ export async function handleQuoteLead(body, req, deps = {}) {
         email,
         name: name || null,
         newsletter: !!newsletter,
-        card_count: trimmed.length,
+        card_count: cardCount,
         total_market: totals?.market || 0,
         total_cash: totals?.cash || 0,
         total_credit: totals?.credit || 0,
-        cards_json: trimmed.map(c => ({
-          name: c.name, set_code: c.set_code, card_number: c.card_number,
-          mv: c.market_value, cash: c.cash_offer, credit: c.credit_offer,
-          condition: c.condition_estimate || null
-        })),
+        cards_json: [
+          ...trimmed.map(c => ({
+            name: c.name, set_code: c.set_code, card_number: c.card_number,
+            mv: c.market_value, cash: c.cash_offer, credit: c.credit_offer,
+            condition: c.condition_estimate || null,
+            ...(qtyOf(c) > 1 ? { qty: qtyOf(c) } : {}),
+          })),
+          // Lines the quote could not price. mv null, flagged, so admin's
+          // top-cards rollup (which skips market <= 0) and the recovered-quote
+          // page can tell them apart from a card priced at zero.
+          ...byHand.map(u => ({
+            name: u.name || u.line || null, set_code: u.set_code || null,
+            card_number: u.card_number || null, mv: null, cash: null, credit: null,
+            condition: null, by_hand: true, line: u.line || null, reason: u.reason || null,
+          })),
+        ],
         ip_hash: hashIp(req.ip),
         ...extra
       }).select('id').single();
@@ -202,7 +244,7 @@ export async function handleQuoteLead(body, req, deps = {}) {
 
   if (!brevoApiKey) {
     console.log('[QUOTE-LEAD] (no BREVO_API_KEY set) would email to', email, 'and', SHOP_EMAIL);
-    console.log('[QUOTE-LEAD] payload:', { email, name, newsletter, cardCount: trimmed.length, totals });
+    console.log('[QUOTE-LEAD] payload:', { email, name, newsletter, cardCount, byHand: byHand.length, totals });
     const lead = await persistLead();
     const quote_url = buildQuoteUrl(lead.id);
     return {

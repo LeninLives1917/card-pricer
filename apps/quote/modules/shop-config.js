@@ -110,11 +110,11 @@ export function applyShopBranding() {
   const noteLine = document.querySelector('#inputPanel .note');
   if (noteLine) {
     noteLine.innerHTML =
-      'Prices shown are indicative and assume Near Mint condition. Final offer depends on in-person condition check. Cash offer is ' +
+      'Prices shown are indicative and assume Near Mint condition unless you say otherwise. Final offer depends on an in-person condition check. Cash offer is ' +
       getCashPct() +
       '% of market value, store credit is ' +
       getCreditPct() +
-      '%. We price off Cardmarket (EU) and Scryfall live data.';
+      "%. Pok\u00e9mon prices come from Cardmarket's daily price guide (EU); other games use live data.";
   }
 
   // Newsletter checkbox: hidden when the shop opted out; otherwise relabel.
@@ -166,4 +166,29 @@ export function postToParent(message) {
   } catch {
     /* parent unreachable; nothing to do */
   }
+}
+
+/**
+ * Tell an INLINE embed (the shop's own "Sell your cards" page) how tall the
+ * quote is, so it can size its iframe to fit instead of scrolling inside it.
+ * The modal widget (apps/widget/widget.js) ignores message types it does not
+ * know, so this is additive for every site already loading widget.js.
+ *
+ * Measured from the content (.wrap), not the document: the page sets
+ * min-height: 100vh, so document height would follow the iframe's own height
+ * and never let it shrink.
+ */
+export function startEmbedResize() {
+  if (!EMBED_MODE || typeof window === 'undefined' || window.parent === window) return;
+  const wrap = document.querySelector('.wrap');
+  if (!wrap || typeof ResizeObserver === 'undefined') return;
+  let last = 0;
+  const send = () => {
+    const h = Math.ceil(wrap.getBoundingClientRect().bottom + window.scrollY + 8);
+    if (Math.abs(h - last) < 4) return;
+    last = h;
+    postToParent({ type: 'cp:resize', height: h });
+  };
+  new ResizeObserver(send).observe(wrap);
+  send();
 }

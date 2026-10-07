@@ -74,6 +74,7 @@ import billingRouter from './routes/billing.js';
 import adminRouter from './routes/admin.js';
 import shopRouter from './routes/shop.js';
 import quoteLeadRouter from './routes/quote-lead.js';
+import quoteBatchRouter from './routes/quote-batch.js';   // whole-list quote, 7 Oct 2026
 import quoteRecoverRouter from './routes/quote-recover.js'; // S12
 import quoteOfferRouter from './routes/quote-offer.js';     // S20
 import customerRouter from './routes/customer.js';          // S20
@@ -131,6 +132,7 @@ app.use(searchRouter);      // /api/search
 app.use(healthRouter);      // /api/health, /api/version, /api/widget/loaded
 app.use(roomRouter);        // /api/room/:id/*
 app.use(quoteLeadRouter);   // /api/quote-lead
+app.use(quoteBatchRouter);  // POST /api/v2/quote/batch — before quoteRecoverRouter's /api/v2/quote/:id
 app.use(quoteRecoverRouter);// /api/v2/quote/:id, /q/:id (S12) — MUST be before spaFallback
 app.use(quoteOfferRouter);  // /api/v2/quote-offer + /:token/{accept,decline} (S20)
 app.use(customerRouter);    // /api/v2/customer/me + /offers + /magic-link (S20)

@@ -53,7 +53,7 @@
     </div>
 
     <h1>Get an <span class="accent">instant quote</span> on your cards</h1>
-    <p class="sub">Type the set code and card number from each card you'd like to sell or trade in. We'll price them against live market data and email you an offer.</p>
+    <p class="sub">Type the name and number of each card you'd like to sell or trade in, one per line. We'll price your whole list against today's Cardmarket prices and email you an offer.</p>
 
     <!-- How-to panel with card diagram -->
     <div class="panel">
@@ -86,17 +86,17 @@
           <h3>Where to find the info</h3>
           <div class="step">
             <div class="step-num">1</div>
-            <div class="step-text">Look at the <strong>bottom-left</strong> corner of the card. You'll see a code like <code>MEG 133/132</code> or <code>TWM 200/167</code>.</div>
+            <div class="step-text">The <strong>name</strong> is at the top. The <strong>number</strong> is in a bottom corner, like <code>133/132</code> or <code>4/102</code>.</div>
           </div>
           <div class="step">
             <div class="step-num">2</div>
-            <div class="step-text">The <strong>letters</strong> are the set code (e.g. <code>MEG</code>, <code>PFL</code>, <code>TWM</code>). The <strong>number before the /</strong> is the card number.</div>
+            <div class="step-text">Type the name and the <strong>whole number, including the part after the slash</strong>, one card per line: <code>Bulbasaur 133/132</code>. The first few letters of the name are enough: <code>bul 133/132</code>.</div>
           </div>
           <div class="step">
             <div class="step-num">3</div>
-            <div class="step-text">Type one card per line below: <code>MEG 133</code>. You can ignore the part after the slash.</div>
+            <div class="step-text">Several of the same? Start the line with <code>3x</code>. Add <code>rev</code> for reverse holo, <code>1st Ed</code> for 1st Edition, or <code>lp</code> / <code>pl</code> if it's played. Graded cards are priced in the shop.</div>
           </div>
-          <p style="margin-top:8px; font-size:12px; color:var(--paper-300);">For Magic cards, the set code is 3 letters at the bottom (e.g. <code>MKM</code>, <code>OTJ</code>).</p>
+          <p style="margin-top:8px; font-size:12px; color:var(--paper-300);">Paste a whole collection if you like, up to 1,000 cards. For Magic cards, the set code is 3 letters at the bottom (e.g. <code>MKM</code>, <code>OTJ</code>).</p>
         </div>
       </div>
     </div>
@@ -119,14 +119,15 @@
       </div>
 
       <div class="entry-section">
-        <label for="cardInput">Your cards (one per line, up to 20)</label>
-        <textarea id="cardInput" placeholder="cha 4/102&#10;Charizard ex 056/197&#10;Pikachu 58/102&#10;MEG 133"></textarea>
+        <label for="cardInput">Your cards (one per line, up to 1,000)</label>
+        <textarea id="cardInput" placeholder="Charizard ex 125/197&#10;cha 4/102&#10;3x Pikachu 58/102&#10;Umbreon VMAX 215/203&#10;Gardevoir ex 86/91 rev"></textarea>
         <div class="format-hint">
-          Easiest: the <strong>card name and the number exactly as printed</strong> —
+          Easiest: the <strong>card name and the number exactly as printed</strong>,
           e.g. <code>Charizard 4/102</code>. The first few letters are enough:
           <code>cha 4/102</code>.<br />
-          <code>SET NUMBER</code> also works if you know it — <code>MEG 133</code>.<br />
-          A number on its own can't tell cards apart, so please include a name or a set.
+          The part after the slash matters: it tells us which set the card is from.
+          A set name or code is fine too: <code>Charizard Base Set 4/102</code>,
+          <code>MEG 133/132</code>.
         </div>
       </div>
 
@@ -140,12 +141,13 @@
         <button class="btn secondary btn-clear" id="clearBtn" type="button">Clear</button>
       </div>
 
-      <p class="note">Prices shown are indicative and assume Near Mint condition. Final offer depends on in-person condition check. Cash offer is 55% of market value, store credit is 70%. We price off Cardmarket (EU) and Scryfall live data.</p>
+      <p class="note">Prices shown are indicative and assume Near Mint condition unless you say otherwise. Final offer depends on an in-person condition check. Cash offer is 55% of market value, store credit is 70%. Pokémon prices come from Cardmarket's daily price guide (EU); other games use live data.</p>
     </div>
 
     <!-- Results -->
     <div class="panel results" id="resultsPanel">
       <h2>Your quote</h2>
+      <p class="quote-meta" id="quoteMeta" style="display:none;"></p>
 
       <div class="results-wrap locked" id="resultsWrap">
         <div class="totals">
@@ -180,7 +182,7 @@
     </div>
 
     <footer>
-      <p>Powered by live Cardmarket &amp; Scryfall pricing &middot; <a href="mailto:dave@boardandbrewed.ie">Contact us</a></p>
+      <p>Pok&eacute;mon prices from Cardmarket's daily price guide &middot; <a href="mailto:dave@boardandbrewed.ie">Contact us</a></p>
     </footer>
   </div>
 

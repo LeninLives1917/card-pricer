@@ -1216,5 +1216,19 @@
   "ptcgoCode": "PBL",
   "printedTotal": 84,
   "total": 120
+ },
+ {
+  "id": "me55",
+  "name": "30th Celebration",
+  "ptcgoCode": "30C",
+  "printedTotal": 128,
+  "total": 161
+ },
+ {
+  "id": "me55c",
+  "name": "30th Celebration: Classic Collection",
+  "ptcgoCode": "30C",
+  "printedTotal": 30,
+  "total": 30
  }
 ]

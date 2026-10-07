@@ -23,7 +23,18 @@ const HEALTHY_ENV = {
   SUPABASE_URL: 'https://x.supabase.co',
   SUPABASE_SERVICE_ROLE_KEY: 'k',
   ANTHROPIC_API_KEY: 'k',
+  HUB_SUPABASE_URL: 'https://hub.supabase.co',
+  HUB_SUPABASE_KEY: 'k',
 };
+
+// The quote page's price feed, loaded and fresh. Part of "healthy" since the
+// whole-list quote shipped (7 Oct 2026): without it every quoted card says
+// "we'll price this one by hand".
+const quotePrices = (over = {}) => () => ({
+  configured: true, loaded: true, snapshot_date: '2026-10-06', age_days: 0.8,
+  stale_after_days: 3, mapped_ratio: 0.995, priced_ratio: 0.937, last_error: null,
+  ...over,
+});
 
 const live = () => async () => ({ ok: true, detail: 'query ok' });
 const dead = msg => async () => ({ ok: false, detail: msg });
@@ -31,7 +42,7 @@ const catalogue = (over = {}) => () =>
   ({ ready: true, count: 20427, built_at: Date.now(), download: null, ...over });
 
 const health = (opts = {}) => buildHealthPayload({
-  db: live(), cardDb: catalogue(), env: HEALTHY_ENV,
+  db: live(), cardDb: catalogue(), env: HEALTHY_ENV, quotePrices: quotePrices(),
   fastPath: () => ({ attempted: 0, hit: 0, miss: 0, unusable: 0, skipped: 0,
     hit_rate: null, unusable_rate: null }),
   ...opts,
@@ -298,4 +309,25 @@ test('rectification being off does not mark the service degraded', async () => {
   const body = await health({ env: HEALTHY_ENV });
   assert.equal(body.checks.rectify.ok, true);
   assert.equal(body.status, 'ok');
+});
+
+test('quote prices: unset, never loaded, stale or badly mapped each degrade, and say which', async () => {
+  const unset = await health({ env: { ...HEALTHY_ENV, HUB_SUPABASE_KEY: '' } });
+  assert.ok(unset.degraded.includes('quote_prices'));
+  assert.match(unset.checks.quote_prices.detail, /NOT CONFIGURED/);
+
+  const never = await health({ quotePrices: quotePrices({ loaded: false, age_days: null, mapped_ratio: null, last_error: 'HTTP 401' }) });
+  assert.ok(never.degraded.includes('quote_prices'));
+  assert.match(never.checks.quote_prices.detail, /never loaded: HTTP 401/);
+
+  const stale = await health({ quotePrices: quotePrices({ age_days: 4.2 }) });
+  assert.ok(stale.degraded.includes('quote_prices'));
+  assert.match(stale.checks.quote_prices.detail, /stale/);
+
+  const unmapped = await health({ quotePrices: quotePrices({ mapped_ratio: 0.42 }) });
+  assert.ok(unmapped.degraded.includes('quote_prices'));
+
+  const fine = await health();
+  assert.equal(fine.checks.quote_prices.ok, true);
+  assert.equal(fine.checks.quote_batch.ok, true, 'usage is informational, never degraded');
 });

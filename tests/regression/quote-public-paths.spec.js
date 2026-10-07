@@ -8,7 +8,11 @@
 //   1. apps/quote/modules/lookup.js calls the V2 paths (URL strings).
 //   2. The new V2 routes exist on the identify + price routers.
 //   3. The V2 routes do NOT have requireAuth in their middleware chain;
-//      they DO carry the quoteLeadLimiter gate.
+//      they DO carry a rate limiter, and since 7 Oct 2026 it is
+//      quoteLookupLimiter, NOT quoteLeadLimiter. Sharing the email step's
+//      10/hour counter at two calls per card meant every customer with 5+
+//      cards had their email step refused and never saw their quote
+//      (reproduced: tests/regression/quote-rate-limits.spec.js).
 //
 // We can't easily run the handlers end-to-end without booting Supabase +
 // Anthropic clients, but we can introspect the Express router stack and
@@ -23,7 +27,7 @@ import { dirname, join } from 'node:path';
 import identifyRouter, { handleManualIdentify } from '../../apps/server/routes/identify.js';
 import priceRouter, { handlePrice } from '../../apps/server/routes/price.js';
 import { requireAuth } from '../../apps/server/middleware/auth.js';
-import { quoteLeadLimiter } from '../../apps/server/middleware/rate-limit.js';
+import { quoteLeadLimiter, quoteLookupLimiter } from '../../apps/server/middleware/rate-limit.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname  = dirname(__filename);
@@ -74,7 +78,7 @@ test('S8.5: identify router exposes POST /api/v2/quote/identify-manual', () => {
   assert.ok(route.handlers.length >= 2, 'expected at least limiter + handler');
 });
 
-test('S8.5: V2 identify-manual chain has NO requireAuth and INCLUDES quoteLeadLimiter', () => {
+test('S8.5: V2 identify-manual chain has NO requireAuth and its OWN lookup limiter', () => {
   const route = findRoute(identifyRouter, 'POST', '/api/v2/quote/identify-manual');
   assert.ok(route, 'route missing');
   assert.ok(
@@ -82,8 +86,12 @@ test('S8.5: V2 identify-manual chain has NO requireAuth and INCLUDES quoteLeadLi
     'requireAuth must NOT be in the V2 quote identify chain'
   );
   assert.ok(
-    route.handlers.includes(quoteLeadLimiter),
-    'quoteLeadLimiter must gate the V2 quote identify chain'
+    route.handlers.includes(quoteLookupLimiter),
+    'quoteLookupLimiter must gate the V2 quote identify chain'
+  );
+  assert.ok(
+    !route.handlers.includes(quoteLeadLimiter),
+    'the email step\'s limiter must NOT be spent on per-card lookups'
   );
 });
 
@@ -105,8 +113,12 @@ test('S8.5: price router exposes POST /api/v2/quote/price with limiter, no auth'
     'requireAuth must NOT be in the V2 quote price chain'
   );
   assert.ok(
-    route.handlers.includes(quoteLeadLimiter),
-    'quoteLeadLimiter must gate the V2 quote price chain'
+    route.handlers.includes(quoteLookupLimiter),
+    'quoteLookupLimiter must gate the V2 quote price chain'
+  );
+  assert.ok(
+    !route.handlers.includes(quoteLeadLimiter),
+    'the email step\'s limiter must NOT be spent on per-card pricing'
   );
 });
 

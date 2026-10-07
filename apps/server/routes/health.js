@@ -26,6 +26,8 @@ import { urlStoreState } from '../../../pricing/adapters/cardmarket-html.js';
 import { snapshotState } from '../../../pricing/snapshot-writer.js';
 import { isEnabled as rectifyEnabled } from '../../../pricing/card-rectify.js';
 import { getFastPathMode } from '../../../pricing/fast-path-mode.js';
+import { quotePriceState } from '../../../pricing/quote-prices/hub-feed.js';
+import { getQuoteBatchCounts } from '../../../infra/observability/quote-batch-counters.js';
 
 const router = express.Router();
 
@@ -159,6 +161,13 @@ export async function buildHealthPayload(deps = {}) {
     text_entry: textEntryCheck(readTextEntry()),
     env_drift: reconcileEnv({ blueprint: readBlueprint(), env }),
     set_resolution: setResolutionCheck((deps.setResolution ?? setResolutionState)()),
+    // The customer quote prices from the hub's daily Cardmarket price guide.
+    // NOT advisory: without it every quoted card comes back "we'll price this
+    // one by hand", which is the quote page not doing its job.
+    quote_prices: quotePriceCheck((deps.quotePrices ?? quotePriceState)(), env),
+    // Usage of the whole-list quote, and every 429 on the public quote routes.
+    // Informational; a rate is null until someone has quoted.
+    quote_batch: quoteBatchCheck((deps.quoteBatch ?? getQuoteBatchCounts)()),
     // The Cardmarket product-URL store. ADVISORY — a link is a convenience and
     // must never degrade the service.
     //
@@ -258,6 +267,44 @@ router.get('/api/health', async (req, res) => {
       error: err.message });
   }
 });
+
+/**
+ * The quote page's price feed (pricing/quote-prices/hub-feed.js).
+ *
+ * Configured is read from the ENV, not from whether a refresh ran, so a
+ * deploy that forgot the variables is reported as such from the first request.
+ * Loaded-but-stale is a failure: the batch route refuses to quote from it, so
+ * health must not call it fine.
+ */
+export function quotePriceCheck(s, env = process.env) {
+  const configured = !!(env.HUB_SUPABASE_URL && env.HUB_SUPABASE_KEY);
+  const fresh = !!s.loaded && s.age_days !== null && s.age_days <= s.stale_after_days;
+  const mappedOk = s.mapped_ratio !== null && s.mapped_ratio >= 0.9;
+  const pct = (r) => (r === null || r === undefined ? '?' : `${(r * 100).toFixed(1)}%`);
+  const detail = !configured
+    ? 'NOT CONFIGURED: set HUB_SUPABASE_URL and HUB_SUPABASE_KEY. Every quoted card says "price by hand".'
+    : !s.loaded
+    ? (s.last_error ? `never loaded: ${s.last_error}` : 'not loaded yet (waits for the catalogue at boot)')
+    : !fresh
+    ? `stale: price guide from ${s.snapshot_date} (${s.age_days}d old, limit ${s.stale_after_days}d). Quotes are not priced.`
+    : !mappedOk
+    ? `only ${pct(s.mapped_ratio)} of catalogue cards map to a Cardmarket product`
+    : `price guide ${s.snapshot_date}, ${pct(s.priced_ratio)} of catalogue cards priced`
+      + (s.last_error ? ` (last refresh failed: ${s.last_error})` : '');
+  return { ok: configured && fresh && mappedOk, configured, ...s, detail };
+}
+
+export function quoteBatchCheck(c) {
+  const limited = Object.entries(c.rate_limited || {}).map(([k, v]) => `${k} ${v}`).join(', ');
+  return {
+    ok: true,
+    ...c,
+    detail: (c.quotes
+      ? `${c.quotes} quote(s), ${c.lines} line(s) since boot`
+      : 'nobody has quoted since boot')
+      + (limited ? `; rate-limited: ${limited}` : ''),
+  };
+}
 
 // Below this many attempts, a 0% hit rate is noise rather than evidence — a
 // freshly restarted instance has not been asked enough times to prove anything.

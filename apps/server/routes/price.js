@@ -8,7 +8,7 @@
 
 import express from 'express';
 import { requireAuth } from '../middleware/auth.js';
-import { quoteLeadLimiter } from '../middleware/rate-limit.js';
+import { quoteLookupLimiter } from '../middleware/rate-limit.js';
 // S6 import-flip
 import { buildCardmarketUrl, fetchCardmarketPrice, resolveCardmarketProductUrl, withCardmarketFilters }
   from '../../../pricing/adapters/cardmarket-html.js';
@@ -422,10 +422,10 @@ router.post('/api/price', requireAuth, async (req, res) => {
 // S8.5 fix — public quote-side pricing. Customers using /quote are
 // anonymous; the V1 endpoint required auth and silently 401'd, leaving
 // the page to render "None of the N card(s) could be priced". Same body
-// as /api/price; rate-limited via quoteLeadLimiter (10/hr per IP) so the
-// whole customer flow (identify-manual → price → quote-lead) shares one
-// bucket.
-router.post('/api/v2/quote/price', quoteLeadLimiter, async (req, res) => {
+// as /api/price. Rate-limited by quoteLookupLimiter, its own counter, NOT the
+// email step's: one shared 10/hr bucket meant 2 calls per card starved the
+// email step from the 5th card on. See apps/server/middleware/rate-limit.js.
+router.post('/api/v2/quote/price', quoteLookupLimiter, async (req, res) => {
   return handlePrice(req, res);
 });
 

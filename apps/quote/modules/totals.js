@@ -53,7 +53,26 @@ export function calcCardOffers(marketValue, conditionEstimate, cashPct, creditPc
 }
 
 /**
- * Sum all priced rows (errors are skipped) into {market, cash, credit}.
+ * Same as calcCardOffers, but with the condition multiplier supplied directly.
+ * The whole-list quote gets its multiplier from the server
+ * (pricing/conditions.js, Cardmarket's seven grades), so a typed "lp" or "pl"
+ * prices the same online as at the till instead of falling through this
+ * page's older five-grade table to Near Mint.
+ */
+export function calcOffersWithMult(marketValue, mult, cashPct, creditPct) {
+  const mv = Number(marketValue) || 0;
+  const m = Number.isFinite(Number(mult)) && Number(mult) > 0 ? Number(mult) : 1;
+  const effective = mv * m;
+  return {
+    market: mv,
+    cash: round2(effective * (cashPct / 100)),
+    credit: round2(effective * (creditPct / 100)),
+  };
+}
+
+/**
+ * Sum all priced rows (errors, by-hand lines and open questions are skipped)
+ * into {market, cash, credit}.
  * @param {Array<{market?:number, cash?:number, credit?:number, error?:string}>} rows
  */
 export function sumTotals(rows) {
@@ -61,7 +80,7 @@ export function sumTotals(rows) {
     cash = 0,
     credit = 0;
   for (const r of rows || []) {
-    if (!r || r.error) continue;
+    if (!r || r.error || r.byHand || r.ask) continue;
     market += Number(r.market) || 0;
     cash += Number(r.cash) || 0;
     credit += Number(r.credit) || 0;

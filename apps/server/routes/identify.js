@@ -50,7 +50,7 @@ function recordShadow(out) {
   }
 }
 import { enforceQuota, logScanEvent } from '../middleware/quota.js';
-import { identifyLimiter, quoteLeadLimiter } from '../middleware/rate-limit.js';
+import { identifyLimiter, quoteLookupLimiter } from '../middleware/rate-limit.js';
 // S15 (OCR-first): pipeline + collaborators. Only the route handler at
 // /api/v2/identify-ocr-first reaches into these — the rest of the file is
 // V1-shape preserved.
@@ -959,14 +959,14 @@ router.post('/api/identify-manual', requireAuth, enforceQuota, async (req, res) 
 // S8.5 fix — public quote-side manual identify. /quote.html and apps/quote
 // were silently failing with 401s because they call this endpoint as
 // anonymous customers. Same lookup logic as /api/identify-manual but no
-// requireAuth; rate-limited via quoteLeadLimiter (10/hr per IP) — the
-// terminal quote-lead step is already gated by the same limiter, so the
-// whole customer flow shares one bucket.
+// requireAuth. Rate-limited by quoteLookupLimiter, its OWN counter: sharing
+// quoteLeadLimiter (10/hr) with the email step cost every customer with 5+
+// cards their quote. See apps/server/middleware/rate-limit.js.
 //
 // logScanEvent(null, ...) is a no-op (the helper bails when userId is
 // falsy), so we skip calling it here — there's no user to attribute
 // to and scan_events.user_id is NOT NULL.
-router.post('/api/v2/quote/identify-manual', quoteLeadLimiter, async (req, res) => {
+router.post('/api/v2/quote/identify-manual', quoteLookupLimiter, async (req, res) => {
   // Counted separately from the vendor route on purpose. The operator pastes
   // set+number; customers paste whatever they have. A blended rate would
   // describe neither, and would let one path's failures hide inside the

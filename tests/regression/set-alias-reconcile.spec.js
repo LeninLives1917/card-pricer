@@ -55,6 +55,8 @@ const KNOWN_ALIAS_EXCEPTIONS = {
   'ME1':      'set-id form. Models return the id as often as the printed code.',
   'ME2':      'set-id form, as ME1.',
   'ME3':      'set-id form, as ME1.',
+  'ME4':      'set-id form, as ME1.',
+  'ME5':      'set-id form, as ME1.',
   'SVP':      'set-id form. The catalogue codes these PR-SV and SVP both.',
   'MEP':      'set-id form, as SVP. Target is absent from pokemon-sets.json — '
               + 'tracked separately; see the mep test below.',
@@ -74,6 +76,11 @@ describe('set alias reconciliation', () => {
   // Targets that are legitimately in the catalogue but not yet in the set
   // list. Kept explicit and small; test 6 is what forces this to be revisited.
   const SETS_FILE_GAPS = new Set(['mep']);
+  // Targets that are real, in the set list, and quoted from the hub's price
+  // feed, but not crawled into the catalogue yet. 30th Celebration released
+  // 16 Sep 2026 against a catalogue last crawled ~6 Aug. Test 8 turns red the
+  // moment the crawl lands, which is the prompt to delete this entry.
+  const CATALOGUE_GAPS = new Set(['me55']);
 
   test('1. every alias target is a real set id in pokemon-sets.json', () => {
     const bad = Object.entries(PKM_SET_ALIASES)
@@ -98,7 +105,7 @@ describe('set alias reconciliation', () => {
     for (const key of Object.keys(db)) held.add(key.slice(0, key.lastIndexOf('-')));
 
     const bad = Object.entries(PKM_SET_ALIASES)
-      .filter(([, id]) => !held.has(id))
+      .filter(([, id]) => !held.has(id) && !CATALOGUE_GAPS.has(id))
       .map(([code, id]) => `${code} -> ${id}`);
     assert.deepEqual(bad, [], 'alias targets with zero cards in the catalogue');
   });
@@ -149,6 +156,18 @@ describe('set alias reconciliation', () => {
       BY_ID.has('mep'), false,
       'mep is now in pokemon-sets.json — good. Delete this test and drop the '
       + 'MEP note from KNOWN_ALIAS_EXCEPTIONS.',
+    );
+  });
+
+  test('8. me55 (30th Celebration) is still waiting for a crawl', () => {
+    const dbPath = join(REPO, 'data', 'card-db.json');
+    assert.ok(fs.existsSync(dbPath), 'data/card-db.json required — see test 2');
+    const db = JSON.parse(fs.readFileSync(dbPath, 'utf8'));
+    const crawled = Object.keys(db).some((k) => k.startsWith('me55-'));
+    assert.equal(
+      crawled, false,
+      'me55 is in the catalogue now — good. Delete this test and the me55 entry '
+      + 'in CATALOGUE_GAPS (the quote stops augmenting it on its own).',
     );
   });
 

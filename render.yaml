@@ -101,6 +101,17 @@ services:
       - key: SHOP_EMAIL
         sync: false
 
+      # ---------------- Customer quote prices (REQUIRED for /quote) ----------------
+      # The whole-list quote prices from the boardbrewed-hub Supabase project's
+      # daily Cardmarket price guide (rpc quote_price_feed, rebuilt hourly by
+      # pg_cron). Read-only public market data, so the hub's PUBLISHABLE key is
+      # enough. Unset, every quoted card says "we'll price it by hand" and
+      # /api/health reports quote_prices: NOT CONFIGURED.
+      - key: HUB_SUPABASE_URL
+        sync: false
+      - key: HUB_SUPABASE_KEY
+        sync: false
+
       # ---------------- Privacy / quote-leads ip hash (OPTIONAL) ----------------
       - key: IP_HASH_SALT
         sync: false

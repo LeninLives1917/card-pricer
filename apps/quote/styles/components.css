@@ -631,3 +631,118 @@ footer a:hover {
   .lead-form input { min-height: 44px; }
   :focus-visible { outline-width: 3px; outline-offset: 3px; }
 }
+
+/* ── Whole-list quote (7 Oct 2026) ───────────────────────────────────── */
+
+.progress-bar.working {
+  animation: cp-working 1.1s ease-in-out infinite;
+}
+@keyframes cp-working {
+  0%, 100% { opacity: 0.35; }
+  50% { opacity: 1; }
+}
+
+.quote-meta {
+  margin: -4px 0 12px;
+  font-family: 'IBM Plex Mono', ui-monospace, monospace;
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
+  color: var(--paper-300);
+}
+
+.qty-badge {
+  font-family: 'IBM Plex Mono', ui-monospace, monospace;
+  font-style: normal;
+  font-size: 12px;
+  color: var(--accent-soft);
+}
+
+.card-note {
+  margin-top: 2px;
+  font-size: 11px;
+  color: var(--paper-400);
+}
+
+.card-row.by-hand {
+  border-style: dashed;
+  background: transparent;
+}
+.card-row.by-hand .card-prices .label {
+  font-size: 11px;
+  color: var(--paper-300);
+}
+
+/* Questions sit OUTSIDE the blurred results so they can be answered first. */
+.ask-panel {
+  margin: 0 0 16px;
+  padding: 12px;
+  border: 1px solid var(--accent);
+  border-radius: var(--r-2);
+  background: var(--accent-mute);
+}
+.ask-head {
+  font-weight: 600;
+  color: var(--paper-100);
+  margin-bottom: 8px;
+}
+.ask-item {
+  padding: 10px 0;
+  border-top: 1px solid var(--hairline);
+}
+.ask-item:first-of-type {
+  border-top: 0;
+}
+.ask-line {
+  font-size: 12px;
+  color: var(--paper-300);
+}
+.ask-line code {
+  font-family: 'IBM Plex Mono', ui-monospace, monospace;
+  color: var(--accent-soft);
+}
+.ask-question {
+  margin: 4px 0 8px;
+  color: var(--paper-100);
+  font-size: 14px;
+}
+.ask-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.ask-option {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  min-width: 140px;
+  max-width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--ink-400);
+  border-radius: var(--r-1);
+  background: var(--ink-300);
+  color: var(--paper-100);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color var(--t-fast) var(--ease), background var(--t-fast) var(--ease);
+}
+.ask-option:hover,
+.ask-option:focus-visible {
+  border-color: var(--accent);
+  background: var(--ink-400);
+  outline: none;
+}
+.ask-option .opt-name {
+  font-weight: 600;
+  font-size: 13px;
+}
+.ask-option .opt-set {
+  font-family: 'IBM Plex Mono', ui-monospace, monospace;
+  font-size: 11px;
+  color: var(--paper-300);
+}
+.ask-option.ask-unsure {
+  border-style: dashed;
+  background: transparent;
+}

@@ -18,10 +18,14 @@ import app from './index.js';
 import { initCardDb, startCardDbDirtySaveInterval } from './_card-db-boot.js';
 import { startFxRefreshInterval } from '../../pricing/fx.js';
 import { loadIndex as loadPhashIndex } from '../../pricing/phash.js';
+import { CARD_DB } from './_card-db-boot.js';
+import { startQuotePriceRefresh } from '../../pricing/quote-prices/hub-feed.js';
 
 initCardDb();
 startCardDbDirtySaveInterval();
 startFxRefreshInterval();
+// Customer quote prices: the hub's daily Cardmarket price guide, refreshed hourly.
+startQuotePriceRefresh({ getCardDb: () => CARD_DB });
 loadPhashIndex()
   .then(() => console.log('[phash] Index loaded from card-phashes.json'))
   .catch(err => console.warn('[phash] loadIndex failed (non-fatal):', err.message));
