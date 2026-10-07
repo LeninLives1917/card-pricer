@@ -133,10 +133,24 @@ longest-common-subsequence alignment of names (products by idProduct, cards by
 number), repeated on what was left for the late batch. Checked: all 63 ids
 TCGdex does have agree, and every card's attack names match the Cardmarket
 product's. The Classic Collection is matched by name (unique apart from the
-LEGEND halves). Result: all 188 cards priced. 1,550 hub cards in 109 other sets
-(mostly Black Star Promos, Hidden Fates Shiny Vault, Team Magma vs Team Aqua,
-trainer kits) still have no id and quote as "by hand"; the same method would
-cover most of them.
+LEGEND halves). Result: all 188 cards priced.
+
+**The other sets, same morning.** Order alignment agreed with TCGdex's own ids
+on 50 sets but disagreed on 43 (holo and non-holo copies, regular and
+full-art versions, same-name pairs like Torchic 25/26), so outside the 30th
+Celebration order is not used as evidence. A gap card is filled only when,
+inside its set's Cardmarket expansion (the one TCGdex's own ids point at) and
+among products no card owns, its name is unique on both sides and its attacks
+agree, or its attacks single out exactly one product. 485 filled. 68 of them
+(Wizards and DP Black Star Promos: one TCGdex id to choose the expansion from,
+and prices that look like graded or foreign copies) are kept but switched off
+(`active = false`), Dave's call. Catalogue cards priced: 93.6% -> 95.5%.
+
+Still unmapped (1,133 hub cards): promo sets (~300), Hidden Fates Shiny Vault
+(94, no TCGdex id to find its expansion by), trainer kits (~330), and ~400
+regular/full-art or holo/non-holo twins whose attacks are identical, which only
+product order (unreliable, above) or a person can tell apart. They quote as
+"by hand".
 
 ## Failure is loud
 
