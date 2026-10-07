@@ -108,6 +108,8 @@ const BY_HAND_REASONS = {
   graded: 'graded card, priced in store',
   high_value: 'high-value card, priced in store',
   price_unstable: "Cardmarket's price looked unreliable today",
+  prices_disagree: "Cardmarket's prices for this card don't agree today",
+  product_unconfirmed: "we'll confirm the exact version in store",
 };
 
 function pricedRowHtml(it, icon) {

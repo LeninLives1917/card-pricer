@@ -161,7 +161,7 @@ export async function handleQuoteLead(body, req, deps = {}) {
         <h3>New quote request</h3>
         <p><b>Email:</b> ${escapeHtml(email)}${name ? ' &middot; <b>Name:</b> ' + escapeHtml(name) : ''}${newsletter ? ' &middot; <b>Newsletter:</b> YES' : ''}</p>
         <p><b>Totals:</b> Market €${(totals?.market || 0).toFixed(2)} &middot; Cash €${(totals?.cash || 0).toFixed(2)} &middot; Credit €${(totals?.credit || 0).toFixed(2)}</p>
-        <p><b>Cards:</b> ${cardCount}${byHand.length ? ` (${byHand.length} to price by hand, listed at the bottom)` : ''}${body?.prices_as_of ? ` &middot; <b>Prices:</b> Cardmarket price guide ${escapeHtml(body.prices_as_of)}` : ''}</p>
+        <p><b>Cards:</b> ${cardCount}${byHand.length ? ` (${byHand.length} to price by hand, listed at the bottom)` : ''}${body?.prices_as_of ? ` &middot; <b>Prices:</b> Cardmarket, cheapest NM English copy, ${escapeHtml(body.prices_as_of)}` : ''}</p>
         <p style="color:#666; font-size:13px;">${attachments.length} card photo${attachments.length !== 1 ? 's' : ''} attached.</p>
         <table style="width:100%; border-collapse:collapse;">
           <thead><tr><th align="left">#</th><th align="left">Card</th><th align="right">MV</th><th align="right">Cash</th><th align="right">Credit</th></tr></thead>

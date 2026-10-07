@@ -37,19 +37,44 @@ POST /api/v2/quote/batch  { lines: [...], game: 'pokemon' }
   split them out); they come back `unpriced` and the shop prices them by hand.
 - **Reverse holo** uses the guide's `_holo` fields, only on cards that have a
   reverse printing; otherwise priced as the card that exists, flagged.
-- **Market value is Cardmarket TREND**, falling back to avg7, avg30, avg. Not
-  `low`: that is the cheapest copy in ANY condition. A trend more than 3x the
-  30-day average is capped to the average and flagged (`price.capped`). A
-  trend under a third of its 7- or 30-day average uses the median of the three
+- **Market value is the cheapest Near Mint English copy** on Cardmarket
+  (TCGGO's `lowest_near_mint`, pulled daily into the hub's `cm_tcggo_daily`),
+  the number the shop scanner prices from, so a quote and the offer at the
+  counter start from the same place. Dave's call, 7 Oct; until then the quote
+  used the guide's trend (Mew ex 152/128: trend 99.21, NM English 105). The
+  guide is the cross-check and the fallback (`price.basis` says which):
+  - No NM English number for the card (none for sale, not in TCGGO's pull,
+    TCGGO files two cards under the product, or names it differently): the
+    guide's value, with the reason on the row (`price.nm_en_fallback`), counted.
+  - TCGGO and TCGdex put a different card on the product (the numbers differ;
+    not checked in the Classic Collection sets, which TCGGO numbers as printed):
+    by hand, `product_unconfirmed`. Snorlax swsh1-140 had been quoted at the
+    trend of the product Cardmarket calls "Snorlax VMAX".
+  - The copy and the guide 5x apart (the scanner's factor between sources),
+    when the copy is the dearer and at least EUR 0.50, or the guide is the
+    dearer and at least EUR 2: by hand, `prices_disagree`. Bulk at 0.02 against
+    a trend of 0.10 is the bulk market and is quoted.
+  - A reverse holo stays on the guide's reverse fields: TCGGO prices the
+    product, not the reverse.
+
+  Live catalogue, 7 Oct: 18,056 of 19,718 priced cards (91.6%) from the NM
+  English copy; 215 disagree and 34 are unconfirmed, by hand. Against the
+  trend the copy is lower on 13,881 of those cards and higher on 3,465 (median
+  0.63x, mostly bulk).
+- **The guide's value** is TREND, falling back to avg7, avg30, avg. Not `low`:
+  that is the cheapest copy in ANY condition. A trend more than 3x the 30-day
+  average is capped to the average and flagged (`price.capped`). A trend under
+  a third of its 7- or 30-day average uses the median of the three
   (`price.dip`), and when they are more than 10x apart on a card worth EUR 2+
-  nothing is quoted (`price_unstable`, by hand). The 6 Oct guide had Gengar
-  (HS—Triumphant 94) at trend 0.02 beside avg30 908.54.
+  nothing is quoted (`price_unstable`, by hand, whatever the NM English copy
+  says). The 6 Oct guide had Gengar (HS—Triumphant 94) at trend 0.02 beside
+  avg30 908.54.
 - **Graded cards** (PSA / BGS / CGC / SGC / "graded" / "slab") are priced by
   hand (`graded`): the guide prices raw cards.
 - **Cards worth over EUR 300** (`HAND_PRICE_ABOVE_EUR`) are priced by hand
   (`high_value`), and a question option over the line carries no price, so
-  picking it is by hand too. Judged on the card's own guide value (the reverse
-  value for a reverse), before condition, per card. On 7 Oct "Gengar H9/H32"
+  picking it is by hand too. Judged on the number the card would be quoted at
+  (the reverse value for a reverse), before condition, per card. On 7 Oct "Gengar H9/H32"
   (Skyridge) offered EUR 4,217.75 with copies for sale from EUR 450; on a card
   like that the guide is a thin market's say-so. 167 hub cards had a trend over
   EUR 300 in the 7 Oct guide. The page's step text names the same figure.
@@ -108,10 +133,11 @@ boardbrewed-hub Supabase (`ycajinletezqllvnjsct`):
 
 | object | what |
 |---|---|
+| `cm_tcggo_daily` | TCGGO's daily pull, jobs `tcggo-cards-*` 04:00-04:25 UTC: the cheapest NM English copy per Cardmarket product, and TCGGO's name and number for it |
 | `cm_price_snapshot` | Cardmarket's daily price guide, job `cardmarket-price-snapshot` 04:30 UTC |
 | `cm_card_meta`, `cm_sets` | TCGdex card list with Cardmarket `id_product` |
 | `quote_product_fill` | Cardmarket ids for cards TCGdex has not mapped (see below); an id TCGdex supplies wins |
-| `quote_price_feed_build()` | the join, ~0.4 s warm |
+| `quote_price_feed_build()` | the join, ~0.4 s warm. Version 2 (7 Oct) appends four columns to each card: NM English price, TCGGO rows for the product, TCGGO's name and number (the latest pull within three days, per product) |
 | `quote_price_feed_cache` | one row, rebuilt hourly at :20 by pg_cron (`quote-price-feed-refresh`) |
 | `rpc/quote_price_feed` | returns the cached document; SECURITY DEFINER, granted to anon |
 
@@ -162,7 +188,12 @@ product order (unreliable, above) or a person can tell apart. They quote as
 ## Failure is loud
 
 - `/api/health` -> `quote_prices`: NOT advisory. Fails when unconfigured,
-  never loaded, older than 3 days (`PRICE_STALE_DAYS`), or mapping < 90%.
+  never loaded, older than 3 days (`PRICE_STALE_DAYS`), or mapping < 90%; and
+  when the NM English pull is missing or older than 3 days, or under 80% of
+  priced cards price from it (`QUOTE_NM_EN_MIN_RATIO`), because then the quote
+  is running on its fallback.
+- `/api/health` -> `quote_batch`: `priced_nm_en`, `priced_on_guide`,
+  `on_guide_by_reason` and `nm_en_ratio` for the lines actually quoted.
 - `/api/health` -> `quote_batch`: quotes, lines, priced / asked / not-found
   ratios, unpriced by reason, and every 429 on the quote limiters.
 - A stale or missing feed does not fall back to anything: every card comes back

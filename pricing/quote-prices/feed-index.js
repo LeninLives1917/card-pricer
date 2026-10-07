@@ -13,8 +13,12 @@
 //
 // THE DATA (boardbrewed-hub Supabase, rpc quote_price_feed, rebuilt hourly)
 //
+//   cm_tcggo_daily      TCGGO's daily pull: the cheapest Near Mint English
+//                       copy per Cardmarket product, the number the shop
+//                       scanner prices from. What the quote uses (marketPriceOf)
 //   cm_price_snapshot   Cardmarket's own daily price guide: avg, low, trend,
-//                       avg1/7/30, and the same with _holo (= reverse holo)
+//                       avg1/7/30, and the same with _holo (= reverse holo).
+//                       The cross-check, and the fallback
 //   cm_card_meta        the TCGdex card list, with Cardmarket's id_product
 //   cm_sets             TCGdex sets, with the printed total
 //
@@ -29,12 +33,18 @@
 
 import { normName, editDistanceWithin } from '../name-index.js';
 
-/** Column layout of a feed card row (see quote_price_feed_build() in the hub). */
+/**
+ * Column layout of a feed card row (see quote_price_feed_build() in the hub).
+ * 16-19 arrived with feed version 2 (7 Oct 2026): TCGGO's cheapest Near Mint
+ * English copy for the Cardmarket product, and what TCGGO calls the product,
+ * so the two can be checked against each other before the number is used.
+ */
 export const COL = Object.freeze({
   set: 0, local: 1, name: 2, idProduct: 3,
   trend: 4, avg7: 5, avg30: 6, avg: 7, low: 8,
   trendHolo: 9, avg7Holo: 10, avg30Holo: 11, avgHolo: 12, lowHolo: 13,
   firstEd: 14, hasReverse: 15,
+  nmEn: 16, tcggoRows: 17, tcggoName: 18, tcggoNumber: 19,
 });
 
 /** Column layout of a feed set row. */
@@ -157,36 +167,117 @@ export const BROKEN_RATIO = 10;
 export const BROKEN_MIN_EUR = 2;
 
 /**
+ * THE CHEAPEST NEAR MINT ENGLISH COPY (7 Oct 2026, Dave's call).
+ *
+ * The quote used to price from the guide's trend while the shop scanner
+ * (pricing/price.js) prices from TCGGO's lowest_near_mint, the cheapest NM
+ * English copy for sale, so online and at the counter started from different
+ * numbers: Mew ex 152/128 trend 99.21 against 105, Charizard ex 125/197 3.51
+ * against 2.50. The quote now uses the scanner's number, from the hub's daily
+ * TCGGO pull, and keeps the guide as the cross-check and the fallback.
+ *
+ * Measured on 7 Oct: a clean NM English price for 18,231 of the 20,121 hub
+ * cards with a trend. The guide's value (with the spike and dip handling
+ * above) is used instead, and counted, when there is none. Two outcomes go to
+ * the shop as by hand, because neither number can be trusted:
+ *
+ *   product_unconfirmed  TCGGO and TCGdex put a different card on the same
+ *                        Cardmarket product: Snorlax swsh1-140 sits on the
+ *                        product Cardmarket itself calls "Snorlax VMAX", and so
+ *                        did its trend (69.66). Numbers are compared, except in
+ *                        the Classic Collection sets, which TCGGO numbers the
+ *                        way the card is printed (BS004 for 30th-c 001).
+ *   prices_disagree      the NM English copy and the guide are NM_EN_RATIO
+ *                        apart or more (Darkrai LV.X dp4-104: 750 against a
+ *                        trend of 33.17). The scanner uses the same factor
+ *                        between sources (detectPriceDivergence). Checked when
+ *                        the dearer of the two is the copy and it is at least
+ *                        NM_EN_OVER_MIN_EUR, or the guide and it is at least
+ *                        NM_EN_UNDER_MIN_EUR: bulk lists at EUR 0.02 against
+ *                        trends of 0.10, and that is the market, not a fault.
+ */
+export const NM_EN_RATIO = 5;
+export const NM_EN_OVER_MIN_EUR = 0.5;
+export const NM_EN_UNDER_MIN_EUR = 2;
+
+/** TCGdex sets whose cards TCGGO numbers as printed (the original's number). */
+export const NUMBERS_DIFFER_BY_DESIGN = new Set(['cel25cc', '30th-c']);
+
+const lastDigits = (s) => {
+  const m = String(s ?? '').match(/(\d+)\D*$/);
+  return m ? Number(m[1]) : null;
+};
+
+/** true / false, or null when either side has no number to compare. */
+export function numbersAgree(a, b) {
+  const x = lastDigits(a);
+  const y = lastDigits(b);
+  return x == null || y == null ? null : x === y;
+}
+
+/**
+ * Is TCGGO's record of this row's Cardmarket product the same card?
+ * @returns {'ok'|'not_in_feed'|'not_in_tcggo'|'shared_product'|'name_differs'|'product_unconfirmed'}
+ */
+export function tcggoCheck(row) {
+  if (!Array.isArray(row) || row.length <= COL.tcggoNumber) return 'not_in_feed';
+  const n = row[COL.tcggoRows];
+  if (n == null) return 'not_in_tcggo';
+  if (n > 1) return 'shared_product';
+  if (!NUMBERS_DIFFER_BY_DESIGN.has(row[COL.set])
+    && numbersAgree(row[COL.tcggoNumber], row[COL.local]) === false) return 'product_unconfirmed';
+  if (!namesAgree(row[COL.tcggoName], row[COL.name])) return 'name_differs';
+  return 'ok';
+}
+
+function pricesDisagree(nm, guide) {
+  if (nm >= NM_EN_RATIO * guide && nm >= NM_EN_OVER_MIN_EUR) return true;
+  if (guide >= NM_EN_RATIO * nm && guide >= NM_EN_UNDER_MIN_EUR) return true;
+  return false;
+}
+
+/**
  * The market value to quote from, and which field it came from.
  *
- * Cardmarket TREND first: it is the guide's own reference price and the number
- * EU shops quote against. Not `low` — that is the cheapest listing in ANY
- * condition, measured at 0.35-0.48 of an EX+ copy (pricing/conditions.js), so
- * it would systematically under-quote a Near Mint card.
+ * The cheapest NM English copy (`nm_en`, see above), checked against the
+ * guide. The guide's value is Cardmarket TREND: the guide's own reference
+ * price. Not `low` — that is the cheapest listing in ANY condition, measured
+ * at 0.35-0.48 of an EX+ copy (pricing/conditions.js), so it would
+ * systematically under-quote a Near Mint card.
  *
  * A trend more than SPIKE_RATIO x the 30-day average is capped to the average
  * and flagged. On a thin market one odd sale moves the trend; a quote that
  * promises that number to a stranger is the expensive mistake. A trend that
  * has collapsed under its averages is smoothed (`dip`) or, when the guide's
  * own numbers are an order of magnitude apart, not quoted at all
- * (`price_unstable`); see BROKEN_RATIO.
+ * (`price_unstable`); see BROKEN_RATIO. A card the guide cannot price is not
+ * priced from the NM English copy alone: there is nothing to check it against.
  *
- * Reverse holo uses the _holo fields, and only on cards that have a reverse
- * printing. First Edition and Shadowless are not separate in the price guide,
- * so they are NOT priced here: guessing the unlimited price for a 1st Edition
- * card is wrong by a multiple.
+ * Reverse holo uses the guide's _holo fields, and only on cards that have a
+ * reverse printing: TCGGO's number is for the product, not the reverse. First
+ * Edition and Shadowless are not separate in the price guide, so they are NOT
+ * priced here: guessing the unlimited price for a 1st Edition card is wrong by
+ * a multiple.
  *
- * @returns {{value:number, field:string, capped:boolean, finish_fallback:boolean}|{value:null, reason:string}}
+ * @param {Array} row  a feed card row
+ * @param {object} [opts]
+ * @param {string|null} [opts.finish]
+ * @param {string|null} [opts.nmEnOff]  why NM English cannot be used for any
+ *   card right now ('nm_en_missing', 'nm_en_stale'), or null
+ * @returns {{value:number, field:string, basis:'nm_en'|'trend', capped:boolean,
+ *   finish_fallback:boolean, nm_en_fallback?:string}|{value:null, reason:string}}
  */
-export function marketPriceOf(row, { finish = null } = {}) {
+export function marketPriceOf(row, { finish = null, nmEnOff = null } = {}) {
   if (!row || row[COL.idProduct] == null) return { value: null, reason: 'no_cardmarket_product' };
   if (finish === 'first_edition' || finish === 'shadowless') {
     return { value: null, reason: finish };
   }
+  const tc = tcggoCheck(row);
+  if (tc === 'product_unconfirmed') return { value: null, reason: 'product_unconfirmed' };
   // Asked for a reverse holo of a card that has no reverse printing: price the
   // card that exists, and say the finish could not be applied.
   if (finish === 'reverse_holo' && row[COL.hasReverse] !== true) {
-    const n = marketPriceOf(row);
+    const n = marketPriceOf(row, { nmEnOff });
     return n.value == null ? n : { ...n, finish_fallback: true };
   }
   const wantHolo = finish === 'reverse_holo';
@@ -216,14 +307,21 @@ export function marketPriceOf(row, { finish = null } = {}) {
   if (wantHolo) {
     const h = pick(true);
     if (h?.unstable) return UNSTABLE;
-    if (h) return { ...h, finish_fallback: false };
-    const n = pick(false);
-    if (n?.unstable) return UNSTABLE;
-    return n ? { ...n, finish_fallback: true } : { value: null, reason: 'no_price_in_guide' };
+    if (h) return { ...h, basis: 'trend', nm_en_fallback: 'reverse_holo', finish_fallback: false };
+    // No reverse prices in the guide: the standard card, by the usual rule.
+    const n = marketPriceOf(row, { nmEnOff });
+    return n.value == null ? n : { ...n, finish_fallback: true };
   }
-  const n = pick(false);
-  if (n?.unstable) return UNSTABLE;
-  return n ? { ...n, finish_fallback: false } : { value: null, reason: 'no_price_in_guide' };
+  const g = pick(false);
+  if (g?.unstable) return UNSTABLE;
+  if (!g) return { value: null, reason: 'no_price_in_guide' };
+  const onGuide = (why) => ({ ...g, basis: 'trend', nm_en_fallback: why, finish_fallback: false });
+  if (nmEnOff) return onGuide(nmEnOff);
+  if (tc !== 'ok') return onGuide(tc);
+  const nm = pos(row[COL.nmEn]);
+  if (nm == null) return onGuide('no_listing');
+  if (pricesDisagree(nm, g.value)) return { value: null, reason: 'prices_disagree' };
+  return { value: round2(nm), field: 'nm_en', basis: 'nm_en', capped: false, finish_fallback: false };
 }
 
 /**
@@ -258,6 +356,10 @@ export function buildPriceIndex(feed, cardDb, pkmSets = [], reprintList = []) {
   const stats = {
     catalogue_cards: 0, mapped: 0, mapped_by_name: 0, priced: 0,
     unmapped_set: 0, name_mismatch: 0, no_card: 0,
+    // How the priced cards are priced: from the NM English copy, or from the
+    // guide and why (marketPriceOf's nm_en_fallback). And the two by-hand
+    // outcomes the cross-check adds.
+    nm_en_priced: 0, on_guide: {}, prices_disagree: 0, product_unconfirmed: 0,
   };
   const unmappedSets = new Map();
   const byCatalogueKey = new Map();
@@ -319,7 +421,14 @@ export function buildPriceIndex(feed, cardDb, pkmSets = [], reprintList = []) {
     byCatalogueKey.set(key, hit);
     stats.mapped += 1;
     if (how === 'name') stats.mapped_by_name += 1;
-    if (marketPriceOf(hit).value != null) stats.priced += 1;
+    const mp = marketPriceOf(hit);
+    if (mp.value != null) {
+      stats.priced += 1;
+      if (mp.basis === 'nm_en') stats.nm_en_priced += 1;
+      else stats.on_guide[mp.nm_en_fallback] = (stats.on_guide[mp.nm_en_fallback] || 0) + 1;
+    } else if (mp.reason === 'prices_disagree' || mp.reason === 'product_unconfirmed') {
+      stats[mp.reason] += 1;
+    }
   }
 
   // Augmentation: hub sets the catalogue does not have yet.
@@ -384,6 +493,7 @@ export function buildPriceIndex(feed, cardDb, pkmSets = [], reprintList = []) {
 
   return {
     snapshotDate: feed?.snapshot_date ?? null,
+    nmEnDate: feed?.nm_en_date ?? null,
     cacheBuiltAt: feed?.cache_built_at ?? feed?.generated_at ?? null,
     feedCards: cards.length,
     byCatalogueKey,
@@ -395,6 +505,7 @@ export function buildPriceIndex(feed, cardDb, pkmSets = [], reprintList = []) {
       ...stats,
       mapped_ratio: stats.catalogue_cards ? stats.mapped / stats.catalogue_cards : null,
       priced_ratio: stats.catalogue_cards ? stats.priced / stats.catalogue_cards : null,
+      nm_en_ratio: stats.priced ? stats.nm_en_priced / stats.priced : null,
       unmapped_sets: Object.fromEntries([...unmappedSets].sort((a, b) => b[1] - a[1])),
     },
   };

@@ -276,10 +276,23 @@ router.get('/api/health', async (req, res) => {
  * Loaded-but-stale is a failure: the batch route refuses to quote from it, so
  * health must not call it fine.
  */
+/**
+ * Below this share of priced catalogue cards priced from the cheapest NM
+ * English copy, the quote is mostly running on its fallback (the guide's
+ * trend), which is not what the shop asked for. Measured 7 Oct 2026 on the
+ * live catalogue: 0.916 (18,056 of 19,718 priced cards).
+ */
+export const QUOTE_NM_EN_MIN_RATIO = 0.8;
+
 export function quotePriceCheck(s, env = process.env) {
   const configured = !!(env.HUB_SUPABASE_URL && env.HUB_SUPABASE_KEY);
   const fresh = !!s.loaded && s.age_days !== null && s.age_days <= s.stale_after_days;
   const mappedOk = s.mapped_ratio !== null && s.mapped_ratio >= 0.9;
+  // The quote prices from the cheapest NM English copy (TCGGO's daily pull)
+  // and falls back to the guide's trend card by card. A missing or stale pull
+  // puts EVERY card on the fallback; that must show here, not just in a log.
+  const nmEnFresh = s.nm_en_age_days != null && s.nm_en_age_days <= s.stale_after_days;
+  const nmEnOk = s.nm_en_ratio != null && s.nm_en_ratio >= QUOTE_NM_EN_MIN_RATIO;
   const pct = (r) => (r === null || r === undefined ? '?' : `${(r * 100).toFixed(1)}%`);
   const detail = !configured
     ? 'NOT CONFIGURED: set HUB_SUPABASE_URL and HUB_SUPABASE_KEY. Every quoted card says "price by hand".'
@@ -289,9 +302,16 @@ export function quotePriceCheck(s, env = process.env) {
     ? `stale: price guide from ${s.snapshot_date} (${s.age_days}d old, limit ${s.stale_after_days}d). Quotes are not priced.`
     : !mappedOk
     ? `only ${pct(s.mapped_ratio)} of catalogue cards map to a Cardmarket product`
-    : `price guide ${s.snapshot_date}, ${pct(s.priced_ratio)} of catalogue cards priced`
+    : !s.nm_en_date
+    ? 'no NM English prices in the feed: every card is quoted from the guide trend instead'
+    : !nmEnFresh
+    ? `NM English prices stale (${s.nm_en_date}, ${s.nm_en_age_days}d old): every card is quoted from the guide trend instead`
+    : !nmEnOk
+    ? `only ${pct(s.nm_en_ratio)} of priced cards have a usable NM English price (limit ${pct(QUOTE_NM_EN_MIN_RATIO)}); the rest are on the guide trend`
+    : `NM English ${s.nm_en_date} on ${pct(s.nm_en_ratio)} of priced cards, guide ${s.snapshot_date}, `
+      + `${pct(s.priced_ratio)} of catalogue cards priced`
       + (s.last_error ? ` (last refresh failed: ${s.last_error})` : '');
-  return { ok: configured && fresh && mappedOk, configured, ...s, detail };
+  return { ok: configured && fresh && mappedOk && nmEnFresh && nmEnOk, configured, ...s, detail };
 }
 
 export function quoteBatchCheck(c) {

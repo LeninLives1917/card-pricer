@@ -33,6 +33,7 @@ const HEALTHY_ENV = {
 const quotePrices = (over = {}) => () => ({
   configured: true, loaded: true, snapshot_date: '2026-10-06', age_days: 0.8,
   stale_after_days: 3, mapped_ratio: 0.995, priced_ratio: 0.937, last_error: null,
+  nm_en_date: '2026-10-06', nm_en_age_days: 0.8, nm_en_ratio: 0.89,
   ...over,
 });
 

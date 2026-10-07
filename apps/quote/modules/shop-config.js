@@ -114,7 +114,7 @@ export function applyShopBranding() {
       getCashPct() +
       '% of market value, store credit is ' +
       getCreditPct() +
-      "%. Pok\u00e9mon prices come from Cardmarket's daily price guide (EU); other games use live data.";
+      "%. Pok\u00e9mon prices come from the cheapest Near Mint English copy on Cardmarket (EU), checked daily; other games use live data.";
   }
 
   // Newsletter checkbox: hidden when the shop opted out; otherwise relabel.

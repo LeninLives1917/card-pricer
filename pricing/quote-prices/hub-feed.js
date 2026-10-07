@@ -116,7 +116,8 @@ export async function refreshQuotePrices({ cardDb, env = process.env, fetchImpl 
     state.lastError = null;
     console.log(`[QUOTE-PRICES] feed ${feed.snapshot_date}: ${index.feedCards} hub cards, `
       + `${index.stats.mapped}/${index.stats.catalogue_cards} catalogue cards mapped, `
-      + `${index.stats.priced} priced, built in ${state.buildMs}ms`);
+      + `${index.stats.priced} priced (${index.stats.nm_en_priced} from NM English `
+      + `${feed.nm_en_date ?? 'MISSING'}), built in ${state.buildMs}ms`);
     return { ok: true };
   } catch (e) {
     state.failures += 1;
@@ -166,12 +167,21 @@ export function _setQuotePriceIndex(index) {
 export function quotePriceState(now = Date.now()) {
   const idx = state.index;
   const age = idx ? snapshotAgeDays(idx.snapshotDate, now) : null;
+  const nmAge = idx ? snapshotAgeDays(idx.nmEnDate, now) : null;
   return {
     configured: state.configured,
     loaded: !!idx,
     snapshot_date: idx?.snapshotDate ?? null,
     age_days: age === null ? null : Number(age.toFixed(1)),
     stale_after_days: PRICE_STALE_DAYS,
+    // The cheapest NM English copy (TCGGO's pull), which the quote prices from.
+    nm_en_date: idx?.nmEnDate ?? null,
+    nm_en_age_days: nmAge === null ? null : Number(nmAge.toFixed(1)),
+    nm_en_priced: idx?.stats.nm_en_priced ?? null,
+    nm_en_ratio: idx?.stats.nm_en_ratio ?? null,
+    on_guide: idx?.stats.on_guide ?? null,
+    prices_disagree: idx?.stats.prices_disagree ?? null,
+    product_unconfirmed: idx?.stats.product_unconfirmed ?? null,
     cache_built_at: idx?.cacheBuiltAt ?? null,
     feed_cards: idx?.feedCards ?? null,
     catalogue_cards: idx?.stats.catalogue_cards ?? null,

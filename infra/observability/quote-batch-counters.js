@@ -28,9 +28,15 @@ const counts = {
   trend_dips: 0,
   finish_fallback: 0,
   augmented_hits: 0,
+  // Priced lines by which number they were priced from (7 Oct 2026): the
+  // cheapest NM English copy, which is the point, or the guide's value, which
+  // is the fallback and is counted by reason in onGuideBy.
+  priced_nm_en: 0,
+  priced_on_guide: 0,
 };
 for (const o of LINE_OUTCOMES) counts[o] = 0;
 
+const onGuideBy = {};
 const unpricedBy = {};
 const rateLimited = {};
 // Lines answered by a REWRITE rather than as typed (quote-batch.js
@@ -52,6 +58,14 @@ export function countQuote(rows) {
       unpricedBy[r.unpriced_reason] = (unpricedBy[r.unpriced_reason] || 0) + 1;
     }
     if (r.reprint_question) counts.reprint_asks += 1;
+    if (r.status === 'priced' && r.price) {
+      if (r.price.basis === 'nm_en') counts.priced_nm_en += 1;
+      else {
+        counts.priced_on_guide += 1;
+        const why = r.price.nm_en_fallback || 'unknown';
+        onGuideBy[why] = (onGuideBy[why] || 0) + 1;
+      }
+    }
     if (r.price?.capped) counts.spike_capped += 1;
     if (r.price?.dip) counts.trend_dips += 1;
     if (r.price?.finish_fallback) counts.finish_fallback += 1;
@@ -83,6 +97,8 @@ export function getQuoteBatchCounts() {
     priced_ratio: rateOf(counts.priced, counts.lines),
     asked_ratio: rateOf(counts.asked, counts.lines),
     not_found_ratio: rateOf(counts.not_found, counts.lines),
+    nm_en_ratio: rateOf(counts.priced_nm_en, counts.priced),
+    on_guide_by_reason: { ...onGuideBy },
     unpriced_by_reason: { ...unpricedBy },
     rescued_by: { ...rescuedBy },
     rescued_ratio: rateOf(Object.values(rescuedBy).reduce((a, b) => a + b, 0), counts.lines),
@@ -96,6 +112,7 @@ export function getQuoteBatchCounts() {
 export function resetQuoteBatchCounts() {
   for (const k of Object.keys(counts)) counts[k] = 0;
   for (const k of Object.keys(unpricedBy)) delete unpricedBy[k];
+  for (const k of Object.keys(onGuideBy)) delete onGuideBy[k];
   for (const k of Object.keys(rateLimited)) delete rateLimited[k];
   for (const k of Object.keys(rescuedBy)) delete rescuedBy[k];
   rewriteBudgetExhausted = 0;

@@ -3,7 +3,8 @@
 // POST /api/v2/quote/batch — quote a whole list of cards in ONE request.
 //
 // Every line is matched LOCALLY by the typed resolver (pricing/text-entry) and
-// priced from the hub's daily Cardmarket price guide (pricing/quote-prices).
+// priced from the hub's daily pull of the cheapest Near Mint English copy on
+// Cardmarket, checked against Cardmarket's price guide (pricing/quote-prices).
 // No outside call is made per card, so the limit is per quote, not per card,
 // and a collection of hundreds of lines is a couple of seconds of CPU.
 //
@@ -75,8 +76,9 @@ const REPRINT_SETS = new Set(['cel25c', 'me55c']);
  * more than an online quote can carry. Dave's call: over EUR 300, see it in
  * person.
  *
- * Judged on the card's own guide value (the reverse value for a reverse),
- * before any condition mark-down and per card, not per line. Question options
+ * Judged on the number the card would be quoted at (the cheapest NM English
+ * copy, or the guide's value where there is none; the reverse value for a
+ * reverse), before any condition mark-down and per card, not per line. Question options
  * over the line carry no price either, so picking one is by hand. The
  * customer-facing step text in apps/quote/index.html names the same figure.
  */
@@ -361,24 +363,34 @@ function notSupportedRow(base, lang) {
 /** Over the hand-price line (HAND_PRICE_ABOVE_EUR): no number goes out. */
 const overTheLine = (value, ctx) => ctx.handPriceAbove != null && value > ctx.handPriceAbove;
 
+/**
+ * One price as the response carries it. `basis` says which number it is: the
+ * cheapest NM English copy, or the guide's value with the reason the NM
+ * English copy was not used (counted in /api/health -> quote_batch).
+ */
+function priceOut(p, row, ctx) {
+  const nmEn = p.basis === 'nm_en';
+  return {
+    market: p.value,
+    field: p.field,
+    basis: p.basis,
+    ...(nmEn ? {} : { nm_en_fallback: p.nm_en_fallback ?? null }),
+    capped: !!p.capped,
+    dip: !!p.dip,
+    finish_fallback: !!p.finish_fallback,
+    as_of: nmEn ? ctx.index.nmEnDate : ctx.index.snapshotDate,
+    source: nmEn ? 'cardmarket_nm_en' : 'cardmarket_price_guide',
+    id_product: row?.[COL.idProduct] ?? null,
+  };
+}
+
 function priceFor(cardId, finish, ctx) {
   if (!ctx.usable) return { price: null, reason: ctx.unusableReason };
   const row = priceRowFor(ctx.index, cardId);
-  const p = marketPriceOf(row, { finish });
+  const p = marketPriceOf(row, { finish, nmEnOff: ctx.nmEnOff });
   if (p.value == null) return { price: null, reason: p.reason };
   if (overTheLine(p.value, ctx)) return { price: null, reason: 'high_value' };
-  return {
-    price: {
-      market: p.value,
-      field: p.field,
-      capped: p.capped,
-      dip: !!p.dip,
-      finish_fallback: p.finish_fallback,
-      as_of: ctx.index.snapshotDate,
-      source: 'cardmarket_price_guide',
-      id_product: row?.[COL.idProduct] ?? null,
-    },
-  };
+  return { price: priceOut(p, row, ctx) };
 }
 
 function candidateOf(cardId, finish, ctx) {
@@ -465,13 +477,9 @@ function reprintCard(e) {
 }
 
 function reprintCandidate(e, ctx) {
-  let p = ctx.usable ? marketPriceOf(e.row) : { value: null, reason: ctx.unusableReason };
+  let p = ctx.usable ? marketPriceOf(e.row, { nmEnOff: ctx.nmEnOff }) : { value: null, reason: ctx.unusableReason };
   if (p.value != null && overTheLine(p.value, ctx)) p = { value: null, reason: 'high_value' };
-  const price = p.value == null ? null : {
-    market: p.value, field: p.field, capped: p.capped, dip: !!p.dip, finish_fallback: false,
-    as_of: ctx.index.snapshotDate, source: 'cardmarket_price_guide',
-    id_product: e.row?.[COL.idProduct] ?? null,
-  };
+  const price = p.value == null ? null : priceOut(p, e.row, ctx);
   return { card: reprintCard(e), price, unpriced_reason: price ? null : (p.reason ?? 'no_cardmarket_product'), label: e.label };
 }
 
@@ -514,11 +522,17 @@ export async function handleQuoteBatch(body, deps = {}) {
 
   const age = index ? snapshotAgeDays(index.snapshotDate, now) : null;
   const usable = !!index && age !== null && age <= PRICE_STALE_DAYS;
+  // The cheapest NM English copy is the quote's number; without a fresh pull
+  // every card falls back to the guide (marketPriceOf), and says why.
+  const nmEnAge = index?.nmEnDate ? snapshotAgeDays(index.nmEnDate, now) : null;
+  const nmEnOff = !index?.nmEnDate ? 'nm_en_missing'
+    : (nmEnAge === null || nmEnAge > PRICE_STALE_DAYS) ? 'nm_en_stale' : null;
   const ctx = {
     deps: quoteDeps(cardDb, index),
     index,
     usable,
     unusableReason: !index ? 'prices_unavailable' : 'prices_stale',
+    nmEnOff,
     resolve,
     rewrites: { used: 0, max: deps.rewriteBudget ?? REWRITE_BUDGET, exhausted: false },
     handPriceAbove: deps.handPriceAboveEur ?? HAND_PRICE_ABOVE_EUR,
@@ -542,17 +556,23 @@ export async function handleQuoteBatch(body, deps = {}) {
   console.log(`[QUOTE-BATCH] ${lines.length} line(s): ${summary.priced} priced, ${summary.ask} asked, `
     + `${summary.unpriced} by hand, ${summary.not_found} not found, ${rescued} read by rewrite `
     + `(${ctx.rewrites.used} rewrite resolve(s)${ctx.rewrites.exhausted ? ', BUDGET EXHAUSTED' : ''}; `
-    + `prices ${index?.snapshotDate ?? 'unavailable'}${usable ? '' : ', NOT USED'})`);
+    + `prices ${index?.snapshotDate ?? 'unavailable'}${usable ? '' : ', NOT USED'}, `
+    + `NM English ${nmEnOff ? nmEnOff.toUpperCase() : index.nmEnDate})`);
 
   return {
     status: 200,
     body: {
       ok: true,
       currency: 'EUR',
-      prices_as_of: index?.snapshotDate ?? null,
+      prices_as_of: (nmEnOff ? index?.snapshotDate : index?.nmEnDate) ?? null,
       prices_age_days: age === null ? null : Number(age.toFixed(1)),
       prices_usable: usable,
-      price_source: 'Cardmarket price guide (trend)',
+      guide_as_of: index?.snapshotDate ?? null,
+      nm_en_as_of: index?.nmEnDate ?? null,
+      nm_en_usable: usable && !nmEnOff,
+      price_source: nmEnOff
+        ? 'Cardmarket price guide (trend)'
+        : 'Cardmarket, cheapest Near Mint English copy (price guide where there is none)',
       summary,
       rows,
     },
