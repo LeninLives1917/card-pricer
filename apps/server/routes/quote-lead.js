@@ -50,6 +50,59 @@ function hashIp(ip) {
 }
 
 /**
+ * Brevo list ids for a quote opt-in: shops.brevo_list_ids when set, else the
+ * single shops.brevo_list_id, else the env fallback. Bad values are dropped.
+ */
+export function brevoListIdsFor(shop, envFallback) {
+  const clean = (xs) => [...new Set(xs.map(Number).filter((n) => Number.isInteger(n) && n > 0))];
+  if (Array.isArray(shop?.brevo_list_ids) && shop.brevo_list_ids.length) {
+    const ids = clean(shop.brevo_list_ids);
+    if (ids.length) return ids;
+  }
+  if (shop?.brevo_list_id) return clean([shop.brevo_list_id]);
+  return clean([parseInt(envFallback || '0', 10)]);
+}
+
+/** shops.brevo_attributes as Brevo contact attributes; "$now" → ISO time. */
+export function brevoAttributesFor(shop, now = new Date()) {
+  const raw = shop?.brevo_attributes;
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
+  const out = {};
+  for (const [k, v] of Object.entries(raw)) out[k] = v === '$now' ? now.toISOString() : v;
+  return out;
+}
+
+/** Brevo schedules at most 72 hours ahead. */
+export const REMINDER_MAX_AHEAD_MS = 71 * 60 * 60 * 1000;
+
+/**
+ * When to send the quote reminder: 09:00 UTC (10:00 in Irish summer time,
+ * 09:00 in winter), three days on if that fits inside Brevo's 72-hour window,
+ * otherwise two. Never at night, never past the window.
+ */
+export function reminderSendAt(now) {
+  for (const days of [3, 2]) {
+    const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + days, 9, 0, 0));
+    if (d.getTime() - now.getTime() <= REMINDER_MAX_AHEAD_MS) return d;
+  }
+  return new Date(now.getTime() + 48 * 60 * 60 * 1000);
+}
+
+/** The one reminder a customer asked for. Plain, no offers, no promotion. */
+export function reminderHtml({ name, shopName, quoteUrl, totals, cardCount }) {
+  const credit = Number(totals?.credit || 0).toFixed(2);
+  const cash = Number(totals?.cash || 0).toFixed(2);
+  return `
+      <div style="font-family:-apple-system,system-ui,sans-serif; max-width:640px; margin:0 auto; padding:24px; color:#222;">
+        <p>Hi${name ? ' ' + escapeHtml(name) : ''},</p>
+        <p>You asked us to remind you about your card quote. It came to &euro;${credit} in store credit or &euro;${cash} cash for ${cardCount} card${cardCount === 1 ? '' : 's'}, as Near Mint.</p>
+        ${quoteUrl ? `<p><a href="${escapeHtml(quoteUrl)}" style="color:#b45309;">See your quote again</a></p>` : ''}
+        <p>Prices follow Cardmarket and change a little each day, so the figure on the day may differ slightly. Bring the cards to the shop and we'll check them over and make you a firm offer.</p>
+        <p style="color:#888; font-size:12px; margin-top:32px;">${escapeHtml(shopName)}. You're getting this one email because you ticked "Email me a reminder" on your quote. We won't send another.</p>
+      </div>`;
+}
+
+/**
  * Core handler for POST /api/quote-lead. Exported for unit-testing with
  * injected deps; the Express route below calls it with real production deps.
  *
@@ -71,6 +124,9 @@ export async function handleQuoteLead(body, req, deps = {}) {
   } = deps;
 
   const { email, name, newsletter, cards, totals, cashPct, creditPct, shop_slug } = body || {};
+  // Customer ticked "Email me a reminder". Only then do we send anything
+  // after the quote itself (no consent, no follow-up: Irish ePrivacy rules).
+  const reminder = body?.reminder === true;
   const byHand = Array.isArray(body?.unpriced) ? body.unpriced.filter(Boolean).slice(0, MAX_LEAD_CARDS) : [];
   const hasCards = Array.isArray(cards) && cards.length > 0;
   // A list where nothing could be priced is still a lead: those are exactly
@@ -263,18 +319,24 @@ export async function handleQuoteLead(body, req, deps = {}) {
   const provider = shop?.newsletter_provider || 'brevo';
 
   async function subscribeBrevo() {
-    const listId = shop?.brevo_list_id || parseInt(process.env.BREVO_NEWSLETTER_LIST_ID || '0', 10);
-    if (!listId) return { subscribed: false, reason: 'no brevo list configured' };
+    const listIds = brevoListIdsFor(shop, process.env.BREVO_NEWSLETTER_LIST_ID);
+    if (!listIds.length) {
+      // Not silent: an opt-in that reaches no list is a lost subscriber.
+      captureException(new Error('quote-lead opt-in: no brevo list configured'), { extra: { shop: shop?.slug || null } });
+      return { subscribed: false, reason: 'no brevo list configured' };
+    }
     if (!brevoApiKey) return { subscribed: false, reason: 'no brevo api key' };
     try {
+      const attributes = { ...brevoAttributesFor(shop), ...(name ? { FIRSTNAME: name } : {}) };
       const r = await fetch('https://api.brevo.com/v3/contacts', {
         method: 'POST',
         headers: { 'api-key': brevoApiKey, 'Content-Type': 'application/json', 'Accept': 'application/json' },
-        body: JSON.stringify({ email, attributes: name ? { FIRSTNAME: name } : {}, listIds: [listId], updateEnabled: true })
+        body: JSON.stringify({ email, attributes, listIds, updateEnabled: true })
       });
       if (!r.ok) {
         const text = await r.text();
         console.warn('[QUOTE-LEAD] brevo subscribe failed:', r.status, text);
+        captureException(new Error(`quote-lead opt-in: brevo ${r.status}`), { extra: { shop: shop?.slug || null } });
         return { subscribed: false, reason: text };
       }
       return { subscribed: true, provider: 'brevo' };
@@ -373,12 +435,32 @@ export async function handleQuoteLead(body, req, deps = {}) {
     captureException(brevoErr, { extra: { lead_id: lead.id } });
   }
 
+  // The reminder is its own send: if it fails, the quote still went out.
+  let reminderScheduled = false;
+  if (reminder && emailed) {
+    try {
+      const at = reminderSendAt(new Date());
+      await sendEmail(
+        email,
+        `Your ${SHOP_NAME} card quote is still here`,
+        reminderHtml({ name, shopName: SHOP_NAME, quoteUrl: quote_url, totals, cardCount }),
+        undefined,
+        { scheduledAt: at.toISOString() }
+      );
+      reminderScheduled = true;
+    } catch (remErr) {
+      console.warn('[QUOTE-LEAD] reminder schedule failed (lead_id=%s): %s', lead.id, remErr?.message || remErr);
+      captureException(remErr, { extra: { lead_id: lead.id, step: 'reminder' } });
+    }
+  }
+
   return {
     status: 200,
     body: {
       ok: true,
       emailed,
       subscribed: subRes.subscribed,
+      ...(reminder ? { reminder_scheduled: reminderScheduled } : {}),
       quote_id: lead.id || null,
       quote_url,
       ...(lead.persistence ? { persistence: lead.persistence } : {}),
@@ -389,7 +471,7 @@ export async function handleQuoteLead(body, req, deps = {}) {
 
 // Default Brevo send implementation (production path). Defined at module
 // scope so it can be referenced as the default in handleQuoteLead's deps.
-function _defaultSendEmail(toEmail, subject, htmlContent, attachmentsList) {
+function _defaultSendEmail(toEmail, subject, htmlContent, attachmentsList, opts = {}) {
   const SHOP_NAME = process.env.SHOP_NAME || 'Board & Brewed';
   const SENDER_EMAIL = process.env.BREVO_SENDER_EMAIL || process.env.SHOP_EMAIL || 'dave@boardandbrewed.ie';
   const payload = {
@@ -399,6 +481,7 @@ function _defaultSendEmail(toEmail, subject, htmlContent, attachmentsList) {
     htmlContent
   };
   if (attachmentsList && attachmentsList.length) payload.attachment = attachmentsList;
+  if (opts.scheduledAt) payload.scheduledAt = opts.scheduledAt;
   return fetch('https://api.brevo.com/v3/smtp/email', {
     method: 'POST',
     headers: {
