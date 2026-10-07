@@ -160,7 +160,11 @@ test('a whole list is ONE request: priced, asked, by hand and not found, with re
 
   assert.equal(bla.status, 'ask', "Blastoise and Blaine's Charizard share bla|2|132: never guessed");
   assert.deepEqual(bla.candidates.map((c) => c.card.id).sort(), ['dp3-2', 'gym2-2']);
-  assert.ok(bla.candidates.every((c) => c.price && c.price.market > 0), 'candidates carry prices');
+  const blastoise = bla.candidates.find((c) => c.card.id === 'dp3-2');
+  assert.equal(blastoise.price.market, 20.12, 'candidates carry prices');
+  const blaine = bla.candidates.find((c) => c.card.id === 'gym2-2');
+  assert.equal(blaine.price, null, 'EUR 670.21 is over the hand-price line (quote-high-value.spec.js)');
+  assert.equal(blaine.unpriced_reason, 'high_value');
 
   assert.equal(cri.status, 'priced', 'CRI is a real set code (Chaos Rising)');
   assert.equal(cri.card.id, 'me4-12');

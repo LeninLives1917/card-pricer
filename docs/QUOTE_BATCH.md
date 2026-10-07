@@ -46,6 +46,13 @@ POST /api/v2/quote/batch  { lines: [...], game: 'pokemon' }
   (HS—Triumphant 94) at trend 0.02 beside avg30 908.54.
 - **Graded cards** (PSA / BGS / CGC / SGC / "graded" / "slab") are priced by
   hand (`graded`): the guide prices raw cards.
+- **Cards worth over EUR 300** (`HAND_PRICE_ABOVE_EUR`) are priced by hand
+  (`high_value`), and a question option over the line carries no price, so
+  picking it is by hand too. Judged on the card's own guide value (the reverse
+  value for a reverse), before condition, per card. On 7 Oct "Gengar H9/H32"
+  (Skyridge) offered EUR 4,217.75 with copies for sale from EUR 450; on a card
+  like that the guide is a thin market's say-so. 167 hub cards had a trend over
+  EUR 300 in the 7 Oct guide. The page's step text names the same figure.
 - **Condition** typed on the line (`lp`, `pl`, ...) uses the server's
   Cardmarket-scale multipliers (`pricing/conditions.js`), so it prices the same
   online as at the till.

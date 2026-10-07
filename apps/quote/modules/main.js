@@ -106,6 +106,7 @@ const BY_HAND_REASONS = {
   customer_unsure: "you weren't sure which card",
   unconfirmed: 'not confirmed yet',
   graded: 'graded card, priced in store',
+  high_value: 'high-value card, priced in store',
   price_unstable: "Cardmarket's price looked unreliable today",
 };
 

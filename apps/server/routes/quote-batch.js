@@ -12,8 +12,9 @@
 //   priced         one card, with today's Cardmarket number
 //   unpriced       one card, but no number we will stand behind: not in the
 //                  price guide, a 1st Edition / Shadowless print (not split out
-//                  in the guide), or the snapshot is too old / never loaded.
-//                  The customer sees "we'll price this one by hand".
+//                  in the guide), a graded slab, a card worth more than
+//                  HAND_PRICE_ABOVE_EUR, or the snapshot is too old / never
+//                  loaded. The customer sees "we'll price this one by hand".
 //   ask            more than one real card fits the line, OR the card has a
 //                  Classic Collection reprint printed with the very same name
 //                  and number. Candidates come back WITH prices so the page
@@ -64,6 +65,22 @@ const MAX_QTY = 99;
 
 /** Sets whose cards ARE reprints; never ask the reprint question about them. */
 const REPRINT_SETS = new Set(['cel25c', 'me55c']);
+
+/**
+ * Cards the guide values above this (EUR) are priced by hand, not online.
+ *
+ * 7 Oct 2026: "Gengar H9/H32" (Skyridge holo) offered EUR 4,217.75, the
+ * guide's trend, with copies for sale from EUR 450. On a card like that the
+ * guide is a thin market's say-so, and condition and fakes move the price by
+ * more than an online quote can carry. Dave's call: over EUR 300, see it in
+ * person.
+ *
+ * Judged on the card's own guide value (the reverse value for a reverse),
+ * before any condition mark-down and per card, not per line. Question options
+ * over the line carry no price either, so picking one is by hand. The
+ * customer-facing step text in apps/quote/index.html names the same figure.
+ */
+export const HAND_PRICE_ABOVE_EUR = 300;
 
 /** Split a pasted blob or an array into the lines worth resolving. */
 export function linesOf(body) {
@@ -341,11 +358,15 @@ function notSupportedRow(base, lang) {
   };
 }
 
+/** Over the hand-price line (HAND_PRICE_ABOVE_EUR): no number goes out. */
+const overTheLine = (value, ctx) => ctx.handPriceAbove != null && value > ctx.handPriceAbove;
+
 function priceFor(cardId, finish, ctx) {
   if (!ctx.usable) return { price: null, reason: ctx.unusableReason };
   const row = priceRowFor(ctx.index, cardId);
   const p = marketPriceOf(row, { finish });
   if (p.value == null) return { price: null, reason: p.reason };
+  if (overTheLine(p.value, ctx)) return { price: null, reason: 'high_value' };
   return {
     price: {
       market: p.value,
@@ -444,7 +465,8 @@ function reprintCard(e) {
 }
 
 function reprintCandidate(e, ctx) {
-  const p = ctx.usable ? marketPriceOf(e.row) : { value: null, reason: ctx.unusableReason };
+  let p = ctx.usable ? marketPriceOf(e.row) : { value: null, reason: ctx.unusableReason };
+  if (p.value != null && overTheLine(p.value, ctx)) p = { value: null, reason: 'high_value' };
   const price = p.value == null ? null : {
     market: p.value, field: p.field, capped: p.capped, dip: !!p.dip, finish_fallback: false,
     as_of: ctx.index.snapshotDate, source: 'cardmarket_price_guide',
@@ -499,6 +521,7 @@ export async function handleQuoteBatch(body, deps = {}) {
     unusableReason: !index ? 'prices_unavailable' : 'prices_stale',
     resolve,
     rewrites: { used: 0, max: deps.rewriteBudget ?? REWRITE_BUDGET, exhausted: false },
+    handPriceAbove: deps.handPriceAboveEur ?? HAND_PRICE_ABOVE_EUR,
   };
 
   const rows = [];
