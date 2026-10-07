@@ -55,6 +55,7 @@ import {
 import {
   countQuote, countRejectedTooMany, countRewriteBudgetExhausted,
 } from '../../../infra/observability/quote-batch-counters.js';
+import { cardImageUrl } from '../../../pricing/quote-prices/card-image.js';
 
 const router = express.Router();
 
@@ -131,6 +132,7 @@ function cardOf(id, db) {
     set_code: ref?.ptcgoCode ?? v.setCode ?? null,
     card_number: id.slice(dash + 1),
     printed_total: ref?.printedTotal ?? null,
+    image: cardImageUrl(id),
     ...(v.augmented ? { augmented: true } : {}),
   };
 }
@@ -473,6 +475,7 @@ function reprintCard(e) {
     set_code: setOf(e.reprint_set)?.ptcgoCode ?? null,
     card_number: e.card_number,
     printed_total: null,
+    image: cardImageUrl(e.key),
   };
 }
 
