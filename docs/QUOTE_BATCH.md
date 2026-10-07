@@ -103,6 +103,7 @@ boardbrewed-hub Supabase (`ycajinletezqllvnjsct`):
 |---|---|
 | `cm_price_snapshot` | Cardmarket's daily price guide, job `cardmarket-price-snapshot` 04:30 UTC |
 | `cm_card_meta`, `cm_sets` | TCGdex card list with Cardmarket `id_product` |
+| `quote_product_fill` | Cardmarket ids for cards TCGdex has not mapped (see below); an id TCGdex supplies wins |
 | `quote_price_feed_build()` | the join, ~0.4 s warm |
 | `quote_price_feed_cache` | one row, rebuilt hourly at :20 by pg_cron (`quote-price-feed-refresh`) |
 | `rpc/quote_price_feed` | returns the cached document; SECURITY DEFINER, granted to anon |
@@ -119,8 +120,23 @@ Env (Render): `HUB_SUPABASE_URL`, `HUB_SUPABASE_KEY` (the hub's publishable key)
 
 Coverage measured 7 Oct 2026 on the live catalogue (20,899 rows): 20,796
 mapped (99.5%), 19,581 priced (93.7%). 30th Celebration (not in the catalogue
-yet) is added from the hub as `me55-*`; 63 of its 158 cards have a Cardmarket
-id so far, the rest quote as "by hand".
+yet) is added from the hub as `me55-*`.
+
+**Filling TCGdex's gaps.** TCGdex had a Cardmarket id for 63 of the 158 30th
+Celebration cards and none of the 30 Classic Collection reprints, so a Mew ex
+SIR (#152, trend ~99) quoted as "by hand" the morning it went live, while
+Cardmarket's own guide priced it. Cardmarket's product list (`cm_products`,
+expansion 6601) has the products but no collector numbers, and three products
+are called "Mew ex". Their idProduct order is the set list with the cards
+Cardmarket added late moved to the end, so `quote_product_fill` was built by a
+longest-common-subsequence alignment of names (products by idProduct, cards by
+number), repeated on what was left for the late batch. Checked: all 63 ids
+TCGdex does have agree, and every card's attack names match the Cardmarket
+product's. The Classic Collection is matched by name (unique apart from the
+LEGEND halves). Result: all 188 cards priced. 1,550 hub cards in 109 other sets
+(mostly Black Star Promos, Hidden Fates Shiny Vault, Team Magma vs Team Aqua,
+trainer kits) still have no id and quote as "by hand"; the same method would
+cover most of them.
 
 ## Failure is loud
 
