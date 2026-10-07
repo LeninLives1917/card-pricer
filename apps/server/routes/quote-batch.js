@@ -185,7 +185,12 @@ function resolveCustomer(text, ctx, opts) {
   const asTyped = { r: r0, readAs: null, how: null, dropped: null };
   if (placed(r0) || (r0.status === 'ambiguous' && !weakAmbiguity(r0, ctx))) return asTyped;
 
-  let fallback = r0.status === 'ambiguous' ? asTyped : null;
+  // Questions, best first: a real one a rewrite found, then one the typed
+  // total rules out (as typed, or from a rewrite). Either beats a "not found"
+  // that blames the name: "rev Gengar 94/162" has a fine name and a wrong
+  // total, and the customer can still pick their Gengar.
+  let strong = null;
+  let weak = r0.status === 'ambiguous' ? asTyped : null;
   const attempt = (lineText, how, dropped, noSplit) => {
     if (!spend(ctx)) return null;
     const r = ctx.resolve(lineText, ctx.deps, noSplit ? { ...opts, noSplit: true } : opts);
@@ -204,7 +209,10 @@ function resolveCustomer(text, ctx, opts) {
         return { ...out, r: { ...r, status: 'resolved', card_id: named[0].id, candidates: named, reason: 'set_named_on_line' } };
       }
     }
-    if (r.status === 'ambiguous' && !weakAmbiguity(r, ctx) && !fallback) fallback = out;
+    if (r.status === 'ambiguous') {
+      if (!weakAmbiguity(r, ctx)) strong = strong ?? out;
+      else weak = weak ?? out;
+    }
     return null;
   };
 
@@ -227,7 +235,7 @@ function resolveCustomer(text, ctx, opts) {
     if (hit) return hit;
     if (ctx.rewrites?.exhausted) break;
   }
-  return fallback ?? asTyped;
+  return strong ?? weak ?? asTyped;
 }
 
 /** Set names for stripSetName, from the catalogue being quoted against. */

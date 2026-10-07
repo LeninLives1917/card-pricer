@@ -195,6 +195,16 @@ test('a qualifier before the name still finds the card, with its finish', async 
   assert.equal(n.card.id, 'base1-6');
 });
 
+test('a wrong total after a moved qualifier asks; it does not blame the name', async () => {
+  // Found on production after the first deploy: "rev Gengar 94/162" said "We
+  // couldn't find that name", while "Gengar 94/162" asked which Gengar. The
+  // rewrite's question was dropped because the typed total ruled it out.
+  const [r] = await quote(['rev Gyarados 6/999']);
+  assert.equal(r.status, 'ask');
+  assert.ok(r.candidates.some((c) => c.card.id === 'base1-6'));
+  assert.equal(r.finish, 'reverse_holo');
+});
+
 test('1st Edition, however it is written, is priced by hand', async () => {
   const rows = await quote(['1st Edition Gyarados 6/102', 'Gyarados 6/102 first edition', 'first edition Gyarados 6/102']);
   for (const r of rows) {
