@@ -71,13 +71,16 @@ POST /api/v2/quote/batch  { lines: [...], game: 'pokemon' }
   avg30 908.54.
 - **Graded cards** (PSA / BGS / CGC / SGC / "graded" / "slab") are priced by
   hand (`graded`): the guide prices raw cards.
-- **Cards worth over EUR 300** (`HAND_PRICE_ABOVE_EUR`) are priced by hand
-  (`high_value`), and a question option over the line carries no price, so
-  picking it is by hand too. Judged on the number the card would be quoted at
-  (the reverse value for a reverse), before condition, per card. On 7 Oct "Gengar H9/H32"
-  (Skyridge) offered EUR 4,217.75 with copies for sale from EUR 450; on a card
-  like that the guide is a thin market's say-so. 167 hub cards had a trend over
-  EUR 300 in the 7 Oct guide. The page's step text names the same figure.
+- **No value line** (`HAND_PRICE_ABOVE_EUR = null`, since 7 Oct 2026 pm).
+  Every card gets a number, presented as an indicative offer that assumes Near
+  Mint, with the firm offer made in the shop. History: on the morning of 7 Oct
+  "Gengar H9/H32" (Skyridge) offered EUR 4,217.75 off the trend with copies
+  for sale from EUR 450, so a EUR 300 line went in (`high_value`); that
+  afternoon, with prices now from the cheapest NM English copy, Dave removed
+  it after a list of chase cards came back with nine priced in the shop. The
+  mechanism stays (`deps.handPriceAboveEur`): when set it is judged on the
+  number the card would be quoted at, before condition, per card, and a
+  question option over the line carries no price.
 - **Condition** typed on the line (`lp`, `pl`, ...) uses the server's
   Cardmarket-scale multipliers (`pricing/conditions.js`), so it prices the same
   online as at the till.

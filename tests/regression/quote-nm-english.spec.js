@@ -195,8 +195,8 @@ test('a reverse holo is priced from the guide reverse holo value, and says why',
   assert.equal(rev.price.nm_en_fallback, 'reverse_holo', 'TCGGO prices the product, not the reverse');
 });
 
-test('the EUR 300 line is judged on the number quoted', async () => {
-  const [over, under] = (await quote(['Gholdengo 90/193', 'Kingambit 91/193'])).rows;
+test('a value line, when set, is judged on the number quoted', async () => {
+  const [over, under] = (await quote(['Gholdengo 90/193', 'Kingambit 91/193'], { handPriceAboveEur: 300 })).rows;
   assert.equal(over.status, 'unpriced', 'NM English 320, trend 280');
   assert.equal(over.unpriced_reason, 'high_value');
   assert.equal(under.status, 'priced', 'NM English 290, trend 320');

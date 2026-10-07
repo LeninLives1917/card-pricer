@@ -1,5 +1,13 @@
-// Regression: a card worth more than the hand-price line is priced in the
-// shop, never quoted online.
+// Regression: the hand-price line. Off by default since 7 Oct 2026 pm; when
+// set, a card worth more than it is priced in the shop, never quoted online.
+//
+// INCIDENT PINNED (7 Oct 2026 afternoon): with the EUR 300 line on, Dave ran
+// a 20-card list of chase cards and nine came back "priced in the shop"
+// (Umbreon VMAX 215/203 at EUR 1,650, Gengar & Mimikyu GX 165 at EUR 1,486...).
+// His call: remove the line, give every card a number, and spell out that the
+// offer is indicative and assumes Near Mint. The first two tests pin that.
+// The rest pin the mechanism, which stays (deps.handPriceAboveEur) so a line
+// can come back as a one-word change; they set the old EUR 300 explicitly.
 //
 // INCIDENT PINNED (7 Oct 2026, the morning the whole-list quote went live):
 //
@@ -87,12 +95,23 @@ async function quote(lines, over = {}) {
   return res.body.rows;
 }
 
-test('the line is EUR 300', () => {
-  assert.equal(HAND_PRICE_ABOVE_EUR, 300);
+// The line as it was on the morning of 7 Oct, for the mechanism tests.
+const LINE = { handPriceAboveEur: 300 };
+
+test('no line by default', () => {
+  assert.equal(HAND_PRICE_ABOVE_EUR, null);
+});
+
+test('by default a EUR 2,000 card is quoted like any other', async () => {
+  const [moon] = await quote(['Umbreon VMAX 215/203']);
+  assert.equal(moon.status, 'priced');
+  assert.equal(moon.price.market, 2026.85);
+  const [ask] = await quote(['bla 2/132']);
+  assert.equal(ask.candidates.find((c) => c.card.id === 'gym2-2').price.market, 670.21);
 });
 
 test('a card valued over the line is by hand, and its number is not in the response', async () => {
-  const [moon, plain] = await quote(['Umbreon VMAX 215/203', 'Umbreon VMAX 95/203']);
+  const [moon, plain] = await quote(['Umbreon VMAX 215/203', 'Umbreon VMAX 95/203'], LINE);
   assert.equal(moon.status, 'unpriced');
   assert.equal(moon.unpriced_reason, 'high_value');
   assert.equal(moon.card.id, 'swsh7-215', 'the card is still identified');
@@ -104,7 +123,7 @@ test('a card valued over the line is by hand, and its number is not in the respo
 });
 
 test('valued before condition: a played copy of a EUR 670 card is still seen in person', async () => {
-  const [r] = await quote(["Blaine's Charizard 2/132 pl"]);
+  const [r] = await quote(["Blaine's Charizard 2/132 pl"], LINE);
   assert.equal(r.card.id, 'gym2-2');
   assert.equal(r.condition, 'PL', '670.21 x 0.40 would be 268.08, under the line');
   assert.equal(r.status, 'unpriced');
@@ -112,7 +131,7 @@ test('valued before condition: a played copy of a EUR 670 card is still seen in 
 });
 
 test('per card, not per line: three EUR 150 cards are three ordinary quotes', async () => {
-  const [r] = await quote(['3x Gyarados 6/102']);
+  const [r] = await quote(['3x Gyarados 6/102'], LINE);
   assert.equal(r.status, 'priced');
   assert.equal(r.qty, 3);
   assert.equal(r.price.market, 150);
@@ -134,7 +153,7 @@ test('a reverse holo is judged on the reverse holo value', async () => {
 });
 
 test('a question option over the line carries no price, and picking it is by hand', async () => {
-  const [ask] = await quote(['bla 2/132']);
+  const [ask] = await quote(['bla 2/132'], LINE);
   assert.equal(ask.status, 'ask');
   const blaine = ask.candidates.find((c) => c.card.id === 'gym2-2');
   const blastoise = ask.candidates.find((c) => c.card.id === 'dp3-2');
@@ -151,7 +170,7 @@ test('a question option over the line carries no price, and picking it is by han
 });
 
 test('the reprint question: an original over the line is by hand, its reprints still price', async () => {
-  const [ask] = await quote(['Charizard 4/102']);
+  const [ask] = await quote(['Charizard 4/102'], LINE);
   assert.equal(ask.reprint_question, true);
   const original = ask.candidates.find((c) => c.card.id === 'base1-4');
   const cel = ask.candidates.find((c) => c.card.id === 'cel25c-4');
@@ -168,16 +187,17 @@ test('the reprint question: an original over the line is by hand, its reprints s
 
 test('counted: /api/health -> quote_batch.unpriced_by_reason.high_value', async () => {
   resetQuoteBatchCounts();
-  await quote(['Umbreon VMAX 215/203', 'Umbreon VMAX 95/203']);
+  await quote(['Umbreon VMAX 215/203', 'Umbreon VMAX 95/203'], LINE);
   const c = getQuoteBatchCounts();
   assert.equal(c.unpriced_by_reason.high_value, 1);
   assert.equal(c.priced, 1);
 });
 
-test('the page says it: words for the reason, and the same line in the instructions', async () => {
+test('the page says it: words for the reason, no value line in the instructions, and Near Mint spelled out', async () => {
   const main = await readFile(join(ROOT, 'apps/quote/modules/main.js'), 'utf8');
-  assert.match(main, /\bhigh_value:\s*['"]/, 'BY_HAND_REASONS has customer words for high_value');
+  assert.match(main, /\bhigh_value:\s*['"]/, 'BY_HAND_REASONS keeps words for high_value, in case the line comes back');
   const page = await readFile(join(ROOT, 'apps/quote/index.html'), 'utf8');
-  assert.ok(page.includes(`€${HAND_PRICE_ABOVE_EUR}`),
-    'the step text names the same line the server uses; change both together');
+  assert.doesNotMatch(page, /worth over €/, 'no line, so the step text names none');
+  assert.match(page, /indicative/i, 'the page says the offer is indicative');
+  assert.match(page, /Near Mint/, 'and that it assumes Near Mint');
 });

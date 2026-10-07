@@ -14,7 +14,7 @@
 //   unpriced       one card, but no number we will stand behind: not in the
 //                  price guide, a 1st Edition / Shadowless print (not split out
 //                  in the guide), a graded slab, a card worth more than
-//                  HAND_PRICE_ABOVE_EUR, or the snapshot is too old / never
+//                  HAND_PRICE_ABOVE_EUR (off by default), or the snapshot is too old / never
 //                  loaded. The customer sees "we'll price this one by hand".
 //   ask            more than one real card fits the line, OR the card has a
 //                  Classic Collection reprint printed with the very same name
@@ -69,21 +69,24 @@ const MAX_QTY = 99;
 const REPRINT_SETS = new Set(['cel25c', 'me55c']);
 
 /**
- * Cards the guide values above this (EUR) are priced by hand, not online.
+ * A value line (EUR) above which a card is priced by hand, not online. null:
+ * no line, every card gets a number.
  *
- * 7 Oct 2026: "Gengar H9/H32" (Skyridge holo) offered EUR 4,217.75, the
- * guide's trend, with copies for sale from EUR 450. On a card like that the
- * guide is a thin market's say-so, and condition and fakes move the price by
- * more than an online quote can carry. Dave's call: over EUR 300, see it in
- * person.
+ * History. 7 Oct 2026 morning: "Gengar H9/H32" (Skyridge holo) offered
+ * EUR 4,217.75, the guide's trend, with copies for sale from EUR 450, so Dave
+ * set a EUR 300 line. Same afternoon, with the quote now priced from the
+ * cheapest Near Mint English copy (no longer the trend), he removed it: a
+ * 20-card list of chase cards came back with nine "priced in the shop", and he
+ * would rather every card get a number, spelled out as an indicative offer
+ * that assumes Near Mint, with the firm offer made in the shop.
  *
- * Judged on the number the card would be quoted at (the cheapest NM English
- * copy, or the guide's value where there is none; the reverse value for a
- * reverse), before any condition mark-down and per card, not per line. Question options
- * over the line carry no price either, so picking one is by hand. The
- * customer-facing step text in apps/quote/index.html names the same figure.
+ * The mechanism stays (deps.handPriceAboveEur, pinned in
+ * tests/regression/quote-high-value.spec.js) so a line can come back as a
+ * one-word change. When set, it is judged on the number the card would be
+ * quoted at, before any condition mark-down and per card, not per line, and
+ * question options over the line carry no price either.
  */
-export const HAND_PRICE_ABOVE_EUR = 300;
+export const HAND_PRICE_ABOVE_EUR = null;
 
 /** Split a pasted blob or an array into the lines worth resolving. */
 export function linesOf(body) {

@@ -163,8 +163,7 @@ test('a whole list is ONE request: priced, asked, by hand and not found, with re
   const blastoise = bla.candidates.find((c) => c.card.id === 'dp3-2');
   assert.equal(blastoise.price.market, 20.12, 'candidates carry prices');
   const blaine = bla.candidates.find((c) => c.card.id === 'gym2-2');
-  assert.equal(blaine.price, null, 'EUR 670.21 is over the hand-price line (quote-high-value.spec.js)');
-  assert.equal(blaine.unpriced_reason, 'high_value');
+  assert.equal(blaine.price.market, 670.21, 'no value line by default (quote-high-value.spec.js)');
 
   assert.equal(cri.status, 'priced', 'CRI is a real set code (Chaos Rising)');
   assert.equal(cri.card.id, 'me4-12');
