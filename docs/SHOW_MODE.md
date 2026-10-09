@@ -41,6 +41,15 @@ customers list their cards on their own phone and get their offer in person.
   shop's settings (accent is calmed in the page so a loud colour stays soft).
   The B&B logo only shows for `brewed`.
 
+## Forgotten password
+
+"Forgot your password?" on the show desk sign-in and the scanner app's log-in
+box goes to `/reset-password` (apps/account/reset-password.html). Supabase
+emails a link; it lands back on that page to set a new password. Checked end
+to end on the live site on 9 Oct 2026 with Dave's account (stopped before
+saving). Emails come from Supabase's built-in mailer, which only sends a few
+per hour.
+
 ## How it is built
 
 - `apps/server/routes/show.js` routes, `pricing/show/offer.js` arithmetic and
