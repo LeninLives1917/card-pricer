@@ -440,6 +440,7 @@ table tbody td.num {
 .auth-submit:disabled { opacity: 0.5; cursor: not-allowed; }
 .auth-error { font-size: 12px; color: var(--down); min-height: 14px; margin-top: var(--p-2); }
 .auth-ok { font-size: 12px; color: var(--up); margin-top: var(--p-2); }
+.auth-forgot { display: block; margin-top: var(--p-2); font-size: 13px; color: var(--paper-300); text-align: center; text-decoration: underline; }
 .auth-footer { font-size: 11px; color: var(--paper-400); margin-top: var(--p-3); line-height: 1.5; }
 
 /* ============================================================

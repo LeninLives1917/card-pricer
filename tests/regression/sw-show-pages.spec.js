@@ -57,7 +57,7 @@ async function dispatch(w, path) {
 
 test('show-mode pages are never answered from the cache', async () => {
   const stale = { body: 'OLD SHOW DESK', ok: true, clone() { return this; } };
-  for (const path of ['/show/irelandcardshow', '/show/irelandcardshow/staff', '/show/brewed/poster']) {
+  for (const path of ['/show/irelandcardshow', '/show/irelandcardshow/staff', '/show/brewed/poster', '/reset-password']) {
     const w = loadWorker({ cached: { [path]: stale } });
     const r = await dispatch(w, path);
     assert.equal(r, null, `${path} must pass straight through to the network (not intercepted)`);

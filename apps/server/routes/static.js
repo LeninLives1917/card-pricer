@@ -55,6 +55,7 @@ const VENDOR_APP_DIR    = join(REPO_ROOT, 'apps', 'vendor');
 const QUOTE_APP_DIR     = join(REPO_ROOT, 'apps', 'quote');
 const WIDGET_APP_DIR    = join(REPO_ROOT, 'apps', 'widget');
 const CUSTOMER_APP_DIR  = join(REPO_ROOT, 'apps', 'customer');
+const ACCOUNT_APP_DIR   = join(REPO_ROOT, 'apps', 'account');
 
 // Mounted BEFORE express.static — each handler sets cache headers and
 // then sendFile's. Mount order matters per V2_AUDIT §1a.
@@ -69,6 +70,14 @@ earlyStatic.get('/service-worker.js', (req, res) => {
   res.setHeader('Pragma', 'no-cache');
   res.setHeader('Expires', '0');
   res.sendFile(join(VENDOR_APP_DIR, 'service-worker.js'));
+});
+
+// Password reset (9 Oct 2026: Liam, Ireland Card Show, forgot his password
+// and there was no way back in). Asks for the email, and is where the email
+// link lands to set a new password. No-store: it handles a one-time token.
+earlyStatic.get('/reset-password', (req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
+  res.sendFile(join(ACCOUNT_APP_DIR, 'reset-password.html'));
 });
 
 // V2 vendor shell. No-cache because the shell (and its embedded inline

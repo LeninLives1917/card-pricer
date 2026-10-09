@@ -20,6 +20,8 @@ export function setAuthMode(mode) {
   if (submit) submit.textContent = mode === 'login' ? 'Log in' : 'Create account';
   const pwd = document.getElementById('authPassword');
   if (pwd) pwd.autocomplete = mode === 'login' ? 'current-password' : 'new-password';
+  const forgot = document.getElementById('authForgot');
+  if (forgot) forgot.style.display = mode === 'login' ? '' : 'none';
   const err = document.getElementById('authError');
   if (err) err.textContent = '';
 }
@@ -150,6 +152,12 @@ export function wireAuthOverlay() {
   if (btn) btn.addEventListener('click', submitAuth);
   const signOutBtn = document.getElementById('signOutBtn');
   if (signOutBtn) signOutBtn.addEventListener('click', signOut);
+  // "Forgot your password?" carries the email already typed to the reset page.
+  const forgot = document.getElementById('authForgot');
+  if (forgot) forgot.addEventListener('click', (e) => {
+    const email = document.getElementById('authEmail')?.value.trim();
+    if (email) { e.preventDefault(); location.href = '/reset-password?email=' + encodeURIComponent(email); }
+  });
   // Submit on Enter inside the password field.
   const pwd = document.getElementById('authPassword');
   if (pwd) pwd.addEventListener('keydown', (e) => {

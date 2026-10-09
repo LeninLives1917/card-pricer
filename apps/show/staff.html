@@ -145,6 +145,7 @@
       <input id="password" type="password" autocomplete="current-password" placeholder="Password" required />
       <button class="btn primary" type="submit" id="loginBtn">Sign in</button>
       <p class="err" id="loginErr"></p>
+      <p style="margin:14px 0 0;text-align:center;font-size:14px"><a id="forgotLink" href="/reset-password" style="color:var(--accent-ink)">Forgot your password?</a></p>
     </form>
   </section>
 
@@ -251,6 +252,10 @@
       $('loginBtn').disabled = false;
       if (r.error) { $('loginErr').textContent = r.error.message; return; }
       start();
+    });
+    $('forgotLink').addEventListener('click', function (e) {
+      var em = $('email').value.trim();
+      if (em) { e.preventDefault(); location.href = '/reset-password?email=' + encodeURIComponent(em); }
     });
     $('signOut').addEventListener('click', async function () { await sb.auth.signOut(); showLogin(); });
     $('posterLink').href = '/show/' + slug + '/poster';

@@ -30,6 +30,16 @@
   <!-- Supabase JS SDK — auth + user data. Loaded synchronously so window.sb
        is available before main.js initialises. The wrapped fetch from V1 has
        moved to modules/api-client.js — main.js installs hooks at boot. -->
+  <script>
+    // A password-reset link can land here (Supabase falls back to the site
+    // root when /reset-password is not on its redirect list). Hand it to the
+    // reset page BEFORE the client below consumes the token from the hash,
+    // or the person is just logged in and never gets to set a password.
+    (function () {
+      var h = location.hash || '';
+      if (/(^#|&)type=recovery(&|$)/.test(h)) location.replace('/reset-password' + location.search + h);
+    })();
+  </script>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script>
     // ============================================================
@@ -89,6 +99,7 @@
         <input type="password" id="authPassword" autocomplete="current-password" minlength="6">
       </div>
       <button type="button" id="authSubmitBtn" class="auth-submit">Log in</button>
+      <a href="/reset-password" id="authForgot" class="auth-forgot">Forgot your password?</a>
       <div id="authError" class="auth-error"></div>
       <div id="authOk" class="auth-ok" style="display:none;"></div>
       <div class="auth-footer">40 free scans / month &middot; plans from &euro;9 / mo &middot; cancel any time</div>

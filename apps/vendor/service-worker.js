@@ -36,7 +36,9 @@
 //   v3.9 — show-mode pages (/show/*) are never intercepted. They went through
 //          stale-while-revalidate, so a vendor who had opened the scanner app
 //          kept seeing the old show desk after the 9 Oct restyle.
-const CACHE_VERSION = 'cardpricer-v3.9';
+//   v3.10 — /reset-password (new) is never intercepted either: it carries a
+//           one-time token and must always be the live page.
+const CACHE_VERSION = 'cardpricer-v3.10';
 
 const SHELL = [
   '/',
@@ -86,6 +88,7 @@ self.addEventListener('fetch', (event) => {
   // page. Liam (Ireland Card Show, 9 Oct 2026) still saw the old desk after a
   // deploy because this worker served it stale-while-revalidate.
   if (url.pathname === '/show' || url.pathname.startsWith('/show/')) return;
+  if (url.pathname === '/reset-password') return;
 
   // Shell: network-first.
   const isShell =
