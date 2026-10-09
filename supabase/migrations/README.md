@@ -12,6 +12,7 @@ Source-of-truth schema for the live Supabase project (`vecbaewlxodqnevduoiy`). E
 | 4 | `20260502221125_v2_carryover.sql` | `card_prices`, `inventory_*`, `listings`, `live_session*`, `customer_accounts`, `quote_offers` | **Carryover** — present in DB, NOT used by V1 server.js. See note below. |
 | 5 | `20260504120000_scan_events_data.sql` | `scan_events.data jsonb` + `scan_events_ocr_first_idx` partial index | **V2 / S1** — additive column for OCR-first telemetry payload (F24, V2_ARCHITECTURE §3.7) |
 | 6 | `20260504120100_sessions_indexes.sql` | secondary indexes on `sessions(user_id, created_at)`, `session_cards(session_id, created_at)`, `session_cards(user_id)` | **V2 / S1** — performance prerequisite for the F17 dual-write reader/writer |
+| 7 | `20261009170000_show_submissions.sql` | `show_submissions` (show mode, RLS on, service role only) | Show mode, applied 9 Oct 2026 |
 
 Each forward-migration above timestamped `…_rollback.sql` is the operator's undo path. Per `CARD_PRICER_V2_PROMPT.md` §2.4 — never edit data in place without a backup.
 

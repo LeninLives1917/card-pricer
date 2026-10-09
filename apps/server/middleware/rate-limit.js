@@ -76,3 +76,17 @@ export const quoteBatchLimiter = rateLimit({
   message: { error: 'Too many quotes from this connection — please try again in a little while.' },
   handler: countedHandler('quote_batch'),
 });
+
+/**
+ * Show mode (trade-show QR page): one submission per customer list. A show
+ * hall's WiFi puts many customers behind one address, so this is generous;
+ * it only stops a script filling the staff board.
+ */
+export const showSubmitLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  max: 120,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many lists from this connection. Please ask at the counter.' },
+  handler: countedHandler('show_submit'),
+});

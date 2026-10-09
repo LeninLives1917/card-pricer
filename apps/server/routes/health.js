@@ -28,6 +28,7 @@ import { isEnabled as rectifyEnabled } from '../../../pricing/card-rectify.js';
 import { getFastPathMode } from '../../../pricing/fast-path-mode.js';
 import { quotePriceState } from '../../../pricing/quote-prices/hub-feed.js';
 import { getQuoteBatchCounts } from '../../../infra/observability/quote-batch-counters.js';
+import { getShowCounts } from '../../../infra/observability/show-counters.js';
 
 const router = express.Router();
 
@@ -168,6 +169,10 @@ export async function buildHealthPayload(deps = {}) {
     // Usage of the whole-list quote, and every 429 on the public quote routes.
     // Informational; a rate is null until someone has quoted.
     quote_batch: quoteBatchCheck((deps.quoteBatch ?? getQuoteBatchCounts)()),
+    // Show mode (trade-show QR quote). Informational: a list saved without
+    // prices still sends the customer to the counter, so the ratio is the only
+    // place a pricing failure there would show. null = nobody has submitted.
+    show: showCheck((deps.show ?? getShowCounts)()),
     // The Cardmarket product-URL store. ADVISORY — a link is a convenience and
     // must never degrade the service.
     //
@@ -312,6 +317,16 @@ export function quotePriceCheck(s, env = process.env) {
       + `${pct(s.priced_ratio)} of catalogue cards priced`
       + (s.last_error ? ` (last refresh failed: ${s.last_error})` : '');
   return { ok: configured && fresh && mappedOk && nmEnFresh && nmEnOk, configured, ...s, detail };
+}
+
+export function showCheck(c) {
+  return {
+    ok: true,
+    ...c,
+    detail: c.submitted
+      ? `${c.submitted} list(s) since boot, ${c.unpriced_on_submit} saved without prices` + (c.save_failed ? `, ${c.save_failed} failed to save` : '')
+      : 'no show lists since boot',
+  };
 }
 
 export function quoteBatchCheck(c) {

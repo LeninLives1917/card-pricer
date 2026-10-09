@@ -1,0 +1,352 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="robots" content="noindex" />
+  <meta name="theme-color" content="#1c1917" />
+  <title>Show desk</title>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <style>
+    :root {
+      --amber-50: #fffbeb; --amber-100: #fef3c7; --amber-500: #d97706; --amber-600: #b45309; --amber-700: #92400e; --gold: #facc15;
+      --stone-50: #fafaf9; --stone-100: #f5f5f4; --stone-200: #e7e5e4; --stone-300: #d6d3d1; --stone-400: #a8a29e;
+      --stone-500: #78716c; --stone-600: #57534e; --stone-700: #44403c; --stone-800: #292524; --stone-900: #1c1917;
+      --ok: #15803d; --bad: #b91c1c;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; height: 100%; }
+    body { font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif; color: var(--stone-900); background: var(--stone-100); -webkit-font-smoothing: antialiased; }
+    button, select, input { font: inherit; }
+    .bar { position: sticky; top: 0; z-index: 5; background: var(--stone-900); color: #fff; display: flex; align-items: center; gap: 14px; padding: 10px 16px; flex-wrap: wrap; }
+    .bar h1 { margin: 0; font-size: 17px; font-weight: 800; }
+    .bar .sub { color: var(--stone-400); font-size: 13px; }
+    .tabs { display: flex; gap: 0; margin-left: auto; }
+    .tabs button { background: transparent; color: var(--stone-300); border: 1px solid var(--stone-700); padding: 7px 14px; cursor: pointer; }
+    .tabs button.on { background: var(--gold); color: var(--stone-900); border-color: var(--gold); font-weight: 800; }
+    .bar .link { color: var(--stone-300); background: none; border: 0; cursor: pointer; text-decoration: underline; font-size: 13px; }
+    .wrap { display: grid; grid-template-columns: 340px 1fr; gap: 0; height: calc(100% - 52px); }
+    .list { overflow-y: auto; border-right: 1px solid var(--stone-300); background: var(--stone-50); }
+    .empty { padding: 30px 20px; color: var(--stone-500); text-align: center; }
+    .tk { display: grid; grid-template-columns: 74px 1fr; gap: 0 12px; width: 100%; text-align: left; background: #fff; border: 0; border-bottom: 1px solid var(--stone-200); padding: 12px 14px; cursor: pointer; }
+    .tk:hover { background: var(--amber-50); }
+    .tk.sel { background: var(--amber-100); box-shadow: inset 4px 0 0 var(--amber-600); }
+    .tk.fresh { animation: fresh 2.4s ease-out; }
+    @keyframes fresh { 0% { background: var(--gold); } 100% { background: #fff; } }
+    .tk .n { grid-row: span 3; font-size: 34px; font-weight: 900; letter-spacing: -0.03em; line-height: 1; padding-top: 2px; }
+    .tk .who { font-weight: 800; font-size: 16px; }
+    .tk .meta { font-size: 13px; color: var(--stone-500); }
+    .tk .money { font-size: 14px; margin-top: 2px; }
+    .tk .money b { color: var(--amber-700); }
+    .badges { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+    .badge { font-size: 11px; font-weight: 700; padding: 1px 6px; border: 1px solid var(--stone-300); color: var(--stone-600); text-transform: uppercase; letter-spacing: 0.04em; }
+    .badge.warn { border-color: var(--amber-500); color: var(--amber-700); background: var(--amber-50); }
+    .badge.bad { border-color: var(--bad); color: var(--bad); }
+    .detail { overflow-y: auto; padding: 20px 22px 60px; }
+    .dh { display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; }
+    .dh .n { font-size: 54px; font-weight: 900; letter-spacing: -0.03em; line-height: 1; }
+    .dh .who { font-size: 24px; font-weight: 800; }
+    .dh .meta { color: var(--stone-500); font-size: 14px; }
+    .back { display: none; background: none; border: 0; color: var(--amber-700); font-weight: 700; padding: 0; margin-bottom: 10px; cursor: pointer; }
+    .totals { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0; margin-top: 16px; background: #fff; border: 1px solid var(--stone-200); }
+    .totals div { padding: 14px 16px; border-right: 1px solid var(--stone-200); }
+    .totals div:last-child { border-right: 0; }
+    .totals .k { font-size: 11px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; color: var(--stone-500); }
+    .totals .v { font-size: 28px; font-weight: 900; letter-spacing: -0.02em; }
+    .totals .credit .v { color: var(--amber-700); }
+    .note { margin-top: 10px; font-size: 13px; color: var(--stone-600); }
+    .alert { margin-top: 12px; padding: 10px 12px; background: #fef2f2; border: 1px solid #fecaca; color: var(--bad); font-size: 14px; }
+    .actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+    .btn { border: 1px solid var(--stone-300); background: #fff; padding: 10px 16px; cursor: pointer; font-weight: 700; }
+    .btn.primary { background: var(--amber-600); border-color: var(--amber-600); color: #fff; }
+    .btn.dark { background: var(--stone-900); border-color: var(--stone-900); color: #fff; }
+    .btn[disabled] { opacity: 0.55; cursor: progress; }
+    table { width: 100%; border-collapse: collapse; margin-top: 18px; background: #fff; border: 1px solid var(--stone-200); }
+    th { text-align: left; font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--stone-500); padding: 9px 10px; border-bottom: 1px solid var(--stone-200); background: var(--stone-50); }
+    td { padding: 9px 10px; border-bottom: 1px solid var(--stone-200); vertical-align: top; font-size: 14px; }
+    td.num, th.num { text-align: right; white-space: nowrap; }
+    td.credit { font-weight: 800; color: var(--amber-700); }
+    .card { display: flex; gap: 10px; align-items: flex-start; }
+    .card img { width: 40px; aspect-ratio: 63/88; object-fit: contain; background: var(--stone-100); flex: none; }
+    .card .nm { font-weight: 700; }
+    .card .st { font-size: 12px; color: var(--stone-500); }
+    .card .ln { font-size: 12px; color: var(--stone-400); }
+    .card .nt { font-size: 12px; color: var(--amber-700); }
+    select { border: 1px solid var(--stone-300); padding: 4px 6px; background: #fff; }
+    tr.ask td, tr.nf td, tr.bh td { background: var(--stone-50); }
+    .q { font-size: 13px; color: var(--stone-600); margin: 2px 0 8px; }
+    .opts { display: flex; flex-wrap: wrap; gap: 8px; }
+    .opt { display: flex; gap: 8px; align-items: center; border: 1px solid var(--stone-300); background: #fff; padding: 6px 8px; cursor: pointer; text-align: left; max-width: 280px; }
+    .opt:hover { border-color: var(--amber-600); }
+    .opt img { width: 34px; aspect-ratio: 63/88; object-fit: contain; }
+    .opt .p { font-weight: 800; color: var(--amber-700); }
+    .tag { font-size: 11px; font-weight: 700; padding: 1px 6px; border: 1px solid var(--stone-300); color: var(--stone-600); text-transform: uppercase; }
+    .linkbtn { background: none; border: 0; color: var(--amber-700); text-decoration: underline; cursor: pointer; font-size: 12px; padding: 0; }
+    .login { max-width: 360px; margin: 10vh auto; background: #fff; border: 1px solid var(--stone-200); padding: 26px; }
+    .login h2 { margin: 0 0 6px; font-weight: 900; }
+    .login input { display: block; width: 100%; margin-top: 10px; padding: 11px 12px; border: 1px solid var(--stone-400); }
+    .login .btn { width: 100%; margin-top: 14px; }
+    .err { color: var(--bad); font-size: 14px; margin-top: 10px; }
+    .hidden { display: none !important; }
+    @media (max-width: 820px) {
+      .wrap { grid-template-columns: 1fr; height: auto; }
+      .list { border-right: 0; }
+      body.showing .list { display: none; }
+      body:not(.showing) .detail { display: none; }
+      .back { display: inline-block; }
+      .totals .v { font-size: 22px; }
+      th.hide-sm, td.hide-sm { display: none; }
+    }
+  </style>
+</head>
+<body>
+  <section id="loginView" class="hidden">
+    <form class="login" id="loginForm">
+      <h2>Show desk</h2>
+      <p style="margin:0;color:var(--stone-500);font-size:14px">Sign in with the shop's scanner account.</p>
+      <input id="email" type="email" autocomplete="username" placeholder="Email" required />
+      <input id="password" type="password" autocomplete="current-password" placeholder="Password" required />
+      <button class="btn primary" type="submit" id="loginBtn">Sign in</button>
+      <p class="err" id="loginErr"></p>
+    </form>
+  </section>
+
+  <section id="appView" class="hidden">
+    <div class="bar">
+      <h1 id="shopTitle">Show desk</h1>
+      <span class="sub" id="waitingCount"></span>
+      <div class="tabs">
+        <button id="tabWaiting" class="on" type="button">Waiting</button>
+        <button id="tabDone" type="button">Done</button>
+      </div>
+      <a class="link" id="posterLink" target="_blank" rel="noopener">QR poster</a>
+      <button class="link" id="signOut" type="button">Sign out</button>
+    </div>
+    <div class="wrap">
+      <div class="list" id="list"><div class="empty">Loading…</div></div>
+      <div class="detail" id="detail"><div class="empty">Pick a ticket on the left.</div></div>
+    </div>
+  </section>
+
+  <script>
+  (function () {
+    var SUPABASE_URL = 'https://vecbaewlxodqnevduoiy.supabase.co';
+    var SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZlY2JhZXdseG9kcW5ldmR1b2l5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzY3OTMyMjYsImV4cCI6MjA5MjM2OTIyNn0.FM78XIaiTzjb8MRAsFuf63Gu4gbKAlTMYrxPijkE544';
+    var sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, { auth: { persistSession: true, autoRefreshToken: true } });
+    var slug = (location.pathname.split('/')[2] || '').toLowerCase();
+    var $ = function (id) { return document.getElementById(id); };
+    var state = { status: 'waiting', items: [], selected: null, item: null, seen: {}, firstLoad: true };
+    var CONDITIONS = ['NM', 'EX', 'GD', 'LP', 'PL', 'PO'];
+    var REASONS = {
+      no_cardmarket_product: "Not in today's Cardmarket list", no_price_in_guide: "Not in today's Cardmarket list",
+      first_edition: '1st Edition, price by hand', shadowless: 'Shadowless, price by hand', graded: 'Graded slab',
+      prices_stale: "Today's prices didn't load", prices_unavailable: "Today's prices didn't load",
+      high_value: 'High value, price by hand', price_unstable: "Cardmarket's price looked unreliable",
+      prices_disagree: "Cardmarket's prices disagree today", product_unconfirmed: 'Confirm the exact version',
+      customer_unsure: 'Customer not sure which one', unconfirmed: 'Check which one'
+    };
+
+    function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
+    function eur(n) { return n == null ? '' : '€' + Number(n).toLocaleString('en-IE', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
+    function ago(iso) {
+      var s = Math.max(0, (Date.now() - Date.parse(iso)) / 1000);
+      if (s < 60) return 'just now'; if (s < 3600) return Math.floor(s / 60) + ' min ago';
+      if (s < 86400) return Math.floor(s / 3600) + ' h ago';
+      return new Date(iso).toLocaleDateString('en-IE', { day: 'numeric', month: 'short' });
+    }
+    function cardBits(c) { return c ? [c.set_name || c.set_code, c.card_number ? '#' + c.card_number : ''].filter(Boolean).join(' · ') : ''; }
+
+    async function api(path, opts) {
+      opts = opts || {};
+      var sess = (await sb.auth.getSession()).data.session;
+      if (!sess) { showLogin(); throw new Error('signed out'); }
+      var r = await fetch(path, {
+        method: opts.method || 'GET',
+        headers: Object.assign({ Authorization: 'Bearer ' + sess.access_token }, opts.body ? { 'Content-Type': 'application/json' } : {}),
+        body: opts.body ? JSON.stringify(opts.body) : undefined
+      });
+      var b = await r.json().catch(function () { return {}; });
+      if (r.status === 401) { showLogin(); throw new Error('signed out'); }
+      if (!r.ok) throw new Error(b.error || ('HTTP ' + r.status));
+      return b;
+    }
+
+    function showLogin() { $('appView').classList.add('hidden'); $('loginView').classList.remove('hidden'); }
+    function showApp() { $('loginView').classList.add('hidden'); $('appView').classList.remove('hidden'); }
+
+    $('loginForm').addEventListener('submit', async function (e) {
+      e.preventDefault();
+      $('loginErr').textContent = ''; $('loginBtn').disabled = true;
+      var r = await sb.auth.signInWithPassword({ email: $('email').value.trim(), password: $('password').value });
+      $('loginBtn').disabled = false;
+      if (r.error) { $('loginErr').textContent = r.error.message; return; }
+      start();
+    });
+    $('signOut').addEventListener('click', async function () { await sb.auth.signOut(); showLogin(); });
+    $('posterLink').href = '/show/' + slug + '/poster';
+
+    function setTab(s) {
+      state.status = s; state.selected = null; state.item = null;
+      $('tabWaiting').classList.toggle('on', s === 'waiting');
+      $('tabDone').classList.toggle('on', s === 'done');
+      document.body.classList.remove('showing');
+      $('detail').innerHTML = '<div class="empty">Pick a ticket on the left.</div>';
+      loadList();
+    }
+    $('tabWaiting').addEventListener('click', function () { setTab('waiting'); });
+    $('tabDone').addEventListener('click', function () { setTab('done'); });
+
+    async function loadList() {
+      try {
+        var b = await api('/api/show/' + slug + '/staff/list?status=' + state.status);
+        $('shopTitle').textContent = 'Show desk · ' + b.shop.name;
+        $('waitingCount').textContent = b.waiting != null ? b.waiting + ' waiting' : '';
+        document.title = (b.waiting ? '(' + b.waiting + ') ' : '') + 'Show desk';
+        state.items = b.items;
+        renderList();
+      } catch (e) {
+        if (e.message !== 'signed out') $('list').innerHTML = '<div class="empty">' + esc(e.message) + '</div>';
+      }
+    }
+
+    function badgesOf(it) {
+      var t = it.totals, out = [];
+      if (it.price_error) out.push('<span class="badge bad">Not priced</span>');
+      if (t.questions) out.push('<span class="badge warn">' + t.questions + ' to check</span>');
+      if (t.not_found) out.push('<span class="badge warn">' + t.not_found + ' not matched</span>');
+      if (t.by_hand) out.push('<span class="badge">' + t.by_hand + ' by hand</span>');
+      if (it.outcome) out.push('<span class="badge">' + esc(it.outcome === 'declined' ? 'Didn’t sell' : it.outcome) + '</span>');
+      return out.join('');
+    }
+
+    function renderList() {
+      var el = $('list');
+      if (!state.items.length) {
+        el.innerHTML = '<div class="empty">' + (state.status === 'waiting' ? 'No one waiting. New lists appear here as they come in.' : 'Nothing done yet.') + '</div>';
+        return;
+      }
+      el.innerHTML = state.items.map(function (it) {
+        var fresh = !state.firstLoad && !state.seen[it.id] ? ' fresh' : '';
+        return '<button type="button" class="tk' + (state.selected === it.id ? ' sel' : '') + fresh + '" data-id="' + esc(it.id) + '">' +
+          '<span class="n">' + esc(it.ticket) + '</span>' +
+          '<span class="who">' + esc(it.name) + '</span>' +
+          '<span class="meta">' + esc(ago(it.created_at)) + ' · ' + it.line_count + (it.line_count === 1 ? ' line' : ' lines') + '</span>' +
+          '<span class="money">' + (it.totals.cards ? '<b>' + eur(it.totals.credit) + '</b> credit · ' + eur(it.totals.cash) + ' cash' : '<span style="color:var(--stone-500)">nothing priced yet</span>') +
+          '<span class="badges">' + badgesOf(it) + '</span></span>' +
+          '</button>';
+      }).join('');
+      state.items.forEach(function (it) { state.seen[it.id] = true; });
+      state.firstLoad = false;
+      Array.prototype.forEach.call(el.querySelectorAll('.tk'), function (b) {
+        b.addEventListener('click', function () { open(b.getAttribute('data-id')); });
+      });
+    }
+
+    async function open(id) {
+      state.selected = id;
+      renderList();
+      document.body.classList.add('showing');
+      $('detail').innerHTML = '<div class="empty">Loading…</div>';
+      try { state.item = await api('/api/show/' + slug + '/staff/item/' + id); renderDetail(); }
+      catch (e) { $('detail').innerHTML = '<div class="empty">' + esc(e.message) + '</div>'; }
+    }
+
+    async function patch(body, btn) {
+      if (btn) btn.disabled = true;
+      try {
+        state.item = await api('/api/show/' + slug + '/staff/item/' + state.item.id, { method: 'PATCH', body: body });
+        renderDetail();
+        loadList();
+      } catch (e) { alert(e.message); }
+      finally { if (btn) btn.disabled = false; }
+    }
+
+    function cardCell(card, line, extra) {
+      var img = card && card.image ? '<img src="' + esc(card.image) + '" alt="" loading="lazy" onerror="this.style.visibility=\'hidden\'">' : '';
+      return '<div class="card">' + img + '<div>' +
+        '<div class="nm">' + esc(card ? card.name : line) + '</div>' +
+        (card ? '<div class="st">' + esc(cardBits(card)) + '</div>' : '') +
+        '<div class="ln">“' + esc(line) + '”</div>' + (extra || '') + '</div></div>';
+    }
+
+    function renderDetail() {
+      var it = state.item, t = it.totals;
+      var html = '<button class="back" type="button" id="backBtn">← All tickets</button>' +
+        '<div class="dh"><span class="n">' + esc(it.ticket) + '</span><span class="who">' + esc(it.name) + '</span>' +
+        '<span class="meta">' + esc(ago(it.created_at)) + (it.email ? ' · ' + esc(it.email) + (it.newsletter ? ' (newsletter yes)' : '') : '') + '</span></div>' +
+        (it.price_error ? '<div class="alert">This list isn’t priced: ' + esc(it.price_error) + '. Press Reprice.</div>' : '') +
+        '<div class="totals"><div class="credit"><div class="k">Store credit</div><div class="v">' + eur(t.credit) + '</div></div>' +
+        '<div><div class="k">Cash</div><div class="v">' + eur(t.cash) + '</div></div>' +
+        '<div><div class="k">Market</div><div class="v" style="font-size:20px;color:var(--stone-600)">' + eur(t.market) + '</div></div></div>' +
+        '<p class="note">' + t.cards + (t.cards === 1 ? ' card' : ' cards') + ' priced at ' + it.rates.creditPct + '% credit, ' + it.rates.cashPct + '% cash' +
+        (it.prices_as_of ? ', Cardmarket cheapest NM English ' + esc(it.prices_as_of) : '') + '. Set the condition of each card once you’ve seen it.' +
+        (t.questions ? ' <b>' + t.questions + ' to check.</b>' : '') + (t.not_found ? ' <b>' + t.not_found + ' not matched.</b>' : '') + '</p>' +
+        '<div class="actions">' +
+        (it.status === 'waiting'
+          ? '<button class="btn primary" id="boughtBtn" type="button">Bought</button><button class="btn" id="declinedBtn" type="button">Didn’t sell</button>'
+          : '<button class="btn" id="reopenBtn" type="button">Back to waiting</button>') +
+        '<button class="btn" id="repriceBtn" type="button">Reprice</button></div>';
+
+      html += '<table><thead><tr><th>Card</th><th class="hide-sm">Qty</th><th>Cond.</th><th class="num hide-sm">Market</th><th class="num">Cash</th><th class="num">Credit</th></tr></thead><tbody>';
+      it.entries.forEach(function (e) {
+        if (e.kind === 'priced') {
+          var opts = CONDITIONS.map(function (c) { return '<option' + (c === e.condition ? ' selected' : '') + '>' + c + '</option>'; }).join('');
+          var notes = (e.notes || []).map(function (n) { return '<div class="nt">' + esc(n) + '</div>'; }).join('') +
+            (e.finish === 'reverse_holo' ? '<div class="nt">Reverse holo</div>' : '') +
+            (e.picked != null ? '<div><button class="linkbtn" data-unpick="' + e.index + '" type="button">Change which one</button></div>' : '');
+          html += '<tr><td>' + cardCell(e.card, e.line, notes) + '</td><td class="hide-sm">' + e.qty + '</td>' +
+            '<td><select data-cond="' + e.index + '">' + opts + '</select></td>' +
+            '<td class="num hide-sm">' + eur(e.market) + '</td><td class="num">' + eur(e.cash) + '</td><td class="num credit">' + eur(e.credit) + '</td></tr>';
+        } else if (e.kind === 'ask') {
+          var cands = e.candidates.map(function (c, i) {
+            var img = c.card && c.card.image ? '<img src="' + esc(c.card.image) + '" alt="" loading="lazy" onerror="this.style.visibility=\'hidden\'">' : '';
+            return '<button class="opt" type="button" data-pick="' + e.index + ':' + i + '">' + img + '<span><span style="font-weight:700">' + esc(c.card ? c.card.name : '') + '</span><br>' +
+              '<span style="font-size:12px;color:var(--stone-500)">' + esc(c.label || cardBits(c.card)) + '</span><br>' +
+              (c.market != null ? '<span class="p">' + eur(c.market) + '</span>' : '<span class="tag">' + esc(REASONS[c.unpriced_reason] || 'By hand') + '</span>') + '</span></button>';
+          }).join('') + '<button class="opt" type="button" data-pick="' + e.index + ':-1">Not sure</button>';
+          html += '<tr class="ask"><td colspan="6"><div style="font-weight:800">' + (e.qty > 1 ? e.qty + '× ' : '') + esc(e.line) + '</div>' +
+            '<div class="q">' + esc(e.question || 'Which card is it?') + '</div><div class="opts">' + cands + '</div></td></tr>';
+        } else if (e.kind === 'by_hand') {
+          html += '<tr class="bh"><td colspan="3">' + cardCell(e.card, e.line, e.picked != null ? '<div><button class="linkbtn" data-unpick="' + e.index + '" type="button">Change which one</button></div>' : '') + '</td>' +
+            '<td colspan="3" class="num"><span class="tag">' + esc(REASONS[e.reason] || 'Price by hand') + '</span>' + (e.qty > 1 ? '<div class="ln">' + e.qty + '×</div>' : '') + '</td></tr>';
+        } else {
+          html += '<tr class="nf"><td colspan="6"><div style="font-weight:700">' + esc(e.line) + '</div><div class="q" style="margin:0;color:var(--bad)">Not matched. Find the card with the customer.</div></td></tr>';
+        }
+      });
+      html += '</tbody></table>';
+      $('detail').innerHTML = html;
+
+      $('backBtn').addEventListener('click', function () { document.body.classList.remove('showing'); });
+      var b1 = $('boughtBtn'); if (b1) b1.addEventListener('click', function () { patch({ status: 'done', outcome: 'bought' }, b1); });
+      var b2 = $('declinedBtn'); if (b2) b2.addEventListener('click', function () { patch({ status: 'done', outcome: 'declined' }, b2); });
+      var b3 = $('reopenBtn'); if (b3) b3.addEventListener('click', function () { patch({ status: 'waiting' }, b3); });
+      var rp = $('repriceBtn');
+      rp.addEventListener('click', async function () {
+        rp.disabled = true;
+        try { state.item = await api('/api/show/' + slug + '/staff/item/' + it.id + '/reprice', { method: 'POST' }); renderDetail(); loadList(); }
+        catch (e) { alert(e.message); } finally { rp.disabled = false; }
+      });
+      Array.prototype.forEach.call($('detail').querySelectorAll('select[data-cond]'), function (s) {
+        s.addEventListener('change', function () { var c = {}; c[s.getAttribute('data-cond')] = s.value; patch({ conditions: c }); });
+      });
+      Array.prototype.forEach.call($('detail').querySelectorAll('[data-pick]'), function (b) {
+        b.addEventListener('click', function () { var p = b.getAttribute('data-pick').split(':'); var o = {}; o[p[0]] = Number(p[1]); patch({ picks: o }, b); });
+      });
+      Array.prototype.forEach.call($('detail').querySelectorAll('[data-unpick]'), function (b) {
+        b.addEventListener('click', function () { var o = {}; o[b.getAttribute('data-unpick')] = null; patch({ picks: o }, b); });
+      });
+    }
+
+    var timer = null;
+    function start() {
+      showApp();
+      loadList();
+      if (timer) clearInterval(timer);
+      timer = setInterval(function () { if (!document.hidden) loadList(); }, 5000);
+    }
+
+    sb.auth.getSession().then(function (r) { if (r.data.session) start(); else showLogin(); });
+  })();
+  </script>
+</body>
+</html>

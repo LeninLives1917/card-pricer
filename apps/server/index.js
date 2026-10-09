@@ -74,6 +74,7 @@ import billingRouter from './routes/billing.js';
 import adminRouter from './routes/admin.js';
 import shopRouter from './routes/shop.js';
 import quoteLeadRouter from './routes/quote-lead.js';
+import showRouter from './routes/show.js';
 import quoteBatchRouter from './routes/quote-batch.js';   // whole-list quote, 7 Oct 2026
 import quoteRecoverRouter from './routes/quote-recover.js'; // S12
 import quoteOfferRouter from './routes/quote-offer.js';     // S20
@@ -138,6 +139,7 @@ app.use(quoteOfferRouter);  // /api/v2/quote-offer + /:token/{accept,decline} (S
 app.use(customerRouter);    // /api/v2/customer/me + /offers + /magic-link (S20)
 app.use(inventoryRouter);   // /api/v2/inventory/* (S18)
 app.use(shopRouter);        // /api/shop, /api/shop-config/:slug
+app.use(showRouter);        // /show/:slug (+ /staff, /poster), /api/show/* — trade-show QR quote
 
 // SPA fallback MUST be last (V2_AUDIT §1 — line 5707 in V1).
 app.use(staticRoutes.spaFallback);

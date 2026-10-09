@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="robots" content="noindex" />
+  <title>Sell us your cards: QR poster</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+  <style>
+    @page { size: A4; margin: 0; }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; }
+    body { font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif; background: #e7e5e4; color: #1c1917; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    .tools { max-width: 210mm; margin: 16px auto; display: flex; gap: 10px; align-items: center; justify-content: space-between; padding: 0 8px; }
+    .tools button { background: #b45309; color: #fff; border: 0; padding: 10px 18px; font: inherit; font-weight: 800; cursor: pointer; }
+    .tools span { font-size: 14px; color: #57534e; }
+    .sheet { width: 210mm; height: 297mm; margin: 0 auto 24px; background: #1c1917; color: #fff; padding: 18mm 16mm; display: flex; flex-direction: column; align-items: center; text-align: center; }
+    .logo { width: 34mm; height: 34mm; object-fit: contain; }
+    .kicker { margin-top: 8mm; font-size: 15pt; font-weight: 800; letter-spacing: 0.25em; text-transform: uppercase; color: #facc15; }
+    h1 { margin: 4mm 0 0; font-size: 46pt; line-height: 1.02; font-weight: 900; letter-spacing: -0.02em; }
+    .lead { margin: 6mm 0 0; font-size: 16pt; color: #d6d3d1; max-width: 150mm; }
+    .qr { margin-top: 10mm; background: #fff; padding: 7mm; }
+    .qr #qr img, .qr #qr canvas { display: block; width: 78mm !important; height: 78mm !important; }
+    .url { margin-top: 4mm; font-size: 11pt; color: #a8a29e; word-break: break-all; }
+    .steps { margin-top: auto; display: grid; grid-template-columns: repeat(3, 1fr); gap: 6mm; width: 100%; text-align: left; }
+    .steps div { border-top: 2px solid #b45309; padding-top: 3mm; font-size: 12pt; color: #d6d3d1; }
+    .steps b { display: block; color: #fff; font-size: 14pt; margin-bottom: 1mm; }
+    @media print { body { background: #1c1917; } .tools { display: none; } .sheet { margin: 0; } }
+  </style>
+</head>
+<body>
+  <div class="tools">
+    <span>Print this on A4. The code opens the card list on the customer's phone.</span>
+    <button type="button" onclick="window.print()">Print poster</button>
+  </div>
+  <div class="sheet">
+    <img class="logo" src="https://www.boardandbrewed.ie/logo/logo-1024-transparent.png" alt="Board & Brewed" />
+    <div class="kicker">Sell your cards</div>
+    <h1>Selling Pokémon cards?</h1>
+    <p class="lead">Scan the code, list your cards on your phone, then come to the counter for your offer.</p>
+    <div class="qr"><div id="qr"></div></div>
+    <div class="url" id="url"></div>
+    <div class="steps">
+      <div><b>1. Scan</b>Open the camera and point it at the code.</div>
+      <div><b>2. List your cards</b>Name and number, like Charizard 4/102.</div>
+      <div><b>3. Come to the counter</b>We check them and make you an offer, cash or store credit.</div>
+    </div>
+  </div>
+  <script>
+    var slug = (location.pathname.split('/')[2] || '').toLowerCase();
+    var target = location.origin + '/show/' + slug;
+    document.getElementById('url').textContent = target.replace(/^https?:\/\//, '');
+    new QRCode(document.getElementById('qr'), { text: target, width: 600, height: 600, colorDark: '#1c1917', colorLight: '#ffffff', correctLevel: QRCode.CorrectLevel.M });
+  </script>
+</body>
+</html>
