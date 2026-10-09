@@ -33,7 +33,10 @@
 //          web already exposed and V3 had stopped asking for.
 //   v3.8 — stills capped at STILL_MAX_EDGE. The uncapped full-sensor still
 //          from v3.7 OOM-killed the server via the room replay buffer.
-const CACHE_VERSION = 'cardpricer-v3.8';
+//   v3.9 — show-mode pages (/show/*) are never intercepted. They went through
+//          stale-while-revalidate, so a vendor who had opened the scanner app
+//          kept seeing the old show desk after the 9 Oct restyle.
+const CACHE_VERSION = 'cardpricer-v3.9';
 
 const SHELL = [
   '/',
@@ -77,6 +80,12 @@ self.addEventListener('fetch', (event) => {
 
   // Cross-origin: let the browser handle it.
   if (url.origin !== self.location.origin) return;
+
+  // Show mode (/show/:slug, /staff, /poster) is its own set of pages, served
+  // no-store: a customer's ticket and the staff desk must always be the live
+  // page. Liam (Ireland Card Show, 9 Oct 2026) still saw the old desk after a
+  // deploy because this worker served it stale-while-revalidate.
+  if (url.pathname === '/show' || url.pathname.startsWith('/show/')) return;
 
   // Shell: network-first.
   const isShell =
