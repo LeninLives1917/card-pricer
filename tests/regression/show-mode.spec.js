@@ -23,12 +23,12 @@ import assert from 'node:assert/strict';
 import { handleQuoteBatch } from '../../apps/server/routes/quote-batch.js';
 import {
   handleShowSubmit, handleShowTicket, handleStaffList, handleStaffItem,
-  handleStaffUpdate, handleStaffReprice,
+  handleStaffUpdate, handleStaffReprice, handleStaffNew,
 } from '../../apps/server/routes/show.js';
 import { customerView, staffEntries, staffTotals, showLinesOf } from '../../pricing/show/offer.js';
 import { getShowCounts, resetShowCounts } from '../../infra/observability/show-counters.js';
 import { showCheck } from '../../apps/server/routes/health.js';
-import { buildPriceIndex } from '../../pricing/quote-prices/feed-index.js';
+import { buildPriceIndex, guideOf, COL } from '../../pricing/quote-prices/feed-index.js';
 import { loadSets } from '../../pricing/set-resolve.js';
 
 const NOW = Date.parse('2026-10-09T10:00:00Z');
@@ -273,4 +273,71 @@ test('staffTotals adds up only what is priced', () => {
   ]);
   assert.deepEqual(t, { cards: 2, market: 10, cash: 5.5, credit: 7, by_hand: 1, questions: 1, not_found: 1 });
   assert.deepEqual(staffEntries(null), []);
+});
+
+// Liam (Ireland Card Show, 9 Oct 2026): "If I type in cards myself on the app
+// is there a way I can see all data and prices". Staff could only see lists
+// customers had sent from the QR page, and only the one price used.
+test('staff can type a list in themselves and see it priced, with every Cardmarket number', async () => {
+  resetShowCounts();
+  const db = fakeDb();
+  const lines = ['3x Gyarados 6/102', 'Umbreon VMAX 215/203'];
+
+  assert.equal((await handleStaffNew('brewed', { lines }, STRANGER, { supabaseClient: db, quote: quoteFn() })).status, 403);
+  assert.equal((await handleStaffNew('brewed', { lines }, null, { supabaseClient: db, quote: quoteFn() })).status, 404);
+  assert.equal((await handleStaffNew('brewed', { lines: [] }, OWNER, { supabaseClient: db, quote: quoteFn() })).status, 400);
+  assert.equal(db.tables.show_submissions.length, 0, 'nothing saved for a stranger or an empty list');
+
+  const r = await handleStaffNew('brewed', { lines }, OWNER, { supabaseClient: db, quote: quoteFn() });
+  assert.equal(r.status, 200);
+  assert.equal(r.body.name, 'Typed at the desk');
+  assert.equal(r.body.status, 'waiting', 'a ticket like any other, so Bought / Didn\u2019t sell work');
+  assert.equal(r.body.totals.cards, 4);
+  const gy = r.body.entries.find((e) => e.card?.id === 'base1-6');
+  assert.equal(gy.market, 450);
+  // Every number the feed holds, not just the one used.
+  assert.deepEqual(gy.detail.guide, { finish: 'standard', nm_en: null, trend: 150, avg7: 150, avg30: 150, avg: 150, low: 37.5 });
+  assert.equal(gy.detail.basis, 'trend');
+  assert.equal(gy.detail.condition_multiplier, 1);
+  assert.match(gy.detail.cardmarket_url, /^https:\/\/www\.cardmarket\.com\//);
+
+  // It is in the waiting list, and counted as typed by staff.
+  assert.equal((await handleStaffList('brewed', {}, OWNER, { supabaseClient: db })).body.items.length, 1);
+  assert.deepEqual(getShowCounts().by_source, { staff: 1 });
+
+  // A list typed at the desk that cannot be priced is still saved and counted.
+  const bad = await handleStaffNew('brewed', { name: 'Box 2', lines }, OWNER, { supabaseClient: db, quote: async () => { throw new Error('catalogue loading'); } });
+  assert.equal(bad.status, 200);
+  assert.equal(bad.body.name, 'Box 2');
+  assert.equal(bad.body.price_error, 'catalogue loading');
+  assert.equal(getShowCounts().unpriced_on_submit, 1);
+  resetShowCounts();
+});
+
+test('a picked "which one" line shows the picked card\u2019s numbers, and none of it reaches the customer', async () => {
+  const db = fakeDb();
+  const sent = await submit(db);
+  const id = db.tables.show_submissions[0].id;
+  let it = (await handleStaffItem('brewed', id, OWNER, { supabaseClient: db })).body;
+  const askIdx = it.entries.find((e) => e.kind === 'ask').index;
+  const cel = it.entries[askIdx].candidates.findIndex((c) => c.card.id === 'cel25c-4');
+  it = (await handleStaffUpdate('brewed', id, { picks: { [askIdx]: cel } }, OWNER, { supabaseClient: db })).body;
+  assert.equal(it.entries[askIdx].detail.guide.trend, 213.52);
+  assertNoMoney(sent.body, 'submit');
+  assertNoMoney((await handleShowTicket(sent.body.token, { supabaseClient: db })).body, 'ticket');
+});
+
+test('guideOf: reverse holo reads the holo columns, NM English only for a checked standard card', () => {
+  const r = [];
+  r[COL.idProduct] = 1; r[COL.trend] = 10; r[COL.avg7] = 9; r[COL.avg30] = 8; r[COL.avg] = 7; r[COL.low] = 1;
+  r[COL.trendHolo] = 4; r[COL.avg7Holo] = 3.5; r[COL.avg30Holo] = 3; r[COL.avgHolo] = 2.5; r[COL.lowHolo] = 0.5;
+  assert.deepEqual(guideOf(r, { holo: true }), { finish: 'reverse_holo', nm_en: null, trend: 4, avg7: 3.5, avg30: 3, avg: 2.5, low: 0.5 });
+  assert.equal(guideOf(r).trend, 10);
+  assert.equal(guideOf(r).nm_en, null, 'no TCGGO data, so no NM English figure');
+  assert.equal(guideOf(null), null);
+  // TCGGO's product is this card: its cheapest NM English copy is shown, for the standard card only.
+  r[COL.set] = 'base1'; r[COL.local] = '6'; r[COL.name] = 'Gyarados';
+  r[COL.nmEn] = 11.5; r[COL.tcggoRows] = 1; r[COL.tcggoName] = 'Gyarados'; r[COL.tcggoNumber] = '6';
+  assert.equal(guideOf(r).nm_en, 11.5);
+  assert.equal(guideOf(r, { holo: true }).nm_en, null);
 });

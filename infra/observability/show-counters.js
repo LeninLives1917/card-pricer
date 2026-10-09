@@ -20,10 +20,13 @@ const counts = {
   staff_updates: 0,
 };
 const unpricedBy = {};
+// customer = typed on the QR page; staff = typed on the staff board.
+const bySource = {};
 let lastSubmitAt = null;
 
-export function countSubmitted({ priced, reason } = {}) {
+export function countSubmitted({ priced, reason, source = 'customer' } = {}) {
   counts.submitted += 1;
+  bySource[source] = (bySource[source] || 0) + 1;
   lastSubmitAt = new Date().toISOString();
   if (priced) counts.priced_on_submit += 1;
   else {
@@ -40,6 +43,7 @@ export function getShowCounts() {
   return {
     ...counts,
     unpriced_by_reason: { ...unpricedBy },
+    by_source: { ...bySource },
     priced_ratio: counts.submitted ? Number((counts.priced_on_submit / counts.submitted).toFixed(3)) : null,
     last_submit_at: lastSubmitAt,
   };
@@ -48,5 +52,6 @@ export function getShowCounts() {
 export function resetShowCounts() {
   for (const k of Object.keys(counts)) counts[k] = 0;
   for (const k of Object.keys(unpricedBy)) delete unpricedBy[k];
+  for (const k of Object.keys(bySource)) delete bySource[k];
   lastSubmitAt = null;
 }

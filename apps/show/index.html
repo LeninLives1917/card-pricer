@@ -4,81 +4,79 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <meta name="robots" content="noindex" />
-  <meta name="theme-color" content="#1c1917" />
-  <title>Sell us your cards</title>
+  <meta name="theme-color" content="#f7f4ef" />
+  <title>Sell your cards</title>
   <style>
+    /* Soft palette (Liam, 9 Oct 2026: "more user friendly and softer colours").
+       --accent is the shop's own colour, softened in script so a loud pick
+       (pure blue, say) still reads calm. */
     :root {
-      --amber-50: #fffbeb; --amber-500: #d97706; --amber-600: #b45309; --amber-700: #92400e;
-      --gold: #facc15;
-      --stone-50: #fafaf9; --stone-100: #f5f5f4; --stone-200: #e7e5e4; --stone-300: #d6d3d1;
-      --stone-400: #a8a29e; --stone-500: #78716c; --stone-600: #57534e; --stone-700: #44403c;
-      --stone-800: #292524; --stone-900: #1c1917;
-      --ok: #15803d; --warn: #b45309; --bad: #b91c1c;
+      --accent: #8a5a2b; --accent-ink: #6f4620; --accent-tint: #f6efe6; --accent-line: #e7d8c6;
+      --bg: #f7f4ef; --card: #ffffff; --ink: #2f2a26; --ink-2: #5b544d; --ink-3: #8a837b;
+      --line: #e8e2d9; --line-2: #d9d1c5;
+      --ok-bg: #e7f3ea; --ok: #2f7a45; --check-bg: #fbf0dc; --check: #9a6a12; --bad: #b4473f;
+      --radius: 16px;
     }
     * { box-sizing: border-box; }
     html, body { margin: 0; }
     body {
       font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-      color: var(--stone-900);
-      background: var(--stone-50);
-      -webkit-font-smoothing: antialiased;
-      line-height: 1.5;
+      color: var(--ink); background: var(--bg); -webkit-font-smoothing: antialiased; line-height: 1.5;
     }
-    .top {
-      background: var(--stone-900); color: #fff;
-      padding: 14px 18px; display: flex; align-items: center; gap: 12px;
-    }
-    .top img { width: 40px; height: 40px; object-fit: contain; }
+    .top { background: var(--card); border-bottom: 1px solid var(--line); padding: 12px 18px; display: flex; align-items: center; gap: 12px; }
+    .top img { width: 38px; height: 38px; object-fit: contain; border-radius: 8px; }
     .top b { font-size: 17px; letter-spacing: -0.01em; }
-    main { max-width: 560px; margin: 0 auto; padding: 24px 18px 48px; }
-    .kicker { margin: 0; font-size: 12px; font-weight: 700; letter-spacing: 0.2em; text-transform: uppercase; color: var(--amber-600); }
-    h1 { margin: 8px 0 0; font-size: 32px; line-height: 1.1; font-weight: 900; letter-spacing: -0.02em; }
-    .lead { margin: 10px 0 0; color: var(--stone-600); font-size: 16px; }
-    form { margin-top: 24px; }
-    label { display: block; font-weight: 700; font-size: 14px; color: var(--stone-800); }
-    .hint { margin: 4px 0 0; font-size: 13px; color: var(--stone-500); font-weight: 400; }
-    code { background: var(--stone-200); padding: 1px 5px; font-size: 0.9em; font-weight: 700; color: var(--stone-800); }
+    main { max-width: 560px; margin: 0 auto; padding: 22px 16px 48px; }
+    h1 { margin: 0; font-size: 28px; line-height: 1.15; font-weight: 800; letter-spacing: -0.02em; }
+    .lead { margin: 10px 0 0; color: var(--ink-2); font-size: 17px; }
+    .steps { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin: 18px 0 0; padding: 0; list-style: none; }
+    .steps li { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 10px; font-size: 13px; color: var(--ink-2); text-align: center; }
+    .steps b { display: grid; place-items: center; width: 26px; height: 26px; margin: 0 auto 4px; border-radius: 50%; background: var(--accent-tint); color: var(--accent-ink); font-size: 14px; }
+    .panel { margin-top: 18px; background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 18px; box-shadow: 0 1px 2px rgba(47,42,38,0.04); }
+    label { display: block; font-weight: 700; font-size: 16px; color: var(--ink); }
+    .hint { margin: 4px 0 0; font-size: 14px; color: var(--ink-3); font-weight: 400; }
+    code { background: var(--accent-tint); color: var(--accent-ink); padding: 1px 6px; border-radius: 6px; font-size: 0.92em; font-weight: 700; }
     input[type=text], input[type=email], textarea {
-      display: block; width: 100%; margin-top: 8px;
-      border: 1px solid var(--stone-400); background: #fff; color: var(--stone-900);
-      font: inherit; font-size: 16px; padding: 12px 14px; border-radius: 0; outline: none;
+      display: block; width: 100%; margin-top: 8px; border: 1.5px solid var(--line-2); background: #fff; color: var(--ink);
+      font: inherit; font-size: 17px; padding: 13px 14px; border-radius: 12px; outline: none; transition: border-color .15s, box-shadow .15s;
     }
-    input:focus, textarea:focus { border-color: var(--amber-600); box-shadow: 0 0 0 2px var(--amber-600); }
-    textarea { min-height: 190px; resize: vertical; line-height: 1.6; }
-    .field { margin-top: 20px; }
-    .optional { font-weight: 400; color: var(--stone-500); }
-    .check { display: flex; gap: 10px; align-items: flex-start; margin-top: 12px; font-size: 14px; color: var(--stone-700); font-weight: 400; }
-    .check input { width: 18px; height: 18px; margin-top: 2px; accent-color: var(--amber-600); }
+    input:focus, textarea:focus { border-color: var(--accent); box-shadow: 0 0 0 4px var(--accent-tint); }
+    textarea { min-height: 200px; resize: vertical; line-height: 1.7; }
+    .field + .field { margin-top: 22px; }
+    .optional { font-weight: 400; color: var(--ink-3); }
+    .check { display: flex; gap: 10px; align-items: flex-start; margin-top: 12px; font-size: 15px; color: var(--ink-2); font-weight: 400; }
+    .check input { width: 20px; height: 20px; margin-top: 2px; accent-color: var(--accent); }
     button.primary {
-      display: block; width: 100%; margin-top: 26px; padding: 16px 20px; border: 0; border-radius: 0;
-      background: var(--amber-600); color: #fff; font: inherit; font-size: 17px; font-weight: 800; cursor: pointer;
+      display: block; width: 100%; margin-top: 22px; padding: 17px 20px; border: 0; border-radius: 14px;
+      background: var(--accent); color: #fff; font: inherit; font-size: 18px; font-weight: 800; cursor: pointer;
+      box-shadow: 0 6px 16px -8px var(--accent);
     }
-    button.primary:active { background: var(--amber-700); }
+    button.primary:active { transform: translateY(1px); }
     button.primary[disabled] { opacity: 0.6; cursor: progress; }
     button.ghost {
-      display: block; width: 100%; margin-top: 14px; padding: 14px 20px; border: 1px solid var(--stone-300);
-      background: #fff; color: var(--stone-800); font: inherit; font-weight: 700; cursor: pointer; border-radius: 0;
+      display: block; width: 100%; margin-top: 14px; padding: 15px 20px; border: 1.5px solid var(--line-2);
+      background: var(--card); color: var(--ink); font: inherit; font-weight: 700; cursor: pointer; border-radius: 14px;
     }
-    .error { margin-top: 14px; color: var(--bad); font-size: 14px; }
-    .count { margin-top: 6px; font-size: 13px; color: var(--stone-500); }
-    .small { font-size: 12px; color: var(--stone-500); margin-top: 22px; }
+    .error { margin-top: 14px; color: var(--bad); background: #fbecea; border-radius: 10px; padding: 10px 12px; font-size: 15px; }
+    .count { margin-top: 6px; font-size: 14px; color: var(--ink-3); }
+    .small { font-size: 14px; color: var(--ink-3); margin-top: 14px; text-align: center; }
 
     /* Ticket */
-    .ticket { background: var(--stone-900); color: #fff; padding: 26px 22px; text-align: center; }
-    .ticket .label { font-size: 13px; letter-spacing: 0.2em; text-transform: uppercase; color: var(--gold); font-weight: 700; }
-    .ticket .num { font-size: 88px; line-height: 1; font-weight: 900; letter-spacing: -0.03em; margin: 8px 0 4px; }
-    .ticket .who { font-size: 18px; color: var(--stone-300); }
-    .next { margin-top: 20px; background: #fff; border: 1px solid var(--stone-200); padding: 18px; }
-    .next h2 { margin: 0; font-size: 20px; font-weight: 900; }
-    .next p { margin: 6px 0 0; color: var(--stone-600); }
-    .lines { margin: 22px 0 0; padding: 0; list-style: none; border-top: 1px solid var(--stone-200); }
-    .lines li { display: flex; gap: 12px; padding: 12px 0; border-bottom: 1px solid var(--stone-200); align-items: flex-start; }
-    .dot { flex: none; width: 22px; height: 22px; display: grid; place-items: center; font-size: 13px; font-weight: 900; color: #fff; margin-top: 1px; }
-    .dot.ok { background: var(--ok); } .dot.check { background: var(--amber-500); } .dot.no { background: var(--stone-400); }
+    .ticket { background: var(--accent-tint); border: 1px solid var(--accent-line); border-radius: var(--radius); padding: 24px 20px; text-align: center; }
+    .ticket .label { font-size: 13px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--accent-ink); font-weight: 700; }
+    .ticket .num { font-size: 92px; line-height: 1; font-weight: 900; letter-spacing: -0.03em; margin: 8px 0 4px; color: var(--accent-ink); }
+    .ticket .who { font-size: 19px; color: var(--ink-2); }
+    .next h2 { margin: 0; font-size: 21px; font-weight: 800; }
+    .next p { margin: 6px 0 0; color: var(--ink-2); font-size: 16px; }
+    .lines { margin: 4px 0 0; padding: 0; list-style: none; }
+    .lines li { display: flex; gap: 12px; padding: 12px 0; border-bottom: 1px solid var(--line); align-items: flex-start; }
+    .lines li:last-child { border-bottom: 0; }
+    .dot { flex: none; width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center; font-size: 14px; font-weight: 900; margin-top: 1px; }
+    .dot.ok { background: var(--ok-bg); color: var(--ok); } .dot.check { background: var(--check-bg); color: var(--check); }
     .lines .t { font-weight: 700; }
-    .lines .s { font-size: 13px; color: var(--stone-500); }
-    .legend { font-size: 13px; color: var(--stone-500); margin-top: 10px; }
-    .done { background: #f0fdf4; border: 1px solid #bbf7d0; padding: 14px; margin-top: 16px; color: #14532d; }
+    .lines .s { font-size: 14px; color: var(--ink-3); }
+    .legend { font-size: 14px; color: var(--ink-3); margin-top: 10px; }
+    .done { background: var(--ok-bg); color: var(--ok); border-radius: 12px; padding: 14px; margin-top: 14px; font-weight: 700; }
     .hidden { display: none !important; }
     @media (prefers-reduced-motion: no-preference) {
       .pop { animation: pop 420ms cubic-bezier(.22,1,.36,1); }
@@ -88,41 +86,48 @@
 </head>
 <body>
   <div class="top">
-    <img src="https://www.boardandbrewed.ie/logo/logo-1024-transparent.png" alt="" width="40" height="40" />
-    <b id="shopName">Board &amp; Brewed</b>
+    <img id="shopLogo" class="hidden" alt="" width="38" height="38" />
+    <b id="shopName">&nbsp;</b>
   </div>
 
   <main>
     <!-- Step 1: the list -->
     <section id="formView">
-      <p class="kicker">Sell your cards</p>
-      <h1>List your cards, we'll have an offer ready</h1>
-      <p class="lead">Type in the Pokémon cards you want to sell. Then come to the counter and we'll check them over and make you an offer, in cash or store credit.</p>
+      <h1>Selling Pokémon cards?</h1>
+      <p class="lead">Pop your cards in below, then come to the counter. We'll look them over and make you an offer.</p>
+      <ol class="steps">
+        <li><b>1</b>Your name</li>
+        <li><b>2</b>Your cards</li>
+        <li><b>3</b>Come to the counter</li>
+      </ol>
 
       <form id="listForm" novalidate>
-        <div class="field">
-          <label for="name">Your first name</label>
-          <input id="name" name="name" type="text" autocomplete="given-name" maxlength="40" required />
-        </div>
+        <div class="panel">
+          <div class="field">
+            <label for="name">Your first name</label>
+            <input id="name" name="name" type="text" autocomplete="given-name" maxlength="40" required />
+          </div>
 
-        <div class="field">
-          <label for="lines">Your cards
-            <p class="hint">One per line, with the number from the bottom corner, like <code>Charizard 4/102</code>. Add <code>3x</code> for several, <code>rev</code> for reverse holo.</p>
-          </label>
-          <textarea id="lines" name="lines" spellcheck="false" autocapitalize="off" autocomplete="off"
-            placeholder="Charizard 4/102&#10;2x Pikachu 58/102&#10;rev Gengar 94/162"></textarea>
-          <p class="count" id="count">Up to 300 cards.</p>
-        </div>
+          <div class="field">
+            <label for="lines">Your cards
+              <p class="hint">One card per line. Add the number from the bottom corner if you can, like <code>Charizard 4/102</code>.</p>
+            </label>
+            <textarea id="lines" name="lines" spellcheck="false" autocapitalize="off" autocomplete="off"
+              placeholder="Charizard 4/102&#10;2x Pikachu 58/102&#10;rev Gengar 94/162"></textarea>
+            <p class="count" id="count">Up to 300 cards.</p>
+            <p class="hint">Tips: <code>2x</code> in front for more than one, <code>rev</code> for a reverse holo.</p>
+          </div>
 
-        <div class="field">
-          <label for="email">Email <span class="optional">(optional)</span></label>
-          <input id="email" name="email" type="email" inputmode="email" autocomplete="email" maxlength="254" />
-          <label class="check"><input id="newsletter" type="checkbox" /> <span>Keep me posted about card events and new sets</span></label>
+          <div class="field">
+            <label for="email">Email <span class="optional">(optional)</span></label>
+            <input id="email" name="email" type="email" inputmode="email" autocomplete="email" maxlength="254" />
+            <label class="check"><input id="newsletter" type="checkbox" /> <span>Keep me posted about card events and new sets</span></label>
+          </div>
         </div>
 
         <button class="primary" id="sendBtn" type="submit">Send my list</button>
         <p class="error hidden" id="formError" role="alert"></p>
-        <p class="small">Prices are worked out at the counter, after we've seen your cards.</p>
+        <p class="small">No prices here. We work out your offer at the counter, once we've seen the cards.</p>
       </form>
     </section>
 
@@ -133,14 +138,16 @@
         <div class="num" id="ticketNum">0</div>
         <div class="who" id="ticketWho"></div>
       </div>
-      <div class="next">
-        <h2>Please visit the counter for your offer</h2>
-        <p>Show this number at the Board &amp; Brewed counter. We'll check your cards and make you an offer, in cash or store credit.</p>
+      <div class="panel next">
+        <h2>Please come to the counter for your offer</h2>
+        <p id="nextText">Show this number at the counter. We'll check your cards and make you an offer.</p>
       </div>
       <div class="done hidden" id="doneNote">All done. Thanks for coming over!</div>
 
-      <ul class="lines" id="lineList"></ul>
-      <p class="legend"><span style="color:var(--ok);font-weight:700">✓</span> got it &nbsp;·&nbsp; <span style="color:var(--amber-600);font-weight:700">?</span> we'll check which one with you</p>
+      <div class="panel">
+        <ul class="lines" id="lineList"></ul>
+        <p class="legend"><span style="color:var(--ok);font-weight:700">✓</span> got it &nbsp;·&nbsp; <span style="color:var(--check);font-weight:700">?</span> we'll check this one with you</p>
+      </div>
 
       <button class="ghost" id="newBtn" type="button">Start a new list</button>
     </section>
@@ -154,16 +161,39 @@
       function store(k, v) { try { if (v == null) localStorage.removeItem(k); else localStorage.setItem(k, v); } catch (e) {} }
       function read(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
 
+      // The shop's colour, calmed: same hue, saturation and lightness held in
+      // a gentle band, plus a pale tint for backgrounds.
+      function softAccent(hex) {
+        var m = /^#?([0-9a-f]{6})$/i.exec(hex || ''); if (!m) return null;
+        var n = parseInt(m[1], 16), r = (n >> 16) / 255, g = ((n >> 8) & 255) / 255, b = (n & 255) / 255;
+        var mx = Math.max(r, g, b), mn = Math.min(r, g, b), l = (mx + mn) / 2, d = mx - mn, h = 0, s = 0;
+        if (d) {
+          s = d / (1 - Math.abs(2 * l - 1));
+          h = mx === r ? ((g - b) / d) % 6 : mx === g ? (b - r) / d + 2 : (r - g) / d + 4;
+          h = (h * 60 + 360) % 360;
+        }
+        var hsl = function (S, L) { return 'hsl(' + Math.round(h) + ' ' + Math.round(S * 100) + '% ' + Math.round(L * 100) + '%)'; };
+        var S = Math.min(s, 0.5), L = Math.min(Math.max(l, 0.36), 0.44);
+        return { accent: hsl(S, L), ink: hsl(S, L - 0.08), tint: hsl(Math.min(S, 0.45), 0.95), line: hsl(Math.min(S, 0.35), 0.86) };
+      }
+      function applyShop(s) {
+        if (!s) return;
+        var root = document.documentElement.style, a = softAccent(s.accent_color);
+        if (a) { root.setProperty('--accent', a.accent); root.setProperty('--accent-ink', a.ink); root.setProperty('--accent-tint', a.tint); root.setProperty('--accent-line', a.line); }
+        if (s.name) { $('shopName').textContent = s.name; document.title = 'Sell your cards · ' + s.name; $('nextText').textContent = 'Show this number at the ' + s.name + ' counter. We’ll check your cards and make you an offer.'; }
+        var logo = s.logo_url || (slug === 'brewed' ? 'https://www.boardandbrewed.ie/logo/logo-1024-transparent.png' : null);
+        if (logo) { $('shopLogo').src = logo; $('shopLogo').classList.remove('hidden'); }
+      }
+
       function linesOf(text) {
         return String(text || '').split('\n').map(function (l) { return l.trim(); })
           .filter(function (l) { return l && l.indexOf('#') !== 0 && l.indexOf('//') !== 0; });
       }
       function updateCount() {
         var n = linesOf($('lines').value).length;
-        $('count').textContent = n ? n + (n === 1 ? ' card' : ' cards') : 'Up to 300 cards.';
+        $('count').textContent = n ? n + (n === 1 ? ' card so far' : ' cards so far') : 'Up to 300 cards.';
       }
       $('lines').addEventListener('input', updateCount);
-
       // Text typed before this script ran is kept (the box is plain HTML).
       updateCount();
 
@@ -241,9 +271,9 @@
           .catch(function () {});
       }
 
-      // The shop's name from its config, when the slug isn't ours by default.
+      // The shop's own name, logo and colour.
       fetch('/api/shop-config/' + encodeURIComponent(slug)).then(function (r) { return r.ok ? r.json() : null; })
-        .then(function (s) { if (s && s.name) $('shopName').textContent = s.name; }).catch(function () {});
+        .then(applyShop).catch(function () {});
     })();
   </script>
 </body>

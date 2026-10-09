@@ -46,7 +46,7 @@ import {
   getQuotePriceIndex, snapshotAgeDays, PRICE_STALE_DAYS,
 } from '../../../pricing/quote-prices/hub-feed.js';
 import {
-  marketPriceOf, priceRowFor, reprintsFor, COL,
+  marketPriceOf, priceRowFor, reprintsFor, guideOf, COL,
 } from '../../../pricing/quote-prices/feed-index.js';
 import {
   cleanCustomerLine, moveQualifiers, contextVariants, contextAgrees, gradeAndFinishOutsideName,
@@ -373,8 +373,9 @@ const overTheLine = (value, ctx) => ctx.handPriceAbove != null && value > ctx.ha
  * cheapest NM English copy, or the guide's value with the reason the NM
  * English copy was not used (counted in /api/health -> quote_batch).
  */
-function priceOut(p, row, ctx) {
+function priceOut(p, row, ctx, finish = null) {
   const nmEn = p.basis === 'nm_en';
+  const holo = finish === 'reverse_holo' && !p.finish_fallback;
   return {
     market: p.value,
     field: p.field,
@@ -386,6 +387,8 @@ function priceOut(p, row, ctx) {
     as_of: nmEn ? ctx.index.nmEnDate : ctx.index.snapshotDate,
     source: nmEn ? 'cardmarket_nm_en' : 'cardmarket_price_guide',
     id_product: row?.[COL.idProduct] ?? null,
+    // Every number the feed holds for this card, for staff to read (show mode).
+    guide: guideOf(row, { holo }),
   };
 }
 
@@ -395,7 +398,7 @@ function priceFor(cardId, finish, ctx) {
   const p = marketPriceOf(row, { finish, nmEnOff: ctx.nmEnOff });
   if (p.value == null) return { price: null, reason: p.reason };
   if (overTheLine(p.value, ctx)) return { price: null, reason: 'high_value' };
-  return { price: priceOut(p, row, ctx) };
+  return { price: priceOut(p, row, ctx, finish) };
 }
 
 function candidateOf(cardId, finish, ctx) {

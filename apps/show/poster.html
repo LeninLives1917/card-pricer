@@ -4,28 +4,31 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta name="robots" content="noindex" />
-  <title>Sell us your cards: QR poster</title>
+  <title>Sell your cards: QR poster</title>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
   <style>
+    /* Soft palette to match the customer page; --accent is the shop's colour, calmed. */
+    :root { --accent: #8a5a2b; --accent-ink: #6f4620; --accent-tint: #f6efe6; --ink: #2f2a26; --ink-2: #5b544d; --ink-3: #8a837b; --bg: #f7f4ef; }
     @page { size: A4; margin: 0; }
     * { box-sizing: border-box; }
     html, body { margin: 0; }
-    body { font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif; background: #e7e5e4; color: #1c1917; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    body { font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif; background: #e9e5de; color: var(--ink); -webkit-print-color-adjust: exact; print-color-adjust: exact; }
     .tools { max-width: 210mm; margin: 16px auto; display: flex; gap: 10px; align-items: center; justify-content: space-between; padding: 0 8px; }
-    .tools button { background: #b45309; color: #fff; border: 0; padding: 10px 18px; font: inherit; font-weight: 800; cursor: pointer; }
-    .tools span { font-size: 14px; color: #57534e; }
-    .sheet { width: 210mm; height: 297mm; margin: 0 auto 24px; background: #1c1917; color: #fff; padding: 18mm 16mm; display: flex; flex-direction: column; align-items: center; text-align: center; }
-    .logo { width: 34mm; height: 34mm; object-fit: contain; }
-    .kicker { margin-top: 8mm; font-size: 15pt; font-weight: 800; letter-spacing: 0.25em; text-transform: uppercase; color: #facc15; }
-    h1 { margin: 4mm 0 0; font-size: 46pt; line-height: 1.02; font-weight: 900; letter-spacing: -0.02em; }
-    .lead { margin: 6mm 0 0; font-size: 16pt; color: #d6d3d1; max-width: 150mm; }
-    .qr { margin-top: 10mm; background: #fff; padding: 7mm; }
-    .qr #qr img, .qr #qr canvas { display: block; width: 78mm !important; height: 78mm !important; }
-    .url { margin-top: 4mm; font-size: 11pt; color: #a8a29e; word-break: break-all; }
-    .steps { margin-top: auto; display: grid; grid-template-columns: repeat(3, 1fr); gap: 6mm; width: 100%; text-align: left; }
-    .steps div { border-top: 2px solid #b45309; padding-top: 3mm; font-size: 12pt; color: #d6d3d1; }
-    .steps b { display: block; color: #fff; font-size: 14pt; margin-bottom: 1mm; }
-    @media print { body { background: #1c1917; } .tools { display: none; } .sheet { margin: 0; } }
+    .tools button { background: var(--accent); color: #fff; border: 0; padding: 10px 18px; font: inherit; font-weight: 800; cursor: pointer; border-radius: 10px; }
+    .tools span { font-size: 14px; color: var(--ink-2); }
+    .sheet { width: 210mm; height: 297mm; margin: 0 auto 24px; background: var(--bg); padding: 18mm 16mm; display: flex; flex-direction: column; align-items: center; text-align: center; }
+    .logo { width: 30mm; height: 30mm; object-fit: contain; }
+    .shop { margin-top: 4mm; font-size: 18pt; font-weight: 800; color: var(--ink-2); }
+    h1 { margin: 6mm 0 0; font-size: 46pt; line-height: 1.04; font-weight: 900; letter-spacing: -0.02em; }
+    .lead { margin: 6mm 0 0; font-size: 17pt; color: var(--ink-2); max-width: 150mm; }
+    .qr { margin-top: 10mm; background: #fff; padding: 7mm; border-radius: 8mm; box-shadow: 0 2mm 6mm rgba(47,42,38,0.08); }
+    .qr #qr img, .qr #qr canvas { display: block; width: 76mm !important; height: 76mm !important; }
+    .url { margin-top: 4mm; font-size: 11pt; color: var(--ink-3); word-break: break-all; }
+    .steps { margin-top: auto; display: grid; grid-template-columns: repeat(3, 1fr); gap: 5mm; width: 100%; text-align: left; }
+    .steps div { background: #fff; border-radius: 5mm; padding: 5mm; font-size: 12pt; color: var(--ink-2); }
+    .steps b { display: block; color: var(--accent-ink); font-size: 14pt; margin-bottom: 1mm; }
+    .hidden { display: none; }
+    @media print { body { background: var(--bg); } .tools { display: none; } .sheet { margin: 0; } }
   </style>
 </head>
 <body>
@@ -34,23 +37,45 @@
     <button type="button" onclick="window.print()">Print poster</button>
   </div>
   <div class="sheet">
-    <img class="logo" src="https://www.boardandbrewed.ie/logo/logo-1024-transparent.png" alt="Board & Brewed" />
-    <div class="kicker">Sell your cards</div>
+    <img class="logo hidden" id="logo" alt="" />
+    <div class="shop" id="shop">&nbsp;</div>
     <h1>Selling Pokémon cards?</h1>
-    <p class="lead">Scan the code, list your cards on your phone, then come to the counter for your offer.</p>
+    <p class="lead">Scan the code, pop your cards in on your phone, then come to the counter for your offer.</p>
     <div class="qr"><div id="qr"></div></div>
     <div class="url" id="url"></div>
     <div class="steps">
-      <div><b>1. Scan</b>Open the camera and point it at the code.</div>
+      <div><b>1. Scan</b>Point your phone's camera at the code.</div>
       <div><b>2. List your cards</b>Name and number, like Charizard 4/102.</div>
-      <div><b>3. Come to the counter</b>We check them and make you an offer, cash or store credit.</div>
+      <div><b>3. Come to the counter</b>We look them over and make you an offer.</div>
     </div>
   </div>
   <script>
     var slug = (location.pathname.split('/')[2] || '').toLowerCase();
     var target = location.origin + '/show/' + slug;
     document.getElementById('url').textContent = target.replace(/^https?:\/\//, '');
-    new QRCode(document.getElementById('qr'), { text: target, width: 600, height: 600, colorDark: '#1c1917', colorLight: '#ffffff', correctLevel: QRCode.CorrectLevel.M });
+    var qrColor = '#2f2a26';
+    function softAccent(hex) {
+      var m = /^#?([0-9a-f]{6})$/i.exec(hex || ''); if (!m) return null;
+      var n = parseInt(m[1], 16), r = (n >> 16) / 255, g = ((n >> 8) & 255) / 255, b = (n & 255) / 255;
+      var mx = Math.max(r, g, b), mn = Math.min(r, g, b), l = (mx + mn) / 2, d = mx - mn, h = 0, s = 0;
+      if (d) {
+        s = d / (1 - Math.abs(2 * l - 1));
+        h = mx === r ? ((g - b) / d) % 6 : mx === g ? (b - r) / d + 2 : (r - g) / d + 4;
+        h = (h * 60 + 360) % 360;
+      }
+      var hsl = function (S, L) { return 'hsl(' + Math.round(h) + ' ' + Math.round(S * 100) + '% ' + Math.round(L * 100) + '%)'; };
+      var S = Math.min(s, 0.5), L = Math.min(Math.max(l, 0.36), 0.44);
+      return { accent: hsl(S, L), ink: hsl(S, L - 0.08), tint: hsl(Math.min(S, 0.45), 0.95) };
+    }
+    new QRCode(document.getElementById('qr'), { text: target, width: 600, height: 600, colorDark: qrColor, colorLight: '#ffffff', correctLevel: QRCode.CorrectLevel.M });
+    fetch('/api/shop-config/' + encodeURIComponent(slug)).then(function (r) { return r.ok ? r.json() : null; }).then(function (s) {
+      if (!s) return;
+      if (s.name) document.getElementById('shop').textContent = s.name;
+      var a = softAccent(s.accent_color), root = document.documentElement.style;
+      if (a) { root.setProperty('--accent', a.accent); root.setProperty('--accent-ink', a.ink); root.setProperty('--accent-tint', a.tint); }
+      var logo = s.logo_url || (slug === 'brewed' ? 'https://www.boardandbrewed.ie/logo/logo-1024-transparent.png' : null);
+      if (logo) { var img = document.getElementById('logo'); img.src = logo; img.classList.remove('hidden'); }
+    }).catch(function () {});
   </script>
 </body>
 </html>

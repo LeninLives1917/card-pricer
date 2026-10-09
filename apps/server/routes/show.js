@@ -19,6 +19,7 @@
 //   GET   /api/show/:slug/staff/item/:id      staff: one submission, every line priced
 //   PATCH /api/show/:slug/staff/item/:id      staff: picks, conditions, done/reopen
 //   POST  /api/show/:slug/staff/item/:id/reprice
+//   POST  /api/show/:slug/staff/new              staff: type a list in, see it priced
 //
 // Staff are the shop's owner (shops.owner_user_id) or an admin, signed in with
 // the same account as the scanner app. Submissions live in show_submissions
@@ -281,6 +282,45 @@ export async function handleStaffUpdate(slugParam, id, body, user, deps = {}) {
   return { status: 200, body: staffItem(data, shop) };
 }
 
+/**
+ * POST /api/show/:slug/staff/new — staff type a list in themselves and see it
+ * priced (Liam, Ireland Card Show, 9 Oct 2026: "if I type in cards myself is
+ * there a way I can see all data and prices"). Saved as a ticket like any
+ * other, so Bought / Didn't sell and the Done list work the same. Counted
+ * with source 'staff', unpriced saves included.
+ */
+export async function handleStaffNew(slugParam, body, user, deps = {}) {
+  const db = deps.supabaseClient ?? supabase;
+  const quote = deps.quote ?? handleQuoteBatch;
+  const makeToken = deps.makeToken ?? (() => crypto.randomBytes(16).toString('hex'));
+  const { shop, error } = await staffShop(slugParam, user, deps);
+  if (error) return error;
+  const lines = showLinesOf(body?.lines);
+  if (!lines.length) return { status: 400, body: { error: 'Add at least one card, e.g. Charizard 4/102.' } };
+  const name = String(body?.name ?? '').trim().replace(/\s+/g, ' ').slice(0, SHOW_MAX_NAME) || 'Typed at the desk';
+  const priced = await priceLines(lines, quote);
+  const { data, error: iErr } = await db.from('show_submissions').insert({
+    token: makeToken(),
+    shop_id: shop.id,
+    shop_slug: shop.slug,
+    name,
+    email: null,
+    newsletter: false,
+    lines,
+    rows: priced.rows,
+    prices_as_of: priced.pricesAsOf,
+    priced_at: priced.rows ? new Date().toISOString() : null,
+    price_error: priced.error,
+    ip_hash: null,
+  }).select(STAFF_COLS).single();
+  if (iErr || !data) {
+    countSaveFailed();
+    return { status: 500, body: { error: 'Couldn’t save the list. Try again.' } };
+  }
+  countSubmitted({ priced: !!priced.rows, reason: priced.error ? 'quote_failed' : null, source: 'staff' });
+  return { status: 200, body: staffItem(data, shop) };
+}
+
 /** Re-run the quote on the stored lines (prices refreshed, or a failed price). */
 export async function handleStaffReprice(slugParam, id, user, deps = {}) {
   const db = deps.supabaseClient ?? supabase;
@@ -345,6 +385,8 @@ router.get('/api/show/:slug/staff/item/:id', requireAuth,
   wrap((req) => handleStaffItem(req.params.slug, req.params.id, req.user)));
 router.patch('/api/show/:slug/staff/item/:id', requireAuth,
   wrap((req) => handleStaffUpdate(req.params.slug, req.params.id, req.body, req.user)));
+router.post('/api/show/:slug/staff/new', requireAuth,
+  wrap((req) => handleStaffNew(req.params.slug, req.body, req.user)));
 router.post('/api/show/:slug/staff/item/:id/reprice', requireAuth,
   wrap((req) => handleStaffReprice(req.params.slug, req.params.id, req.user)));
 

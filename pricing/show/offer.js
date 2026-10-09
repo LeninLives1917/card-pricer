@@ -64,6 +64,11 @@ export function staffEntries(rows, { picks = {}, conditions = {}, rates = DEFAUL
       e = resolveAsk(e, picked, rates.cashPct, rates.creditPct);
     }
     const kind = e.ask ? 'ask' : e.error ? 'not_found' : e.byHand ? 'by_hand' : 'priced';
+    // The price object behind a priced line: the row's own, or the candidate
+    // staff picked. Its detail (every Cardmarket number for the card) is
+    // shown on the board when a line is opened.
+    const src = kind !== 'priced' ? null
+      : picked != null ? (row.candidates?.[picked]?.price ?? null) : (row.price ?? null);
     return {
       index,
       kind,
@@ -89,6 +94,15 @@ export function staffEntries(rows, { picks = {}, conditions = {}, rates = DEFAUL
           }))
         : null,
       message: kind === 'not_found' ? e.error : null,
+      detail: src ? {
+        basis: src.basis || null,
+        field: src.field || null,
+        nm_en_fallback: src.nm_en_fallback ?? null,
+        as_of: src.as_of || null,
+        condition_multiplier: row.condition_multiplier ?? 1,
+        guide: src.guide || null,
+        cardmarket_url: e.cardmarket_url || null,
+      } : null,
       notes: kind === 'priced'
         ? [e.finish_fallback && 'No reverse holo price, priced as the standard card',
            e.capped && 'A one-off price spike was ignored',

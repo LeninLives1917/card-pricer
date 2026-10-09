@@ -23,6 +23,24 @@ customers list their cards on their own phone and get their offer in person.
    cash and market. Set each card's condition once seen, settle "which one is
    it?" lines, then **Bought** or **Didn't sell**.
 
+## Added 9 Oct 2026 (Liam, Ireland Card Show)
+
+- **Type in a list at the desk.** "+ Type in a list and price it" on the staff
+  board (`POST /api/show/:slug/staff/new`, owner or admin). Saved as a ticket
+  like a customer's, so Bought / Didn't sell work the same. Counted in
+  `/api/health` → `show.by_source.staff`.
+- **All the prices for a card.** "Details" on a priced line (or "Show all
+  details") shows every Cardmarket number the feed holds: cheapest NM English,
+  trend, 7-day and 30-day averages, average sale, lowest listed, which one was
+  used and why, the condition adjustment, and a Cardmarket link. Comes from
+  `guideOf()` in `pricing/quote-prices/feed-index.js`, carried as
+  `price.guide` on each quote row. Lists saved before this need Reprice to show
+  it.
+- **Softer look, each shop's own branding.** Customer page, staff board and
+  poster use a light, rounded palette. Shop name, logo and accent come from the
+  shop's settings (accent is calmed in the page so a loud colour stays soft).
+  The B&B logo only shows for `brewed`.
+
 ## How it is built
 
 - `apps/server/routes/show.js` routes, `pricing/show/offer.js` arithmetic and

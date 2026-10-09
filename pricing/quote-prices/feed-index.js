@@ -325,6 +325,30 @@ export function marketPriceOf(row, { finish = null, nmEnOff = null } = {}) {
 }
 
 /**
+ * Every Cardmarket number the feed holds for one card, for a person to read
+ * (the show-mode staff board, 9 Oct 2026: "can I see all data and prices").
+ * Not used to price anything: marketPriceOf decides the price.
+ *
+ * holo = the reverse-holo columns. The cheapest NM English copy is a per-
+ * product figure with no finish, so it is given for the standard card only,
+ * and only when the TCGGO product checks out against the card (otherwise it
+ * may be another card's listing). null = the feed has no such number.
+ */
+export function guideOf(row, { holo = false } = {}) {
+  if (!row || row[COL.idProduct] == null) return null;
+  const n = (c) => { const v = pos(row[c]); return v == null ? null : round2(v); };
+  return {
+    finish: holo ? 'reverse_holo' : 'standard',
+    nm_en: !holo && tcggoCheck(row) === 'ok' ? n(COL.nmEn) : null,
+    trend: n(holo ? COL.trendHolo : COL.trend),
+    avg7: n(holo ? COL.avg7Holo : COL.avg7),
+    avg30: n(holo ? COL.avg30Holo : COL.avg30),
+    avg: n(holo ? COL.avgHolo : COL.avg),
+    low: n(holo ? COL.lowHolo : COL.low),
+  };
+}
+
+/**
  * Join the feed to the catalogue.
  *
  * @param {object} feed     the parsed quote_price_feed() document

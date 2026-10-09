@@ -4,113 +4,143 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <meta name="robots" content="noindex" />
-  <meta name="theme-color" content="#1c1917" />
+  <meta name="theme-color" content="#f7f4ef" />
   <title>Show desk</title>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <style>
+    /* Soft palette (Liam, 9 Oct 2026: "more user friendly and softer colours").
+       --accent is the shop's own colour, calmed in script. */
     :root {
-      --amber-50: #fffbeb; --amber-100: #fef3c7; --amber-500: #d97706; --amber-600: #b45309; --amber-700: #92400e; --gold: #facc15;
-      --stone-50: #fafaf9; --stone-100: #f5f5f4; --stone-200: #e7e5e4; --stone-300: #d6d3d1; --stone-400: #a8a29e;
-      --stone-500: #78716c; --stone-600: #57534e; --stone-700: #44403c; --stone-800: #292524; --stone-900: #1c1917;
-      --ok: #15803d; --bad: #b91c1c;
+      --accent: #8a5a2b; --accent-ink: #6f4620; --accent-tint: #f6efe6; --accent-line: #e7d8c6;
+      --bg: #f7f4ef; --card: #ffffff; --soft: #fbf9f6; --ink: #2f2a26; --ink-2: #5b544d; --ink-3: #8a837b;
+      --line: #e8e2d9; --line-2: #d9d1c5;
+      --ok-bg: #e7f3ea; --ok: #2f7a45; --warn-bg: #fbf0dc; --warn: #9a6a12; --bad-bg: #fbecea; --bad: #b4473f;
+      --radius: 14px;
     }
     * { box-sizing: border-box; }
     html, body { margin: 0; height: 100%; }
-    body { font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif; color: var(--stone-900); background: var(--stone-100); -webkit-font-smoothing: antialiased; }
-    button, select, input { font: inherit; }
-    .bar { position: sticky; top: 0; z-index: 5; background: var(--stone-900); color: #fff; display: flex; align-items: center; gap: 14px; padding: 10px 16px; flex-wrap: wrap; }
-    .bar h1 { margin: 0; font-size: 17px; font-weight: 800; }
-    .bar .sub { color: var(--stone-400); font-size: 13px; }
-    .tabs { display: flex; gap: 0; margin-left: auto; }
-    .tabs button { background: transparent; color: var(--stone-300); border: 1px solid var(--stone-700); padding: 7px 14px; cursor: pointer; }
-    .tabs button.on { background: var(--gold); color: var(--stone-900); border-color: var(--gold); font-weight: 800; }
-    .bar .link { color: var(--stone-300); background: none; border: 0; cursor: pointer; text-decoration: underline; font-size: 13px; }
-    .wrap { display: grid; grid-template-columns: 340px 1fr; gap: 0; height: calc(100% - 52px); }
-    .list { overflow-y: auto; border-right: 1px solid var(--stone-300); background: var(--stone-50); }
-    .empty { padding: 30px 20px; color: var(--stone-500); text-align: center; }
-    .tk { display: grid; grid-template-columns: 74px 1fr; gap: 0 12px; width: 100%; text-align: left; background: #fff; border: 0; border-bottom: 1px solid var(--stone-200); padding: 12px 14px; cursor: pointer; }
-    .tk:hover { background: var(--amber-50); }
-    .tk.sel { background: var(--amber-100); box-shadow: inset 4px 0 0 var(--amber-600); }
+    body { font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif; color: var(--ink); background: var(--bg); -webkit-font-smoothing: antialiased; }
+    button, select, input, textarea { font: inherit; }
+    .bar { position: sticky; top: 0; z-index: 5; background: var(--card); border-bottom: 1px solid var(--line); display: flex; align-items: center; gap: 10px 14px; padding: 10px 16px; flex-wrap: wrap; }
+    .bar h1 { margin: 0; font-size: 18px; font-weight: 800; }
+    .bar .sub { color: var(--ink-3); font-size: 14px; }
+    .bar .sub b { color: var(--accent-ink); }
+    .tabs { display: flex; gap: 4px; margin-left: auto; background: var(--bg); padding: 4px; border-radius: 12px; }
+    .tabs button { background: transparent; color: var(--ink-2); border: 0; padding: 7px 14px; cursor: pointer; border-radius: 9px; font-weight: 600; }
+    .tabs button.on { background: var(--card); color: var(--ink); font-weight: 800; box-shadow: 0 1px 3px rgba(47,42,38,0.12); }
+    .bar .link { color: var(--ink-3); background: none; border: 0; cursor: pointer; text-decoration: underline; font-size: 14px; }
+    .wrap { display: grid; grid-template-columns: 340px 1fr; gap: 0; height: calc(100% - 58px); }
+    .list { overflow-y: auto; border-right: 1px solid var(--line); padding: 10px; }
+    .empty { padding: 30px 20px; color: var(--ink-3); text-align: center; }
+    .newbtn { display: block; width: 100%; margin-bottom: 10px; padding: 13px; border: 1.5px dashed var(--accent-line); background: var(--accent-tint); color: var(--accent-ink); border-radius: var(--radius); font-weight: 800; cursor: pointer; font-size: 15px; }
+    .newbtn:hover { border-color: var(--accent); }
+    .tk { display: grid; grid-template-columns: 64px 1fr; gap: 0 12px; width: 100%; text-align: left; background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); margin-bottom: 8px; padding: 12px 14px; cursor: pointer; color: inherit; }
+    .tk:hover { border-color: var(--accent-line); }
+    .tk.sel { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-tint); }
     .tk.fresh { animation: fresh 2.4s ease-out; }
-    @keyframes fresh { 0% { background: var(--gold); } 100% { background: #fff; } }
-    .tk .n { grid-row: span 3; font-size: 34px; font-weight: 900; letter-spacing: -0.03em; line-height: 1; padding-top: 2px; }
+    @keyframes fresh { 0% { background: var(--accent-tint); } 100% { background: var(--card); } }
+    .tk .n { grid-row: span 3; font-size: 30px; font-weight: 900; letter-spacing: -0.03em; line-height: 1; padding-top: 2px; color: var(--accent-ink); }
     .tk .who { font-weight: 800; font-size: 16px; }
-    .tk .meta { font-size: 13px; color: var(--stone-500); }
+    .tk .meta { font-size: 13px; color: var(--ink-3); }
     .tk .money { font-size: 14px; margin-top: 2px; }
-    .tk .money b { color: var(--amber-700); }
-    .badges { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
-    .badge { font-size: 11px; font-weight: 700; padding: 1px 6px; border: 1px solid var(--stone-300); color: var(--stone-600); text-transform: uppercase; letter-spacing: 0.04em; }
-    .badge.warn { border-color: var(--amber-500); color: var(--amber-700); background: var(--amber-50); }
-    .badge.bad { border-color: var(--bad); color: var(--bad); }
+    .tk .money b { color: var(--accent-ink); }
+    .badges { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 5px; }
+    .badge { font-size: 12px; font-weight: 700; padding: 2px 8px; border-radius: 999px; background: var(--bg); color: var(--ink-2); }
+    .badge.warn { background: var(--warn-bg); color: var(--warn); }
+    .badge.bad { background: var(--bad-bg); color: var(--bad); }
     .detail { overflow-y: auto; padding: 20px 22px 60px; }
     .dh { display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; }
-    .dh .n { font-size: 54px; font-weight: 900; letter-spacing: -0.03em; line-height: 1; }
-    .dh .who { font-size: 24px; font-weight: 800; }
-    .dh .meta { color: var(--stone-500); font-size: 14px; }
-    .back { display: none; background: none; border: 0; color: var(--amber-700); font-weight: 700; padding: 0; margin-bottom: 10px; cursor: pointer; }
-    .totals { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0; margin-top: 16px; background: #fff; border: 1px solid var(--stone-200); }
-    .totals > div { padding: 14px 16px; border-right: 1px solid var(--stone-200); }
-    .totals > div:last-child { border-right: 0; }
-    .totals .k { font-size: 11px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; color: var(--stone-500); }
-    .totals .v { font-size: 28px; font-weight: 900; letter-spacing: -0.02em; }
-    .totals .credit .v { color: var(--amber-700); }
-    .note { margin-top: 10px; font-size: 13px; color: var(--stone-600); }
-    .alert { margin-top: 12px; padding: 10px 12px; background: #fef2f2; border: 1px solid #fecaca; color: var(--bad); font-size: 14px; }
+    .dh .n { font-size: 48px; font-weight: 900; letter-spacing: -0.03em; line-height: 1; color: var(--accent-ink); }
+    .dh .who { font-size: 23px; font-weight: 800; }
+    .dh .meta { color: var(--ink-3); font-size: 14px; }
+    .back { display: none; background: none; border: 0; color: var(--accent-ink); font-weight: 700; padding: 0; margin-bottom: 10px; cursor: pointer; }
+    .totals { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin-top: 16px; }
+    .totals > div { padding: 14px 16px; background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); }
+    .totals > div.credit { background: var(--accent-tint); border-color: var(--accent-line); }
+    .totals .k { font-size: 12px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-3); }
+    .totals .v { font-size: 27px; font-weight: 900; letter-spacing: -0.02em; }
+    .totals .credit .v { color: var(--accent-ink); }
+    .note { margin-top: 10px; font-size: 14px; color: var(--ink-2); line-height: 1.5; }
+    .alert { margin-top: 12px; padding: 10px 12px; background: var(--bad-bg); color: var(--bad); font-size: 14px; border-radius: 10px; }
     .actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
-    .btn { border: 1px solid var(--stone-300); background: #fff; padding: 10px 16px; cursor: pointer; font-weight: 700; }
-    .btn.primary { background: var(--amber-600); border-color: var(--amber-600); color: #fff; }
-    .btn.dark { background: var(--stone-900); border-color: var(--stone-900); color: #fff; }
+    .btn { border: 1.5px solid var(--line-2); background: var(--card); color: var(--ink); padding: 10px 16px; cursor: pointer; font-weight: 700; border-radius: 12px; }
+    .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+    .btn.good { background: var(--ok); border-color: var(--ok); color: #fff; }
     .btn[disabled] { opacity: 0.55; cursor: progress; }
-    table { width: 100%; border-collapse: collapse; margin-top: 18px; background: #fff; border: 1px solid var(--stone-200); }
-    th { text-align: left; font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--stone-500); padding: 9px 10px; border-bottom: 1px solid var(--stone-200); background: var(--stone-50); }
-    td { padding: 9px 10px; border-bottom: 1px solid var(--stone-200); vertical-align: top; font-size: 14px; }
+    .tablewrap { overflow-x: auto; margin-top: 18px; background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); }
+    table { width: 100%; border-collapse: collapse; }
+    th { text-align: left; font-size: 12px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--ink-3); padding: 10px; border-bottom: 1px solid var(--line); background: var(--soft); }
+    td { padding: 10px; border-bottom: 1px solid var(--line); vertical-align: top; font-size: 15px; }
+    tbody tr:last-child td { border-bottom: 0; }
     td.num, th.num { text-align: right; white-space: nowrap; }
-    td.credit { font-weight: 800; color: var(--amber-700); }
+    td.credit { font-weight: 800; color: var(--accent-ink); }
     .card { display: flex; gap: 10px; align-items: flex-start; }
-    .card img { width: 40px; aspect-ratio: 63/88; object-fit: contain; background: var(--stone-100); flex: none; }
+    .card img { width: 42px; aspect-ratio: 63/88; object-fit: contain; background: var(--bg); border-radius: 4px; flex: none; }
     .card .nm { font-weight: 700; }
-    .card .st { font-size: 12px; color: var(--stone-500); }
-    .card .ln { font-size: 12px; color: var(--stone-400); }
-    .card .nt { font-size: 12px; color: var(--amber-700); }
-    select { border: 1px solid var(--stone-300); padding: 4px 6px; background: #fff; }
-    tr.ask td, tr.nf td, tr.bh td { background: var(--stone-50); }
-    .q { font-size: 13px; color: var(--stone-600); margin: 2px 0 8px; }
+    .card .st { font-size: 13px; color: var(--ink-3); }
+    .card .ln { font-size: 12px; color: var(--ink-3); }
+    .card .nt { font-size: 12px; color: var(--warn); }
+    select { border: 1.5px solid var(--line-2); padding: 5px 6px; background: #fff; border-radius: 8px; }
+    tr.ask td, tr.nf td, tr.bh td { background: var(--soft); }
+    .q { font-size: 14px; color: var(--ink-2); margin: 2px 0 8px; }
     .opts { display: flex; flex-wrap: wrap; gap: 8px; }
-    .opt { display: flex; gap: 8px; align-items: center; border: 1px solid var(--stone-300); background: #fff; padding: 6px 8px; cursor: pointer; text-align: left; max-width: 280px; }
-    .opt:hover { border-color: var(--amber-600); }
+    .opt { display: flex; gap: 8px; align-items: center; border: 1.5px solid var(--line-2); background: var(--card); padding: 6px 9px; cursor: pointer; text-align: left; max-width: 290px; border-radius: 12px; color: inherit; }
+    .opt:hover { border-color: var(--accent); }
     .opt img { width: 34px; aspect-ratio: 63/88; object-fit: contain; }
-    .opt .p { font-weight: 800; color: var(--amber-700); }
-    .tag { font-size: 11px; font-weight: 700; padding: 1px 6px; border: 1px solid var(--stone-300); color: var(--stone-600); text-transform: uppercase; }
-    .linkbtn { background: none; border: 0; color: var(--amber-700); text-decoration: underline; cursor: pointer; font-size: 12px; padding: 0; }
-    .login { max-width: 360px; margin: 10vh auto; background: #fff; border: 1px solid var(--stone-200); padding: 26px; }
+    .opt .p { font-weight: 800; color: var(--accent-ink); }
+    .tag { display: inline-block; font-size: 12px; font-weight: 700; padding: 2px 8px; border-radius: 999px; background: var(--warn-bg); color: var(--warn); }
+    .linkbtn { background: none; border: 0; color: var(--accent-ink); text-decoration: underline; cursor: pointer; font-size: 13px; padding: 0; }
+    .more { margin-top: 4px; }
+    tr.info td { background: var(--soft); padding: 4px 10px 14px; }
+    .figs { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 8px; }
+    .fig { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; }
+    .fig .k { font-size: 12px; color: var(--ink-3); }
+    .fig .v { font-size: 16px; font-weight: 800; }
+    .fig.used { border-color: var(--accent); background: var(--accent-tint); }
+    .fig.used .k::after { content: ' · used'; color: var(--accent-ink); font-weight: 700; }
+    .basis { font-size: 13px; color: var(--ink-2); margin-top: 8px; }
+    .login { max-width: 380px; margin: 10vh auto; background: var(--card); border: 1px solid var(--line); padding: 26px; border-radius: 18px; }
     .login h2 { margin: 0 0 6px; font-weight: 900; }
-    .login input { display: block; width: 100%; margin-top: 10px; padding: 11px 12px; border: 1px solid var(--stone-400); }
-    .login .btn { width: 100%; margin-top: 14px; }
+    .login input { display: block; width: 100%; margin-top: 10px; padding: 12px 13px; border: 1.5px solid var(--line-2); border-radius: 12px; }
+    .login .btn { width: 100%; margin-top: 14px; padding: 13px; }
+    .newform { background: var(--card); border: 1px solid var(--line); border-radius: 18px; padding: 20px; max-width: 640px; }
+    .newform h2 { margin: 0; font-size: 22px; font-weight: 900; }
+    .newform p { margin: 6px 0 0; color: var(--ink-2); }
+    .newform label { display: block; font-weight: 700; margin-top: 16px; }
+    .newform input, .newform textarea { display: block; width: 100%; margin-top: 6px; padding: 12px 13px; border: 1.5px solid var(--line-2); border-radius: 12px; outline: none; font-size: 16px; }
+    .newform textarea { min-height: 230px; line-height: 1.7; resize: vertical; }
+    .newform input:focus, .newform textarea:focus { border-color: var(--accent); box-shadow: 0 0 0 4px var(--accent-tint); }
+    .newform .hint { font-size: 13px; color: var(--ink-3); font-weight: 400; }
+    .newform code { background: var(--accent-tint); color: var(--accent-ink); padding: 1px 6px; border-radius: 6px; font-weight: 700; }
     .err { color: var(--bad); font-size: 14px; margin-top: 10px; }
     .hidden { display: none !important; }
+    .qty-sm { display: none; }
     @media (max-width: 820px) {
       .wrap { grid-template-columns: 1fr; height: auto; }
       .list { border-right: 0; }
       body.showing .list { display: none; }
       body:not(.showing) .detail { display: none; }
       .back { display: inline-block; }
-      .totals .v { font-size: 22px; }
+      .totals { gap: 6px; }
+      .totals > div { padding: 10px; }
+      .totals .k { font-size: 10px; letter-spacing: 0.04em; }
+      .totals .v { font-size: 17px; }
+      .qty-sm { display: inline !important; }
       th.hide-sm, td.hide-sm { display: none; }
       .detail { padding: 14px 12px 60px; }
-      th, td { padding: 8px 6px; font-size: 13px; }
-      th { font-size: 10px; letter-spacing: 0.06em; }
+      th, td { padding: 8px 6px; font-size: 14px; }
+      th { font-size: 11px; letter-spacing: 0.04em; }
       .card img, .card .ln { display: none; }
-      select { padding: 3px 2px; }
+      select { padding: 4px 2px; }
+      .tabs { margin-left: 0; }
     }
-    .tablewrap { overflow-x: auto; margin-top: 18px; }
-    .tablewrap table { margin-top: 0; }
   </style>
 </head>
 <body>
   <section id="loginView" class="hidden">
     <form class="login" id="loginForm">
       <h2>Show desk</h2>
-      <p style="margin:0;color:var(--stone-500);font-size:14px">Sign in with the shop's scanner account.</p>
+      <p style="margin:0;color:var(--ink-3);font-size:15px">Sign in with your Card Pricer account.</p>
       <input id="email" type="email" autocomplete="username" placeholder="Email" required />
       <input id="password" type="password" autocomplete="current-password" placeholder="Password" required />
       <button class="btn primary" type="submit" id="loginBtn">Sign in</button>
@@ -130,8 +160,11 @@
       <button class="link" id="signOut" type="button">Sign out</button>
     </div>
     <div class="wrap">
-      <div class="list" id="list"><div class="empty">Loading…</div></div>
-      <div class="detail" id="detail"><div class="empty">Pick a ticket on the left.</div></div>
+      <div class="list">
+        <button class="newbtn" id="newBtn" type="button">+ Type in a list and price it</button>
+        <div id="list"><div class="empty">Loading…</div></div>
+      </div>
+      <div class="detail" id="detail"><div class="empty">Pick a ticket, or type in a list yourself.</div></div>
     </div>
   </section>
 
@@ -142,8 +175,9 @@
     var sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, { auth: { persistSession: true, autoRefreshToken: true } });
     var slug = (location.pathname.split('/')[2] || '').toLowerCase();
     var $ = function (id) { return document.getElementById(id); };
-    var state = { status: 'waiting', items: [], selected: null, item: null, seen: {}, firstLoad: true };
+    var state = { status: 'waiting', items: [], selected: null, item: null, seen: {}, firstLoad: true, open: {}, allOpen: false, draft: { name: '', lines: '' } };
     var CONDITIONS = ['NM', 'EX', 'GD', 'LP', 'PL', 'PO'];
+    var COND_NAMES = { NM: 'Near Mint', EX: 'Excellent', GD: 'Good', LP: 'Light Played', PL: 'Played', PO: 'Poor' };
     var REASONS = {
       no_cardmarket_product: "Not in today's Cardmarket list", no_price_in_guide: "Not in today's Cardmarket list",
       first_edition: '1st Edition, price by hand', shadowless: 'Shadowless, price by hand', graded: 'Graded slab',
@@ -151,6 +185,14 @@
       high_value: 'High value, price by hand', price_unstable: "Cardmarket's price looked unreliable",
       prices_disagree: "Cardmarket's prices disagree today", product_unconfirmed: 'Confirm the exact version',
       customer_unsure: 'Customer not sure which one', unconfirmed: 'Check which one'
+    };
+    var FIELDS = {
+      nm_en: 'Cheapest Near Mint English copy', trend: 'Trend price', avg7: '7-day average sale', avg30: '30-day average sale', avg: 'Average sale price'
+    };
+    var WHY_NOT_NM = {
+      no_listing: 'no Near Mint English copy listed', nm_en_missing: "today's Near Mint English listings didn't load", nm_en_stale: "today's Near Mint English listings are out of date",
+      not_in_tcggo: 'no listing data for this card', shared_product: 'listing data is shared with another card',
+      name_differs: "listing data didn't match this card", not_in_feed: 'no listing data for this card'
     };
 
     function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
@@ -161,7 +203,28 @@
       if (s < 86400) return Math.floor(s / 3600) + ' h ago';
       return new Date(iso).toLocaleDateString('en-IE', { day: 'numeric', month: 'short' });
     }
+    function day(iso) { return iso ? new Date(iso + 'T12:00:00Z').toLocaleDateString('en-IE', { day: 'numeric', month: 'short' }) : ''; }
     function cardBits(c) { return c ? [c.set_name || c.set_code, c.card_number ? '#' + c.card_number : ''].filter(Boolean).join(' · ') : ''; }
+
+    // The shop's colour, calmed (same as the customer page).
+    function softAccent(hex) {
+      var m = /^#?([0-9a-f]{6})$/i.exec(hex || ''); if (!m) return null;
+      var n = parseInt(m[1], 16), r = (n >> 16) / 255, g = ((n >> 8) & 255) / 255, b = (n & 255) / 255;
+      var mx = Math.max(r, g, b), mn = Math.min(r, g, b), l = (mx + mn) / 2, d = mx - mn, h = 0, s = 0;
+      if (d) {
+        s = d / (1 - Math.abs(2 * l - 1));
+        h = mx === r ? ((g - b) / d) % 6 : mx === g ? (b - r) / d + 2 : (r - g) / d + 4;
+        h = (h * 60 + 360) % 360;
+      }
+      var hsl = function (S, L) { return 'hsl(' + Math.round(h) + ' ' + Math.round(S * 100) + '% ' + Math.round(L * 100) + '%)'; };
+      var S = Math.min(s, 0.5), L = Math.min(Math.max(l, 0.36), 0.44);
+      return { accent: hsl(S, L), ink: hsl(S, L - 0.08), tint: hsl(Math.min(S, 0.45), 0.95), line: hsl(Math.min(S, 0.35), 0.86) };
+    }
+    fetch('/api/shop-config/' + encodeURIComponent(slug)).then(function (r) { return r.ok ? r.json() : null; }).then(function (s) {
+      var a = s && softAccent(s.accent_color); if (!a) return;
+      var root = document.documentElement.style;
+      root.setProperty('--accent', a.accent); root.setProperty('--accent-ink', a.ink); root.setProperty('--accent-tint', a.tint); root.setProperty('--accent-line', a.line);
+    }).catch(function () {});
 
     async function api(path, opts) {
       opts = opts || {};
@@ -197,7 +260,7 @@
       $('tabWaiting').classList.toggle('on', s === 'waiting');
       $('tabDone').classList.toggle('on', s === 'done');
       document.body.classList.remove('showing');
-      $('detail').innerHTML = '<div class="empty">Pick a ticket on the left.</div>';
+      $('detail').innerHTML = '<div class="empty">Pick a ticket, or type in a list yourself.</div>';
       loadList();
     }
     $('tabWaiting').addEventListener('click', function () { setTab('waiting'); });
@@ -206,9 +269,9 @@
     async function loadList() {
       try {
         var b = await api('/api/show/' + slug + '/staff/list?status=' + state.status);
-        $('shopTitle').textContent = 'Show desk · ' + b.shop.name;
-        $('waitingCount').textContent = b.waiting != null ? b.waiting + ' waiting' : '';
-        document.title = (b.waiting ? '(' + b.waiting + ') ' : '') + 'Show desk';
+        $('shopTitle').textContent = b.shop.name;
+        $('waitingCount').innerHTML = b.waiting != null ? '<b>' + b.waiting + '</b> waiting' : '';
+        document.title = (b.waiting ? '(' + b.waiting + ') ' : '') + 'Show desk · ' + b.shop.name;
         state.items = b.items;
         renderList();
       } catch (e) {
@@ -222,14 +285,14 @@
       if (t.questions) out.push('<span class="badge warn">' + t.questions + ' to check</span>');
       if (t.not_found) out.push('<span class="badge warn">' + t.not_found + ' not matched</span>');
       if (t.by_hand) out.push('<span class="badge">' + t.by_hand + ' by hand</span>');
-      if (it.outcome) out.push('<span class="badge">' + esc(it.outcome === 'declined' ? 'Didn’t sell' : it.outcome) + '</span>');
+      if (it.outcome) out.push('<span class="badge">' + esc(it.outcome === 'declined' ? 'Didn’t sell' : it.outcome === 'bought' ? 'Bought' : it.outcome) + '</span>');
       return out.join('');
     }
 
     function renderList() {
       var el = $('list');
       if (!state.items.length) {
-        el.innerHTML = '<div class="empty">' + (state.status === 'waiting' ? 'No one waiting. New lists appear here as they come in.' : 'Nothing done yet.') + '</div>';
+        el.innerHTML = '<div class="empty">' + (state.status === 'waiting' ? 'No one waiting. New lists show up here by themselves.' : 'Nothing done yet.') + '</div>';
         return;
       }
       el.innerHTML = state.items.map(function (it) {
@@ -238,7 +301,7 @@
           '<span class="n">' + esc(it.ticket) + '</span>' +
           '<span class="who">' + esc(it.name) + '</span>' +
           '<span class="meta">' + esc(ago(it.created_at)) + ' · ' + it.line_count + (it.line_count === 1 ? ' line' : ' lines') + '</span>' +
-          '<span class="money">' + (it.totals.cards ? '<b>' + eur(it.totals.credit) + '</b> credit · ' + eur(it.totals.cash) + ' cash' : '<span style="color:var(--stone-500)">nothing priced yet</span>') +
+          '<span class="money">' + (it.totals.cards ? '<b>' + eur(it.totals.credit) + '</b> credit · ' + eur(it.totals.cash) + ' cash' : '<span style="color:var(--ink-3)">nothing priced yet</span>') +
           '<span class="badges">' + badgesOf(it) + '</span></span>' +
           '</button>';
       }).join('');
@@ -250,13 +313,52 @@
     }
 
     async function open(id) {
-      state.selected = id;
+      state.selected = id; state.open = {}; state.allOpen = false;
       renderList();
       document.body.classList.add('showing');
       $('detail').innerHTML = '<div class="empty">Loading…</div>';
       try { state.item = await api('/api/show/' + slug + '/staff/item/' + id); renderDetail(); }
       catch (e) { $('detail').innerHTML = '<div class="empty">' + esc(e.message) + '</div>'; }
     }
+
+    // ── Type a list in at the desk ────────────────────────────────────────────
+    function showNew() {
+      state.selected = null; state.item = null;
+      renderList();
+      document.body.classList.add('showing');
+      $('detail').innerHTML = '<button class="back" type="button" id="backBtn">← All tickets</button>' +
+        '<form class="newform" id="newForm">' +
+        '<h2>Type in a list</h2>' +
+        '<p>Every card gets priced, with all of Cardmarket’s numbers for it. It’s saved as a ticket, so you can mark it Bought or Didn’t sell after.</p>' +
+        '<label for="nfLines">Cards <span class="hint">one per line, e.g. <code>Charizard 4/102</code>, <code>3x</code> for several, <code>rev</code> for reverse holo, <code>lp</code> for condition</span></label>' +
+        '<textarea id="nfLines" spellcheck="false" autocapitalize="off" autocomplete="off" placeholder="Charizard 4/102&#10;3x Pikachu 58/102&#10;rev Gengar 94/162 lp"></textarea>' +
+        '<label for="nfName">Name or note <span class="hint">(optional, e.g. the seller’s name or "Box 2")</span></label>' +
+        '<input id="nfName" maxlength="40" autocomplete="off" />' +
+        '<div class="actions"><button class="btn primary" id="nfGo" type="submit">Price it</button></div>' +
+        '<p class="err" id="nfErr"></p></form>';
+      $('nfLines').value = state.draft.lines; $('nfName').value = state.draft.name;
+      $('nfLines').addEventListener('input', function () { state.draft.lines = $('nfLines').value; });
+      $('nfName').addEventListener('input', function () { state.draft.name = $('nfName').value; });
+      $('backBtn').addEventListener('click', function () { document.body.classList.remove('showing'); });
+      $('newForm').addEventListener('submit', async function (ev) {
+        ev.preventDefault();
+        var lines = $('nfLines').value.split('\n').map(function (l) { return l.trim(); }).filter(Boolean);
+        if (!lines.length) { $('nfErr').textContent = 'Add at least one card.'; return; }
+        var go = $('nfGo'); go.disabled = true; go.textContent = 'Pricing…'; $('nfErr').textContent = '';
+        try {
+          var it = await api('/api/show/' + slug + '/staff/new', { method: 'POST', body: { lines: lines, name: $('nfName').value.trim() } });
+          state.draft = { name: '', lines: '' };
+          if (state.status !== 'waiting') { state.status = 'waiting'; $('tabWaiting').classList.add('on'); $('tabDone').classList.remove('on'); }
+          state.item = it; state.selected = it.id; state.open = {}; state.allOpen = false;
+          renderDetail(); loadList();
+        } catch (e) {
+          if (e.message !== 'signed out') $('nfErr').textContent = e.message;
+          go.disabled = false; go.textContent = 'Price it';
+        }
+      });
+      $('nfLines').focus();
+    }
+    $('newBtn').addEventListener('click', showNew);
 
     async function patch(body, btn) {
       if (btn) btn.disabled = true;
@@ -268,12 +370,32 @@
       finally { if (btn) btn.disabled = false; }
     }
 
-    function cardCell(card, line, extra) {
+    function cardCell(card, line, extra, qty) {
       var img = card && card.image ? '<img src="' + esc(card.image) + '" alt="" loading="lazy" onerror="this.style.visibility=\'hidden\'">' : '';
       return '<div class="card">' + img + '<div>' +
-        '<div class="nm">' + esc(card ? card.name : line) + '</div>' +
+        '<div class="nm">' + (qty > 1 ? '<span class="qty-sm">' + qty + '× </span>' : '') + esc(card ? card.name : line) + '</div>' +
         (card ? '<div class="st">' + esc(cardBits(card)) + '</div>' : '') +
         '<div class="ln">“' + esc(line) + '”</div>' + (extra || '') + '</div></div>';
+    }
+
+    // Every Cardmarket number for one priced line.
+    function infoRow(e) {
+      var d = e.detail, g = d && d.guide;
+      if (!g) return '<tr class="info"><td colspan="6"><div class="basis">No extra Cardmarket numbers stored for this line. Press Reprice to fetch them.</div></td></tr>';
+      var usedField = d.basis === 'nm_en' ? 'nm_en' : String(d.field || '').replace(/_holo$/, '');
+      var fig = function (key, label, v) {
+        return '<div class="fig' + (key === usedField ? ' used' : '') + '"><div class="k">' + esc(label) + '</div><div class="v">' + (v == null ? '<span style="color:var(--ink-3);font-weight:600">none</span>' : eur(v)) + '</div></div>';
+      };
+      var figs = (g.finish === 'standard' ? fig('nm_en', 'Cheapest NM English', g.nm_en) : '') +
+        fig('trend', 'Trend', g.trend) + fig('avg7', '7-day average', g.avg7) + fig('avg30', '30-day average', g.avg30) +
+        fig('avg', 'Average sale', g.avg) + fig('low', 'Lowest listed (any condition)', g.low);
+      var basis = 'Price used: <b>' + esc(FIELDS[usedField] || usedField) + '</b>' + (g.finish === 'reverse_holo' ? ' (reverse holo)' : '') +
+        (d.as_of ? ', ' + esc(day(d.as_of)) : '') + '.';
+      if (d.basis !== 'nm_en' && WHY_NOT_NM[d.nm_en_fallback]) basis += ' Not the cheapest NM English copy, because ' + esc(WHY_NOT_NM[d.nm_en_fallback]) + '.';
+      if (d.condition_multiplier !== 1) basis += ' ' + esc(COND_NAMES[e.condition] || e.condition) + ' is ' + Math.round(d.condition_multiplier * 100) + '% of the Near Mint price: ' + eur(e.unit_market) + ' each.';
+      if (e.qty > 1) basis += ' ' + e.qty + ' copies.';
+      var link = d.cardmarket_url ? ' <a href="' + esc(d.cardmarket_url) + '" target="_blank" rel="noopener" style="color:var(--accent-ink)">Open on Cardmarket</a>' : '';
+      return '<tr class="info"><td colspan="6"><div class="figs">' + figs + '</div><div class="basis">' + basis + link + '</div></td></tr>';
     }
 
     function renderDetail() {
@@ -284,40 +406,44 @@
         (it.price_error ? '<div class="alert">This list isn’t priced: ' + esc(it.price_error) + '. Press Reprice.</div>' : '') +
         '<div class="totals"><div class="credit"><div class="k">Store credit</div><div class="v">' + eur(t.credit) + '</div></div>' +
         '<div><div class="k">Cash</div><div class="v">' + eur(t.cash) + '</div></div>' +
-        '<div><div class="k">Market</div><div class="v" style="font-size:20px;color:var(--stone-600)">' + eur(t.market) + '</div></div></div>' +
+        '<div><div class="k">Market</div><div class="v" style="color:var(--ink-2)">' + eur(t.market) + '</div></div></div>' +
         '<p class="note">' + t.cards + (t.cards === 1 ? ' card' : ' cards') + ' priced at ' + it.rates.creditPct + '% credit, ' + it.rates.cashPct + '% cash' +
-        (it.prices_as_of ? ', Cardmarket cheapest NM English ' + esc(it.prices_as_of) : '') + '. Set the condition of each card once you’ve seen it.' +
+        (it.prices_as_of ? ', Cardmarket prices from ' + esc(day(it.prices_as_of)) : '') + '. Set each card’s condition once you’ve seen it. Tap <b>Details</b> on a card for all its prices.' +
         (t.questions ? ' <b>' + t.questions + ' to check.</b>' : '') + (t.not_found ? ' <b>' + t.not_found + ' not matched.</b>' : '') + '</p>' +
         '<div class="actions">' +
         (it.status === 'waiting'
-          ? '<button class="btn primary" id="boughtBtn" type="button">Bought</button><button class="btn" id="declinedBtn" type="button">Didn’t sell</button>'
+          ? '<button class="btn good" id="boughtBtn" type="button">Bought</button><button class="btn" id="declinedBtn" type="button">Didn’t sell</button>'
           : '<button class="btn" id="reopenBtn" type="button">Back to waiting</button>') +
-        '<button class="btn" id="repriceBtn" type="button">Reprice</button></div>';
+        '<button class="btn" id="repriceBtn" type="button">Reprice</button>' +
+        (t.cards ? '<button class="btn" id="allBtn" type="button">' + (state.allOpen ? 'Hide all details' : 'Show all details') + '</button>' : '') + '</div>';
 
       html += '<div class="tablewrap"><table><thead><tr><th>Card</th><th class="hide-sm">Qty</th><th>Cond.</th><th class="num hide-sm">Market</th><th class="num">Cash</th><th class="num">Credit</th></tr></thead><tbody>';
       it.entries.forEach(function (e) {
         if (e.kind === 'priced') {
           var opts = CONDITIONS.map(function (c) { return '<option' + (c === e.condition ? ' selected' : '') + '>' + c + '</option>'; }).join('');
+          var isOpen = state.allOpen || state.open[e.index];
           var notes = (e.notes || []).map(function (n) { return '<div class="nt">' + esc(n) + '</div>'; }).join('') +
             (e.finish === 'reverse_holo' ? '<div class="nt">Reverse holo</div>' : '') +
-            (e.picked != null ? '<div><button class="linkbtn" data-unpick="' + e.index + '" type="button">Change which one</button></div>' : '');
-          html += '<tr><td>' + cardCell(e.card, e.line, notes) + '</td><td class="hide-sm">' + e.qty + '</td>' +
-            '<td><select data-cond="' + e.index + '">' + opts + '</select></td>' +
+            '<div class="more"><button class="linkbtn" data-info="' + e.index + '" type="button">' + (isOpen ? 'Hide details' : 'Details') + '</button>' +
+            (e.picked != null ? ' · <button class="linkbtn" data-unpick="' + e.index + '" type="button">Change which one</button>' : '') + '</div>';
+          html += '<tr><td>' + cardCell(e.card, e.line, notes, e.qty) + '</td><td class="hide-sm">' + e.qty + '</td>' +
+            '<td><select data-cond="' + e.index + '" aria-label="Condition">' + opts + '</select></td>' +
             '<td class="num hide-sm">' + eur(e.market) + '</td><td class="num">' + eur(e.cash) + '</td><td class="num credit">' + eur(e.credit) + '</td></tr>';
+          if (isOpen) html += infoRow(e);
         } else if (e.kind === 'ask') {
           var cands = e.candidates.map(function (c, i) {
             var img = c.card && c.card.image ? '<img src="' + esc(c.card.image) + '" alt="" loading="lazy" onerror="this.style.visibility=\'hidden\'">' : '';
             return '<button class="opt" type="button" data-pick="' + e.index + ':' + i + '">' + img + '<span><span style="font-weight:700">' + esc(c.card ? c.card.name : '') + '</span><br>' +
-              '<span style="font-size:12px;color:var(--stone-500)">' + esc(c.label || cardBits(c.card)) + '</span><br>' +
+              '<span style="font-size:12px;color:var(--ink-3)">' + esc(c.label || cardBits(c.card)) + '</span><br>' +
               (c.market != null ? '<span class="p">' + eur(c.market) + '</span>' : '<span class="tag">' + esc(REASONS[c.unpriced_reason] || 'By hand') + '</span>') + '</span></button>';
           }).join('') + '<button class="opt" type="button" data-pick="' + e.index + ':-1">Not sure</button>';
           html += '<tr class="ask"><td colspan="6"><div style="font-weight:800">' + (e.qty > 1 ? e.qty + '× ' : '') + esc(e.line) + '</div>' +
             '<div class="q">' + esc(e.question || 'Which card is it?') + '</div><div class="opts">' + cands + '</div></td></tr>';
         } else if (e.kind === 'by_hand') {
-          html += '<tr class="bh"><td colspan="3">' + cardCell(e.card, e.line, e.picked != null ? '<div><button class="linkbtn" data-unpick="' + e.index + '" type="button">Change which one</button></div>' : '') + '</td>' +
+          html += '<tr class="bh"><td colspan="3">' + cardCell(e.card, e.line, e.picked != null ? '<div class="more"><button class="linkbtn" data-unpick="' + e.index + '" type="button">Change which one</button></div>' : '') + '</td>' +
             '<td colspan="3" class="num"><span class="tag">' + esc(REASONS[e.reason] || 'Price by hand') + '</span>' + (e.qty > 1 ? '<div class="ln">' + e.qty + '×</div>' : '') + '</td></tr>';
         } else {
-          html += '<tr class="nf"><td colspan="6"><div style="font-weight:700">' + esc(e.line) + '</div><div class="q" style="margin:0;color:var(--bad)">Not matched. Find the card with the customer.</div></td></tr>';
+          html += '<tr class="nf"><td colspan="6"><div style="font-weight:700">' + esc(e.line) + '</div><div class="q" style="margin:0;color:var(--bad)">' + esc(e.message || 'Not matched.') + '</div></td></tr>';
         }
       });
       html += '</tbody></table></div>';
@@ -327,11 +453,19 @@
       var b1 = $('boughtBtn'); if (b1) b1.addEventListener('click', function () { patch({ status: 'done', outcome: 'bought' }, b1); });
       var b2 = $('declinedBtn'); if (b2) b2.addEventListener('click', function () { patch({ status: 'done', outcome: 'declined' }, b2); });
       var b3 = $('reopenBtn'); if (b3) b3.addEventListener('click', function () { patch({ status: 'waiting' }, b3); });
+      var ab = $('allBtn'); if (ab) ab.addEventListener('click', function () { state.allOpen = !state.allOpen; state.open = {}; renderDetail(); });
       var rp = $('repriceBtn');
       rp.addEventListener('click', async function () {
         rp.disabled = true;
         try { state.item = await api('/api/show/' + slug + '/staff/item/' + it.id + '/reprice', { method: 'POST' }); renderDetail(); loadList(); }
         catch (e) { alert(e.message); } finally { rp.disabled = false; }
+      });
+      Array.prototype.forEach.call($('detail').querySelectorAll('[data-info]'), function (b) {
+        b.addEventListener('click', function () {
+          var i = b.getAttribute('data-info');
+          if (state.allOpen) { state.allOpen = false; it.entries.forEach(function (x) { if (x.kind === 'priced') state.open[x.index] = true; }); }
+          state.open[i] = !state.open[i]; renderDetail();
+        });
       });
       Array.prototype.forEach.call($('detail').querySelectorAll('select[data-cond]'), function (s) {
         s.addEventListener('change', function () { var c = {}; c[s.getAttribute('data-cond')] = s.value; patch({ conditions: c }); });
