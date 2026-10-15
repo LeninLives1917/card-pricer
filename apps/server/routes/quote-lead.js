@@ -147,7 +147,7 @@ export async function handleQuoteLead(body, req, deps = {}) {
   const customerHtml = `
       <div style="font-family:-apple-system,system-ui,sans-serif; max-width:640px; margin:0 auto; padding:24px; color:#222;">
         <h2 style="color:#1a1a1a; margin-bottom:4px;">Thanks a mil${name ? ', ' + escapeHtml(name) : ''}</h2>
-        <p style="margin-top:0;">We've got your list. Are you free to drop in at some point so we can have a closer look at the cards? Just reply to this email and let us know what day suits, or call in any time we're open.</p>
+        <p style="margin-top:0;">We've got your list. Are you free to drop in at some point so we can have a closer look at the cards? Just reply to this email and let us know what day suits.</p>
         ${visitHtml}
         <p style="color:#666; margin-top:20px;">In the meantime, here's an indicative offer for the cards you sent over. It assumes every card is Near Mint, unless you told us otherwise. The final offer depends on each card's condition once we've seen it.</p>
         <table style="width:100%; border-collapse:collapse; margin:16px 0;">
