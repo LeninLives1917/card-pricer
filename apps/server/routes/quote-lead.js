@@ -36,6 +36,8 @@ function byHandRowsHtml(list) {
       </tr>`).join('');
 }
 
+const BREWED_DIRECTIONS_URL = 'https://www.google.com/maps/dir/?api=1&destination=Board%20%26%20Brewed%2C%2075%20York%20Road%2C%20D%C3%BAn%20Laoghaire%2C%20A96%20Y6X2';
+
 function escapeHtml(s) {
   return String(s || '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
@@ -130,10 +132,24 @@ export async function handleQuoteLead(body, req, deps = {}) {
     });
   });
 
+  // Where and when to drop in (Dave, 15 Oct 2026: the email after a quote
+  // should thank them and ask them to call in so we can see the cards).
+  // Board & Brewed's own address and hours; other shops get the invitation
+  // without them. Hours match the website (boardandbrewed-home
+  // app/app/constants/hours.ts): change both together.
+  const isBrewed = !shop || shop.slug === 'brewed';
+  const visitHtml = isBrewed ? `<p style="margin:12px 0 0; padding:12px 14px; background:#faf7f2; border-radius:8px; font-size:14px; line-height:1.6;">
+          <b>Board &amp; Brewed</b>, 75 York Road, Dún Laoghaire, A96 Y6X2<br>
+          Mon to Thu 8am to 10pm &middot; Fri 8am to 11pm &middot; Sat 10am to 11pm &middot; Sun 10am to 8pm<br>
+          <a href="${BREWED_DIRECTIONS_URL}" style="color:#b45309;">Get directions</a>
+        </p>` : '';
+
   const customerHtml = `
       <div style="font-family:-apple-system,system-ui,sans-serif; max-width:640px; margin:0 auto; padding:24px; color:#222;">
-        <h2 style="color:#1a1a1a; margin-bottom:4px;">Your ${SHOP_NAME} Quote</h2>
-        <p style="color:#666; margin-top:0;">Hi${name ? ' ' + escapeHtml(name) : ''}, here's an indicative offer for the cards you sent over. It assumes every card is Near Mint, unless you told us otherwise. We check each card in the shop, and the final offer depends on its condition.</p>
+        <h2 style="color:#1a1a1a; margin-bottom:4px;">Thanks a mil${name ? ', ' + escapeHtml(name) : ''}</h2>
+        <p style="margin-top:0;">We've got your list. Are you free to drop in at some point so we can have a closer look at the cards? Just reply to this email and let us know what day suits, or call in any time we're open.</p>
+        ${visitHtml}
+        <p style="color:#666; margin-top:20px;">In the meantime, here's an indicative offer for the cards you sent over. It assumes every card is Near Mint, unless you told us otherwise. The final offer depends on each card's condition once we've seen it.</p>
         <table style="width:100%; border-collapse:collapse; margin:16px 0;">
           <thead><tr style="background:#f5f5f5;">
             <th style="padding:8px; text-align:left;">Card</th>
@@ -152,7 +168,7 @@ export async function handleQuoteLead(body, req, deps = {}) {
         ${byHand.length ? `<p style="margin-top:16px;"><b>We'll price ${byHand.length === 1 ? 'this one' : 'these ' + byHand.length} by hand</b> and include ${byHand.length === 1 ? 'it' : 'them'} in your offer:</p>
         <table style="width:100%; border-collapse:collapse; margin:8px 0 16px;"><tbody>${byHandRowsHtml(byHand)}</tbody></table>` : ''}
         <p style="font-size:13px; color:#666;">Cash offer: ${cashPct || 55}% of market value. Store credit: ${creditPct || 70}% of market value. Condition-adjusted.</p>
-        <p style="margin-top:24px;">Bring your cards to the shop or reply to this email to arrange drop-off. We'll give you a firm offer once we grade condition.</p>
+        <p style="margin-top:24px;">Looking forward to seeing them. Reply to this email any time if you have questions.</p>
         <p style="color:#888; font-size:12px; margin-top:32px;">${SHOP_NAME}</p>
       </div>`;
 
@@ -360,7 +376,7 @@ export async function handleQuoteLead(body, req, deps = {}) {
   let subRes = { subscribed: false };
   try {
     const [,, sub] = await Promise.all([
-      sendEmail(email, `Your ${SHOP_NAME} card quote`, customerHtml),
+      sendEmail(email, 'Thanks a mil for your list, can you drop in?', customerHtml),
       sendEmail(SHOP_EMAIL, `New quote request — ${email}${newsletter ? ' (newsletter opt-in)' : ''}`, shopHtml, attachments),
       subscribeIfOptedIn()
     ]);
